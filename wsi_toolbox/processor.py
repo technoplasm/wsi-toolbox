@@ -25,6 +25,8 @@ from .common import create_model, DEFAULT_MODEL, DEFAULT_BACKEND
 from .utils import create_frame, get_platform_font, plot_umap
 from .utils.progress import tqdm_or_st
 from .utils.analysis import leiden_cluster
+from .utils.helpers import is_white_patch, cosine_distance, safe_del
+from .wsi_files import WSIFile, TiffFile, OpenSlideFile, StandardImage, create_wsi_file
 
 
 
@@ -32,169 +34,15 @@ warnings.filterwarnings('ignore', category=FutureWarning, message='.*force_all_f
 warnings.filterwarnings('ignore', category=FutureWarning, message="You are using `torch.load` with `weights_only=False`")
 
 
-def is_white_patch(patch, rgb_std_threshold=7.0, white_ratio=0.7):
-    # white: RGB std < 7.0
-    rgb_std_pixels = np.std(patch, axis=2) < rgb_std_threshold
-    white_pixels = np.sum(rgb_std_pixels)
-    total_pixels = patch.shape[0] * patch.shape[1]
-    white_ratio_calculated = white_pixels / total_pixels
-    # print('whi' if white_ratio_calculated > white_ratio else 'use',
-    #       'std{:.3f}'.format(np.sum(rgb_std_pixels)/total_pixels)
-    #      )
-    return white_ratio_calculated > white_ratio
-
-def cosine_distance(x, y):
-    distance = np.linalg.norm(x - y)
-    weight = np.exp(-distance / distance.mean())
-    return distance, weight
-
-def safe_del(hdf_file, key_path):
-    if key_path in hdf_file:
-        del hdf_file[key_path]
-
-class WSIFile:
-    def __init__(self, path):
-        pass
-
-    def get_mpp(self):
-        pass
-
-    def get_original_size(self):
-        pass
-
-    def read_region(self, xywh):
-        pass
-
-
-class TiffFile(WSIFile):
-    def __init__(self, path):
-        self.tif = tifffile.TiffFile(path)
-
-        store = self.tif.pages[0].aszarr()
-        self.zarr_data = zarr.open(store, mode='r')  # 読み込み専用で開く
-
-    def get_original_size(self):
-        s = self.tif.pages[0].shape
-        return (s[1], s[0])
-
-    def get_mpp(self):
-        tags = self.tif.pages[0].tags
-        resolution_unit = tags.get('ResolutionUnit', None)
-        x_resolution = tags.get('XResolution', None)
-
-        assert resolution_unit
-        assert x_resolution
-
-        x_res_value = x_resolution.value
-        if isinstance(x_res_value, tuple) and len(x_res_value) == 2:
-            # 分数の形式（分子/分母）
-            numerator, denominator = x_res_value
-            resolution = numerator / denominator
-        else:
-            resolution = x_res_value
-
-        # 解像度単位の判定（2=インチ、3=センチメートル）
-        if resolution_unit.value == 2:  # インチ
-            # インチあたりのピクセル数からミクロンあたりのピクセル数へ変換
-            # 1インチ = 25400ミクロン
-            mpp = 25400.0 / resolution
-        elif resolution_unit.value == 3:  # センチメートル
-            # センチメートルあたりのピクセル数からミクロンあたりのピクセル数へ変換
-            # 1センチメートル = 10000ミクロン
-            mpp = 10000.0 / resolution
-        else:
-            mpp = 1.0 / resolution  # 単位不明の場合
-
-        return mpp
-
-    def read_region(self, xywh):
-        x, y, width, height = xywh
-        page = self.tif.pages[0]
-
-        full_width = page.shape[1]  # tifffileでは[height, width]の順
-        full_height = page.shape[0]
-
-        x = max(0, min(x, full_width - 1))
-        y = max(0, min(y, full_height - 1))
-        width = min(width, full_width - x)
-        height = min(height, full_height - y)
-
-        if page.is_tiled:
-            region = self.zarr_data[y:y+height, x:x+width]
-        else:
-            full_image = page.asarray()
-            region = full_image[y:y+height, x:x+width]
-
-        # カラーモデルの処理
-        if region.ndim == 2:  # グレースケール
-            region = np.stack([region, region, region], axis=-1)
-        elif region.shape[2] == 4:  # RGBA
-            region = region[:, :, :3]  # RGBのみ取得
-        return region
-
-
-class OpenSlideFile(WSIFile):
-    def __init__(self, path):
-        self.wsi = OpenSlide(path)
-        self.prop = dict(self.wsi.properties)
-
-    def get_mpp(self):
-        return float(self.prop['openslide.mpp-x'])
-
-    def get_original_size(self):
-        dim = self.wsi.level_dimensions[0]
-        return (dim[0], dim[1])
-
-    def read_region(self, xywh):
-        # self.wsi.read_region((0, row*T), target_level, (width, T))
-        # self.wsi.read_region((x, y), target_level, (w, h))
-        img = self.wsi.read_region((xywh[0], xywh[1]), 0, (xywh[2], xywh[3])).convert('RGB')
-        img = np.array(img.convert('RGB'))
-        return img
-
-
-class StandardImage(WSIFile):
-    def __init__(self, path, mpp):
-        self.image = cv2.imread(path)
-        self.image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)  # OpenCVはBGR形式で読み込むのでRGBに変換
-        self.mpp = mpp
-        assert self.mpp is not None, 'Specify mpp when using StandardImage'
-
-    def get_mpp(self):
-        return self.mpp
-
-    def get_original_size(self):
-        return self.image.shape[1], self.image.shape[0]  # width, height
-
-    def read_region(self, xywh):
-        x, y, w, h = xywh
-        return self.image[y:y+h, x:x+w]
-
 class WSIProcessor:
     wsi: WSIFile
     def __init__(self, image_path, engine='auto', **extra):
-        if engine == 'auto':
-            ext = os.path.splitext(image_path)[1].lower()
-            if ext == '.ndpi':
-                engine = 'tifffile'
-            elif ext in ['.jpg', '.jpeg', '.png', '.tif', 'tiff']:
-                engine = 'standard'
-            else:
-                engine = 'openslide'
-            print(f'using {engine} engine for {os.path.basename(image_path)}')
-
         # Extract mpp before engine-specific handling
         mpp = extra.pop('mpp', None)
 
-        self.engine = engine.lower()
-        if engine == 'openslide':
-            self.wsi = OpenSlideFile(image_path)
-        elif engine == 'tifffile':
-            self.wsi = TiffFile(image_path)
-        elif engine == 'standard':
-            self.wsi = StandardImage(image_path, mpp=mpp)
-        else:
-            raise ValueError('Invalid engine', engine)
+        # Use factory function to create WSI file
+        self.wsi = create_wsi_file(image_path, engine=engine, mpp=mpp)
+        self.engine = engine
 
         if extra:
             raise ValueError('Unprocessed extra arguments', extra)
@@ -207,7 +55,7 @@ class WSIProcessor:
         elif self.original_mpp < 0.360:
             self.scale = 2
         else:
-            raise RuntimeError(f'Invalid scale: mpp={mpp:.6f}')
+            raise RuntimeError(f'Invalid scale: mpp={self.original_mpp:.6f}')
         self.mpp = self.original_mpp * self.scale
 
 
@@ -673,10 +521,10 @@ class PyramidDziExportProcessor:
         import math
         from pathlib import Path
         from PIL import Image
-        
+
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Read HDF5
         with h5py.File(h5_path, 'r') as f:
             patches = f['patches'][:]
@@ -684,43 +532,43 @@ class PyramidDziExportProcessor:
             original_width = f['metadata/original_width'][()]
             original_height = f['metadata/original_height'][()]
             tile_size = f['metadata/patch_size'][()]
-        
+
         # Validate tile_size (256 or 512 only)
         if tile_size not in [256, 512]:
             raise ValueError(f'Unsupported patch_size: {tile_size}. Only 256 or 512 are supported.')
-        
+
         # Calculate grid and levels
         cols = (original_width + tile_size - 1) // tile_size
         rows = (original_height + tile_size - 1) // tile_size
         max_dimension = max(original_width, original_height)
         max_level = math.ceil(math.log2(max_dimension))
-        
+
         if progress == 'tqdm':
             print(f'Original size: {original_width}x{original_height}')
             print(f'Tile size: {tile_size}')
             print(f'Grid: {cols}x{rows}')
             print(f'Total patches in HDF5: {len(patches)}')
             print(f'Max zoom level: {max_level} (Level 0 = 1x1, Level {max_level} = original)')
-        
-        coord_to_idx = {(int(x // tile_size), int(y // tile_size)): idx 
+
+        coord_to_idx = {(int(x // tile_size), int(y // tile_size)): idx
                         for idx, (x, y) in enumerate(coords)}
-        
+
         # Setup directories
         dzi_path = output_dir / f'{name}.dzi'
         files_dir = output_dir / f'{name}_files'
         files_dir.mkdir(exist_ok=True)
-        
+
         # Create empty tile template for current tile_size
         empty_tile_path = None
         if fill_empty:
             empty_tile_path = files_dir / '_empty.jpeg'
             black_img = Image.fromarray(np.zeros((tile_size, tile_size, 3), dtype=np.uint8))
             black_img.save(empty_tile_path, 'JPEG', quality=jpeg_quality)
-        
+
         # Export max level (original patches from HDF5)
         level_dir = files_dir / str(max_level)
         level_dir.mkdir(exist_ok=True)
-        
+
         tq = tqdm_or_st(range(rows), backend=progress)
         for row in tq:
             tq.set_description(f'Exporting level {max_level}: row {row+1}/{rows}')
@@ -733,7 +581,7 @@ class PyramidDziExportProcessor:
                     img.save(tile_path, 'JPEG', quality=jpeg_quality)
                 elif fill_empty:
                     shutil.copyfile(empty_tile_path, tile_path)
-        
+
         # Generate lower levels by downsampling
         for level in range(max_level - 1, -1, -1):
             if progress == 'tqdm':
@@ -742,50 +590,50 @@ class PyramidDziExportProcessor:
                 files_dir, level, max_level, original_width, original_height,
                 tile_size, jpeg_quality, fill_empty, empty_tile_path, progress
             )
-        
+
         # Generate DZI XML
         self._generate_dzi_xml(dzi_path, original_width, original_height, tile_size)
-        
+
         if progress == 'tqdm':
             print(f'DZI export complete: {dzi_path}')
-    
+
     def _generate_zoom_level_down(self, files_dir, curr_level, max_level, original_width, original_height,
                                    tile_size, jpeg_quality, fill_empty, empty_tile_path, progress):
         """Generate a zoom level by downsampling from the higher level"""
         import math
         import shutil
         from pathlib import Path
-        
+
         src_level = curr_level + 1
         src_dir = files_dir / str(src_level)
         curr_dir = files_dir / str(curr_level)
         curr_dir.mkdir(exist_ok=True)
-        
+
         # Calculate dimensions at each level
         curr_scale = 2 ** (max_level - curr_level)
         curr_width = math.ceil(original_width / curr_scale)
         curr_height = math.ceil(original_height / curr_scale)
         curr_cols = math.ceil(curr_width / tile_size)
         curr_rows = math.ceil(curr_height / tile_size)
-        
+
         src_scale = 2 ** (max_level - src_level)
         src_width = math.ceil(original_width / src_scale)
         src_height = math.ceil(original_height / src_scale)
         src_cols = math.ceil(src_width / tile_size)
         src_rows = math.ceil(src_height / tile_size)
-        
+
         tq = tqdm_or_st(range(curr_rows), backend=progress)
         for row in tq:
             for col in range(curr_cols):
                 # Combine 4 tiles from source level
                 combined = np.zeros((tile_size * 2, tile_size * 2, 3), dtype=np.uint8)
                 has_any_tile = False
-                
+
                 for dy in range(2):
                     for dx in range(2):
                         src_col = col * 2 + dx
                         src_row = row * 2 + dy
-                        
+
                         if src_col < src_cols and src_row < src_rows:
                             src_path = src_dir / f'{src_col}_{src_row}.jpeg'
                             if src_path.exists():
@@ -795,7 +643,7 @@ class PyramidDziExportProcessor:
                                 combined[dy*tile_size:dy*tile_size+h,
                                         dx*tile_size:dx*tile_size+w] = src_array
                                 has_any_tile = True
-                
+
                 tile_path = curr_dir / f'{col}_{row}.jpeg'
                 if has_any_tile:
                     combined_img = Image.fromarray(combined)
@@ -803,9 +651,9 @@ class PyramidDziExportProcessor:
                     downsampled.save(tile_path, 'JPEG', quality=jpeg_quality)
                 elif fill_empty:
                     shutil.copyfile(empty_tile_path, tile_path)
-            
+
             tq.set_description(f'Generating level {curr_level}: row {row+1}/{curr_rows}')
-    
+
     def _generate_dzi_xml(self, dzi_path, width, height, tile_size):
         """Generate DZI XML file"""
         dzi_content = f'''<?xml version="1.0" encoding="utf-8"?>
@@ -818,149 +666,3 @@ class PyramidDziExportProcessor:
 '''
         with open(dzi_path, 'w', encoding='utf-8') as f:
             f.write(dzi_content)
-#         """Export HDF5 patches to DZI format with full pyramid"""
-#         import h5py
-#         import shutil
-#         import math
-#         from pathlib import Path
-#         from PIL import Image
-#         
-#         output_dir = Path(output_dir)
-#         output_dir.mkdir(parents=True, exist_ok=True)
-#         
-#         # Read HDF5
-#         with h5py.File(h5_path, 'r') as f:
-#             patches = f['patches'][:]
-#             coords = f['coordinates'][:]
-#             original_width = f.attrs['original_width']
-#             original_height = f.attrs['original_height']
-#             patch_size = f.attrs['patch_size']
-#         
-#         # Calculate grid and levels
-#         cols = (original_width + patch_size - 1) // patch_size
-#         rows = (original_height + patch_size - 1) // patch_size
-#         max_dimension = max(original_width, original_height)
-#         max_level = math.ceil(math.log2(max_dimension))
-#         
-#         if progress == 'tqdm':
-#             print(f'Original size: {original_width}x{original_height}')
-#             print(f'Patch size: {patch_size}')
-#             print(f'Grid: {cols}x{rows}')
-#             print(f'Total patches in HDF5: {len(patches)}')
-#             print(f'Max zoom level: {max_level} (Level 0 = 1x1, Level {max_level} = {max_dimension}px)')
-#         
-#         coord_to_idx = {(int(x // patch_size), int(y // patch_size)): idx 
-#                         for idx, (x, y) in enumerate(coords)}
-#         
-#         # Setup directories
-#         dzi_path = output_dir / f'{name}.dzi'
-#         files_dir = output_dir / f'{name}_files'
-#         files_dir.mkdir(exist_ok=True)
-#         
-#         # Create empty tile
-#         empty_tile_path = None
-#         if fill_empty:
-#             empty_tile_path = files_dir / '_empty.jpeg'
-#             black_img = Image.fromarray(np.zeros((patch_size, patch_size, 3), dtype=np.uint8))
-#             black_img.save(empty_tile_path, 'JPEG', quality=jpeg_quality)
-#         
-#         # Export max level (original patches)
-#         level_dir = files_dir / str(max_level)
-#         level_dir.mkdir(exist_ok=True)
-#         
-#         tq = tqdm_or_st(range(rows), backend=progress)
-#         for row in tq:
-#             for col in range(cols):
-#                 tile_path = level_dir / f'{col}_{row}.jpeg'
-#                 if (col, row) in coord_to_idx:
-#                     idx = coord_to_idx[(col, row)]
-#                     patch = patches[idx]
-#                     img = Image.fromarray(patch)
-#                     img.save(tile_path, 'JPEG', quality=jpeg_quality)
-#                 elif fill_empty:
-#                     shutil.copyfile(empty_tile_path, tile_path)
-#         
-#         # Generate lower levels by downsampling
-#         for level in range(max_level - 1, -1, -1):
-#             if progress == 'tqdm':
-#                 print(f'Generating level {level}...')
-#             self._generate_zoom_level_down(
-#                 files_dir, level, max_level, original_width, original_height,
-#                 patch_size, jpeg_quality, fill_empty, empty_tile_path, progress
-#             )
-#         
-#         # Generate DZI XML
-#         self._generate_dzi_xml(dzi_path, original_width, original_height, patch_size)
-#         
-#         if progress == 'tqdm':
-#             print(f'DZI export complete: {dzi_path}')
-#     
-#     def _generate_zoom_level_down(self, files_dir, curr_level, max_level, original_width, original_height,
-#                                    tile_size, jpeg_quality, fill_empty, empty_tile_path, progress):
-#         """Generate a zoom level by downsampling from the higher level"""
-#         import math
-#         import shutil
-#         from pathlib import Path
-#         
-#         src_level = curr_level + 1
-#         src_dir = files_dir / str(src_level)
-#         curr_dir = files_dir / str(curr_level)
-#         curr_dir.mkdir(exist_ok=True)
-#         
-#         # Calculate dimensions at each level
-#         curr_scale = 2 ** (max_level - curr_level)
-#         curr_width = math.ceil(original_width / curr_scale)
-#         curr_height = math.ceil(original_height / curr_scale)
-#         curr_cols = math.ceil(curr_width / tile_size)
-#         curr_rows = math.ceil(curr_height / tile_size)
-#         
-#         src_scale = 2 ** (max_level - src_level)
-#         src_width = math.ceil(original_width / src_scale)
-#         src_height = math.ceil(original_height / src_scale)
-#         src_cols = math.ceil(src_width / tile_size)
-#         src_rows = math.ceil(src_height / tile_size)
-#         
-#         tq = tqdm_or_st(range(curr_rows), backend=progress)
-#         for row in tq:
-#             for col in range(curr_cols):
-#                 # Combine 4 tiles from source level
-#                 combined = np.zeros((tile_size * 2, tile_size * 2, 3), dtype=np.uint8)
-#                 has_any_tile = False
-#                 
-#                 for dy in range(2):
-#                     for dx in range(2):
-#                         src_col = col * 2 + dx
-#                         src_row = row * 2 + dy
-#                         
-#                         if src_col < src_cols and src_row < src_rows:
-#                             src_path = src_dir / f'{src_col}_{src_row}.jpeg'
-#                             if src_path.exists():
-#                                 src_img = Image.open(src_path)
-#                                 src_array = np.array(src_img)
-#                                 h, w = src_array.shape[:2]
-#                                 combined[dy*tile_size:dy*tile_size+h,
-#                                         dx*tile_size:dx*tile_size+w] = src_array
-#                                 has_any_tile = True
-#                 
-#                 tile_path = curr_dir / f'{col}_{row}.jpeg'
-#                 if has_any_tile:
-#                     combined_img = Image.fromarray(combined)
-#                     downsampled = combined_img.resize((tile_size, tile_size), Image.LANCZOS)
-#                     downsampled.save(tile_path, 'JPEG', quality=jpeg_quality)
-#                 elif fill_empty:
-#                     shutil.copyfile(empty_tile_path, tile_path)
-#             
-#             tq.set_description(f'Generating level {curr_level}: row {row+1}/{curr_rows}')
-#     
-#     def _generate_dzi_xml(self, dzi_path, width, height, tile_size):
-#         """Generate DZI XML file"""
-#         dzi_content = f'''<?xml version="1.0" encoding="utf-8"?>
-# <Image xmlns="http://schemas.microsoft.com/deepzoom/2008"
-#        Format="jpeg"
-#        Overlap="0"
-#        TileSize="{tile_size}">
-#     <Size Width="{width}" Height="{height}"/>
-# </Image>
-# '''
-#         with open(dzi_path, 'w', encoding='utf-8') as f:
-#             f.write(dzi_content)

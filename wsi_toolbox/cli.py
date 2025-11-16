@@ -33,6 +33,7 @@ from gigapath import slide_encoder
 from .processor import WSIProcessor, TileProcessor, ClusterProcessor, \
         PreviewClustersProcessor, PreviewScoresProcessor, PreviewLatentPCAProcessor, PreviewLatentClusterProcessor, \
         PyramidDziExportProcessor
+from .commands import Wsi2HDF5Command
 from .common import DEFAULT_MODEL, create_model
 from .utils import plot_umap
 from .utils.cli import BaseMLCLI, BaseMLArgs
@@ -79,9 +80,16 @@ class CLI(BaseMLCLI):
         if d:
             os.makedirs(d, exist_ok=True)
 
-        p = WSIProcessor(a.input_path, engine=a.engine, mpp=a.mpp)
-        p.convert_to_hdf5(output_path, patch_size=a.patch_size, rotate=a.rotate, progress='tqdm')
-        print('done')
+        # Use new command pattern
+        cmd = Wsi2HDF5Command(
+            patch_size=a.patch_size,
+            engine=a.engine,
+            mpp=a.mpp,
+            rotate=a.rotate,
+            progress='tqdm'
+        )
+        result = cmd(a.input_path, output_path)
+        print(f"done: {result['patch_count']} patches extracted")
 
     class ProcessPatchesArgs(CommonArgs):
         input_path: str = Field(..., l='--in', s='-i')
