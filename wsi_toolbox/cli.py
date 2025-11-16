@@ -30,7 +30,7 @@ import timm
 from gigapath import slide_encoder
 
 from . import commands
-from .models import DEFAULT_MODEL, create_model
+from .models import create_model
 from .utils import plot_umap
 from .utils.cli import BaseMLCLI, BaseMLArgs
 from .utils.analysis import leiden_cluster
@@ -40,7 +40,10 @@ from .utils.progress import tqdm_or_st
 warnings.filterwarnings('ignore', category=FutureWarning, message='.*force_all_finite.*')
 warnings.filterwarnings('ignore', category=FutureWarning, message="You are using `torch.load` with `weights_only=False`")
 
+DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'uni')
+
 commands.set_default_progress('tqdm')
+commands.set_default_model(DEFAULT_MODEL)
 
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
@@ -94,7 +97,6 @@ class CLI(BaseMLCLI):
         with_latent_features: bool = Field(False, s='-L')
 
     def run_embed(self, a:EmbedArgs):
-        commands.set_default_model(a.model_name)
         commands.set_default_device(a.device)
 
         # Use new command pattern

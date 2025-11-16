@@ -22,7 +22,7 @@ import streamlit as st
 sys.path.append(str(P(__file__).parent))
 __package__ = 'wsi_toolbox'
 
-from .models import DEFAULT_MODEL, MODEL_LABELS, MODEL_NAMES_BY_LABEL
+from .models import MODEL_LABELS, MODEL_NAMES_BY_LABEL
 from .utils.progress import tqdm_or_st
 from .utils.st import st_horizontal
 from .utils import plot_umap
@@ -38,6 +38,9 @@ commands.set_default_progress('streamlit')
 commands.set_default_device('cuda')
 
 Image.MAX_IMAGE_PIXELS = 3_500_000_000
+
+BASE_DIR = os.getenv('BASE_DIR', 'data')
+DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'uni')
 
 # Global constants
 BATCH_SIZE = 256
@@ -405,10 +408,6 @@ def render_file_list(files: List[FileEntry]) -> List[FileEntry]:
 
     selected_files = [files[int(i)] for i in selected_rows.index]
     return selected_files
-
-
-
-BASE_DIR = os.getenv('BASE_DIR', 'data')
 
 
 def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):

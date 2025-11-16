@@ -6,7 +6,6 @@ Design pattern: __init__ for configuration, __call__ for execution
 
 from pydantic import BaseModel, Field
 
-from ..models import DEFAULT_MODEL
 from ..utils.progress import tqdm_or_st
 
 
@@ -14,7 +13,7 @@ from ..utils.progress import tqdm_or_st
 class Config(BaseModel):
     """Global configuration for commands"""
     progress: str = Field(default='tqdm', description="Progress bar backend")
-    model_name: str = Field(default=DEFAULT_MODEL, description="Default model name")
+    model_name: str = Field(default='uni', description="Default model name")
     verbose: bool = Field(default=True, description="Verbose output")
     device: str = Field(default='cuda', description="Device for computation")
 

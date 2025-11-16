@@ -7,9 +7,10 @@ from typing import Dict, Set, Callable, Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from .models import DEFAULT_MODEL, MODEL_LABELS
 from .utils import plot_umap
 from . import commands
+
+DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'uni')
 
 class Status:
     PROCESSING = "PROCESSING"
@@ -41,6 +42,9 @@ class Task:
         self.on_complete = on_complete
         self.wsi_files = list(folder.glob("**/*.ndpi")) + list(folder.glob("**/*.svs"))
         self.wsi_files.sort()
+
+        commands.set_default_progress('tqdm')
+        commands.set_default_model(self.model_name)
 
     def write_banner(self):
         """処理開始時のバナーをログに書き込み"""
@@ -86,8 +90,6 @@ class Task:
                     # 特徴量抽出（既存の場合はスキップ）
                     self.append_log("Extracting features...")
                     # Use new command pattern
-                    commands.set_default_progress('tqdm')
-                    commands.set_default_model(self.model_name)
                     commands.set_default_device('cuda')
                     emb_cmd = commands.PatchEmbeddingCommand()
                     emb_result = emb_cmd(str(hdf5_file))
@@ -96,7 +98,6 @@ class Task:
                     # クラスタリングとUMAP生成
                     self.append_log("Starting clustering ...")
                     # Use new command pattern
-                    commands.set_default_model(self.model_name)
                     cluster_cmd = commands.ClusteringCommand(
                         resolution=1.0,
                         use_umap=True
@@ -122,7 +123,6 @@ class Task:
                     thumb_path = Path(f"{base}_thumb.jpg")
                     if not thumb_path.exists():
                         # Use new command pattern
-                        commands.set_default_model(self.model_name)
                         preview_cmd = commands.PreviewClustersCommand(size=64)
                         img = preview_cmd(str(hdf5_file), cluster_name='')
                         img.save(thumb_path)

@@ -12,18 +12,9 @@ MODEL_LABELS = {
 MODEL_NAMES_BY_LABEL = {v: k for k, v in MODEL_LABELS.items()}
 MODEL_NAMES = list(MODEL_LABELS.keys())
 
-DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'uni')
-# EMBEDDING_SIZE = 1024
 
-# DEFAULT_MODEL = 'gigapath'
-# EMBEDDING_SIZE = 1536
-
-# DEFAULT_MODEL = 'virchow2'
-# EMBEDDING_SIZE = 1280
-
-# DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'gigapath')
-
-print(f'DEFAULT_MODEL {DEFAULT_MODEL} ')
+def get_model_label(model_name) -> str:
+    return MODEL_LABELS.get(model_name, model_name)
 
 def create_model(model_name):
     if model_name == 'uni':
