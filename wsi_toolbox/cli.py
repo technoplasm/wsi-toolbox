@@ -29,7 +29,6 @@ from torch.amp import autocast
 import timm
 from gigapath import slide_encoder
 
-# Processor imports removed - using commands pattern instead
 from . import commands
 from .models import DEFAULT_MODEL, create_model
 from .utils import plot_umap
