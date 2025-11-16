@@ -66,13 +66,6 @@ name = "pytorch"
 url = "https://download.pytorch.org/whl/cu121"
 
 [project.optional-dependencies]
-# Slide-level encoding (CLI only)
-gigapath = [
-    "gigapath @ git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0",
-    "flash-attn>=2.7.4",
-    "einops>=0.8.1",
-    "fairscale>=0.4.13",
-]
 build = ["torch", "packaging", "wheel", "setuptools"]
 compile = ["flash-attn"]
 

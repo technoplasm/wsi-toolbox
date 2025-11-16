@@ -10,13 +10,6 @@ A comprehensive toolkit for Whole Slide Image (WSI) processing, feature extracti
 pip install wsi-toolbox
 ```
 
-### With optional dependencies
-
-```bash
-# For slide-level encoding (gigapath)
-pip install wsi-toolbox[gigapath]
-```
-
 ### For development
 
 ```bash
@@ -26,9 +19,12 @@ cd WSI-toolbox
 
 # Install dependencies
 uv sync
+```
 
-# For gigapath slide encoder
-uv sync --extra gigapath
+**Note**: For gigapath slide-level encoder (CLI only), install manually:
+```bash
+pip install git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0
+pip install flash-attn einops fairscale
 ```
 
 ## Quick Start
@@ -168,6 +164,12 @@ python -m twine check dist/*
 
 #### Deploy to PyPI
 
+**Prerequisites**: Install build tools first
+```bash
+uv sync --group build
+```
+
+**Deploy**:
 ```bash
 # Using deploy script (recommended)
 ./deploy.sh
@@ -178,7 +180,7 @@ python -m twine check dist/*
 python -m twine upload dist/*
 ```
 
-**Note**: Make sure you have configured your PyPI credentials before deploying:
+**Note**: Configure your PyPI credentials before deploying:
 ```bash
 # Create ~/.pypirc with your API token
 # Or use environment variables
