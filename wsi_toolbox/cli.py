@@ -30,10 +30,10 @@ from torch.amp import autocast
 import timm
 from gigapath import slide_encoder
 
-from .processor import WSIProcessor, TileProcessor, ClusterProcessor, \
+from .processor import TileProcessor, ClusterProcessor, \
         PreviewClustersProcessor, PreviewScoresProcessor, PreviewLatentPCAProcessor, PreviewLatentClusterProcessor, \
         PyramidDziExportProcessor
-from .commands import Wsi2HDF5Command
+from . import commands
 from .common import DEFAULT_MODEL, create_model
 from .utils import plot_umap
 from .utils.cli import BaseMLCLI, BaseMLArgs
@@ -65,6 +65,9 @@ class CLI(BaseMLCLI):
         rotate: bool = False
 
     def run_wsi2h5(self, a:Wsi2h5Args):
+        # Set global defaults (once per CLI execution)
+        commands.set_default_progress('tqdm')
+
         output_path = a.output_path
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
@@ -80,13 +83,12 @@ class CLI(BaseMLCLI):
         if d:
             os.makedirs(d, exist_ok=True)
 
-        # Use new command pattern
-        cmd = Wsi2HDF5Command(
+        # Use new command pattern (progress is auto-set from global config)
+        cmd = commands.Wsi2HDF5Command(
             patch_size=a.patch_size,
             engine=a.engine,
             mpp=a.mpp,
-            rotate=a.rotate,
-            progress='tqdm'
+            rotate=a.rotate
         )
         result = cmd(a.input_path, output_path)
         print(f"done: {result['patch_count']} patches extracted")
@@ -99,12 +101,21 @@ class CLI(BaseMLCLI):
         with_latent_features: bool = Field(False, s='-L')
 
     def run_process_patches(self, a):
-        tp = TileProcessor(model_name=a.model_name, device='cuda')
-        tp.evaluate_hdf5_file(a.input_path,
-                              batch_size=a.batch_size,
-                              with_latent_features=a.with_latent_features,
-                              overwrite=a.overwrite,
-                              progress='tqdm')
+        # Set global config
+        commands.set_default_progress('tqdm')
+        commands.set_default_model(a.model_name)
+        commands.set_default_device(a.device)
+
+        # Use new command pattern
+        cmd = commands.TileEmbeddingCommand(
+            batch_size=a.batch_size,
+            with_latent=a.with_latent_features,
+            overwrite=a.overwrite
+        )
+        result = cmd(a.input_path)
+
+        if not result.get('skipped'):
+            print(f"done: {result['feature_dim']}D features extracted")
 
 
     class ProcessSlideArgs(CommonArgs):
@@ -166,17 +177,19 @@ class CLI(BaseMLCLI):
         overwrite: bool = Field(False, s='-O')
 
     def run_cluster(self, a:ClusterArgs):
-        cluster_proc = ClusterProcessor(
-                a.input_paths,
-                model_name=a.model,
-                cluster_name=a.cluster_name,
-                cluster_filter=a.sub,
-                )
-        cluster_proc.anlyze_clusters(
-                resolution=a.resolution,
-                use_umap_embs=a.use_umap_embs,
-                overwrite=a.overwrite,
-                progress='tqdm')
+        # Set global config
+        commands.set_default_progress('tqdm')
+        commands.set_default_model(a.model)
+
+        # Use new command pattern
+        cmd = commands.ClusteringCommand(
+            resolution=a.resolution,
+            cluster_name=a.cluster_name,
+            cluster_filter=a.sub,
+            use_umap=a.use_umap_embs,
+            overwrite=a.overwrite
+        )
+        result = cmd(a.input_paths)
 
         if len(a.input_paths) > 1:
             # multiple
@@ -462,7 +475,7 @@ class CLI(BaseMLCLI):
         output_dir = P(a.output_dir)
 
         processor = PyramidDziExportProcessor()
-        
+
         processor.export_to_dzi(
             h5_path=a.input_h5,
             output_dir=str(output_dir),

@@ -98,7 +98,6 @@ def tqdm_or_st(iterable: Optional[Iterable[T]] = None,
     Returns:
         tqdm または StreamlitProgress オブジェクト
     """
-
     # if backend == "auto":
     #     try:
     #         import streamlit as st

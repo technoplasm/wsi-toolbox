@@ -4,8 +4,6 @@ import timm
 from timm.layers import SwiGLUPacked
 
 
-DEFAULT_BACKEND = 'tqdm'
-
 MODEL_LABELS = {
     'uni':  'UNI',
     'gigapath':  'Prov-Gigapath',

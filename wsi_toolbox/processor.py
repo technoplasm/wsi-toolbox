@@ -21,7 +21,7 @@ import networkx as nx
 import leidenalg as la
 import igraph as ig
 
-from .common import create_model, DEFAULT_MODEL, DEFAULT_BACKEND
+from .common import create_model, DEFAULT_MODEL
 from .utils import create_frame, get_platform_font, plot_umap
 from .utils.progress import tqdm_or_st
 from .utils.analysis import leiden_cluster
@@ -59,7 +59,7 @@ class WSIProcessor:
         self.mpp = self.original_mpp * self.scale
 
 
-    def convert_to_hdf5(self, hdf5_path, patch_size=256, rotate=False, progress=DEFAULT_BACKEND):
+    def convert_to_hdf5(self, hdf5_path, patch_size=256, rotate=False, progress='tqdm'):
         S = patch_size   # Scaled patch size
         T = S*self.scale # Original patch size
         W, H = self.wsi.get_original_size()
@@ -146,7 +146,7 @@ class TileProcessor:
 
     def evaluate_hdf5_file(self, hdf5_path, batch_size=256,
                            with_latent_features=False,
-                           overwrite=False, progress=DEFAULT_BACKEND):
+                           overwrite=False, progress='tqdm'):
         model = create_model(self.model_name)
         model = model.eval().to(self.device)
 
@@ -318,7 +318,7 @@ class ClusterProcessor:
                         resolution=1.0,
                         use_umap_embs=False,
                         overwrite=False,
-                        progress=DEFAULT_BACKEND
+                        progress='tqdm'
                         ):
         if not self.sub_clustering and self.has_clusters and not overwrite:
             print('Skip clustering')
