@@ -27,7 +27,6 @@ import torch
 from torchvision import transforms
 from torch.amp import autocast
 import timm
-from gigapath import slide_encoder
 
 from . import commands
 from .models import create_model
@@ -116,6 +115,8 @@ class CLI(BaseMLCLI):
         overwrite: bool = Field(False, s='-O')
 
     def run_process_slide(self, a:ProcessSlideArgs):
+        from gigapath import slide_encoder
+
         with h5py.File(a.input_path, 'a') as f:
             if 'gigapath/slide_feature' in f:
                 if not a.overwrite:
@@ -474,6 +475,11 @@ class CLI(BaseMLCLI):
         print(f'Export completed: {result["dzi_path"]}')
 
 
-if __name__ == '__main__':
+def main():
+    """Entry point for wsi-toolbox CLI command."""
     cli = CLI()
     cli.run()
+
+
+if __name__ == '__main__':
+    main()

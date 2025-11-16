@@ -1,105 +1,191 @@
 # WSI Toolbox
 
+A comprehensive toolkit for Whole Slide Image (WSI) processing, feature extraction, and clustering analysis.
 
-## Python environment management
+## Installation
 
-パッケージなどインストール
+### From PyPI
 
-```
-$ uv sync
-
-# for flash-attn
-$ uv sync --extra build
-$ uv sync --extra build --extra compile
+```bash
+pip install wsi-toolbox
 ```
 
+### With optional dependencies
 
-
-仮想環境に入る
-
-```
-$ sourve .venv/bin/activate
-```
-
-
-
-## Usage
-
-
-### Convert WSI into hdf5
-
-WSIファイルをパッチ分割してHDF5に固める
-
-```
-$ python -m wsi_toolbox.main wsi2h5 -i data/DLBCL-Morph/13952_0.svs -o out/13952_0.h5 --patch-size 256
+```bash
+# For slide-level encoding (gigapath)
+pip install wsi-toolbox[gigapath]
 ```
 
-指定したパッチサイズになるように0.4〜0.5mppでパッチ分割したものを座標とともに保存。メタデータにもいろいろ保存しておく。
+### For development
 
-```
-'patches'                 : パッチのデータ dim:[<patch_count>, <patch_size[0]>, <patch_size[1]>, 3]
-                            ex) [3237, 256, 256, 3] のようなテンソル
-'coordinates'             : 各パッチのピクセル単位の座標 dim:[<patch_count>, 2]
+```bash
+# Clone repository
+git clone https://github.com/endaaman/WSI-toolbox.git
+cd WSI-toolbox
 
-'metadata/original_mpp'   : もともとのmpp
-'metadata/original_width' : もともとの画像の幅（level=0）
-'metadata/original_height': もともとの画像の幅（level=0）
-'metadata/image_level'    : 使ったレベル（基本的にはlevel=0になる）
-'metadata/mpp'            : 出力されたパッチのmpp
-'metadata/scale'          : 出力時のscale
-'metadata/patch_size'     : パッチの解像度
-'metadata/patch_count'    : パッチの総数
-'metadata/cols'           : パッチを並べたときの横方向の数
-'metadata/rows'           : パッチを並べたときの縦方向の数
+# Install dependencies
+uv sync
 
-'gigapath/features'       : GigaPathで抽出した特等量 dim:[<patch_count>, 1536]
-'gigapath/slide_feature'  : Slide level encoderで抽出した特徴量 dim: [768]
-'gigapath/clusters'       : 上記からPCA+leidenで取得したクラスタ番号 dim:[<patch_count>]
-
-'uni/features'            : UNIで抽出した特等量 dim:[<patch_count>, 1024]
-'uni/clusters'            : 上記からPCA+leidenで取得したクラスタ番号 dim:[<patch_count>]
-
-'unified/clusters'        : GigaPathとUNIの特徴量を結合したあとPCA+leidenで取得したクラスタ番号 dim:[<patch_count>]
+# For gigapath slide encoder
+uv sync --extra gigapath
 ```
 
+## Quick Start
 
-### Calculate embeddings for each patch
+### As a Python Library
 
-GigaPathで各パッチの特徴量を抽出
+```python
+import wsi_toolbox as wt
 
-```
-$ python -m wsi_toolbox.main process-patches -i out/13952_0.h5 -B 256
-```
-
-デフォルトではGigaPathを使って`h5`ファイルの`gigapath/features` に書き込まれる。UNIを使うときは`--model uni`で`uni/features`
-
-
-例）WSIをまとめてHDFに変換
-
+# Basic workflow
+wt.set_default_model('uni')
+cmd = wt.Wsi2HDF5Command(patch_size=256)
+result = cmd('input.ndpi', 'output.h5')
 ```
 
-$ ls data/DLBCL-Morph/*.svs | xargs -n1 basename | awk -F_ '{print $1" "$0}' | xargs -I{} sh -c 'set -- {}; pueue add python -m wsi_toolbox.main wsi2h5 --in "data/DLBCL-Morph/$2" --out "out/dataset/$1/${2%.svs}_256.h5" --patch-size 256'
+**See [README_API.md](README_API.md) for comprehensive API documentation** (detailed examples, command patterns, utilities, etc.)
+
+### As a CLI Tool
+
+```bash
+# Convert WSI to HDF5
+wsi-toolbox wsi2h5 --in input.ndpi --out output.h5 --patch-size 256
+
+# Extract features
+wsi-toolbox embed --in output.h5 --model uni
+
+# Clustering
+wsi-toolbox cluster --in output.h5 --resolution 1.0
+
+# For all commands
+wsi-toolbox --help
 ```
 
-`data/DLBCL-Morph/13952_0.svs` のように保存されているのを `out/dataset/13952/13952_0.h5` というような形式で保存する。
+### Streamlit Web Application
 
-### Clustering
-
-UMAPで次元削減し、HDBSCANでクラスタリング
-
-```
-$ python -m wsi_toolbox.main cluster -i out/13952_0.h5
+```bash
+uv run task app
 ```
 
-デフォルトでは`gigapath/features`を読み取って、`gigapath/clusters` にクラスタ番号を保存
+## HDF5 File Structure
 
+WSI-toolbox stores all data in a single HDF5 file:
 
-### Preview
+```python
+# Core data
+'patches'                      # Patch images: [N, H, W, 3], e.g., [3237, 256, 256, 3]
+'coordinates'                  # Patch pixel coordinates: [N, 2]
 
-白色でスキップされたパッチや、パッチのクラスタを確認
+# Metadata
+'metadata/original_mpp'        # Original microns per pixel
+'metadata/original_width'      # Original image width (level=0)
+'metadata/original_height'     # Original image height (level=0)
+'metadata/image_level'         # Image level used (typically 0)
+'metadata/mpp'                 # Output patch MPP
+'metadata/scale'               # Scale factor
+'metadata/patch_size'          # Patch size (e.g., 256)
+'metadata/patch_count'         # Total patch count
+'metadata/cols'                # Grid columns
+'metadata/rows'                # Grid rows
 
+# Model features (per model: uni, gigapath, virchow2)
+'{model}/features'             # Patch features: [N, D]
+                               #   uni: [N, 1024]
+                               #   gigapath: [N, 1536]
+                               #   virchow2: [N, 2560]
+'{model}/latent_features'      # Latent features (optional): [N, K, K, D]
+'{model}/clusters'             # Cluster labels: [N]
+
+# Gigapath slide-level (CLI only)
+'gigapath/slide_feature'       # Slide-level features: [768]
 ```
-$ python -m wsi_toolbox.main preview -i out/13952_0.h5
+
+## Features
+
+- WSI processing (.ndpi, .svs, .tiff → HDF5)
+- Feature extraction (UNI, Gigapath, Virchow2)
+- Leiden clustering with UMAP visualization
+- Preview generation (cluster overlays, latent PCA)
+- Type-safe command pattern with Pydantic results
+- CLI, Python API, and Streamlit GUI
+
+## Documentation
+
+- [API Guide](README_API.md) - Comprehensive Python API documentation (日本語)
+- [CLAUDE.md](CLAUDE.md) - Development guidelines
+
+## Development
+
+### Setup Development Environment
+
+```bash
+# Clone repository
+git clone https://github.com/endaaman/wsi-toolbox.git
+cd wsi-toolbox
+
+# Install all dependencies
+uv sync
+
+# Install with optional gigapath support
+uv sync --extra gigapath
+
+# Install build tools
+uv sync --group build
 ```
 
-`gigapath/clusters` に前段で計算したクラスタがあればその番号と色を反映したフレームも一緒に描画する。
+### Run Tests and Development Tools
+
+```bash
+# Run CLI
+uv run wsi-toolbox --help
+
+# Run Streamlit app
+uv run task app
+
+# Run watcher
+uv run task watcher
+```
+
+### Build and Deploy
+
+#### Build Package
+
+```bash
+# Clean previous builds
+uv run task clean
+
+# Build package
+uv run task build
+# or
+python -m build
+
+# Check package integrity
+uv run task check
+# or
+python -m twine check dist/*
+```
+
+#### Deploy to PyPI
+
+```bash
+# Using deploy script (recommended)
+./deploy.sh
+
+# Or manually
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/*
+```
+
+**Note**: Make sure you have configured your PyPI credentials before deploying:
+```bash
+# Create ~/.pypirc with your API token
+# Or use environment variables
+export TWINE_USERNAME=__token__
+export TWINE_PASSWORD=<your-pypi-token>
+```
+
+## License
+
+MIT

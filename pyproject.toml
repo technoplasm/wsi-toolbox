@@ -3,18 +3,24 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "WSI-toolbox"
+name = "wsi-toolbox"
 version = "0.1.0"
-description = ""
+description = "A comprehensive toolkit for Whole Slide Image processing, feature extraction, and clustering analysis"
 readme = "README.md"
-requires-python = "==3.11.*"
-root = "."
-package-dir = {"" = "."}
-
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Ken Enda", email = "ken@endaaman.com"},
+]
+keywords = ["wsi", "pathology", "deep-learning", "clustering", "histopathology"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 dependencies = [
-    "einops>=0.8.1",
-    "fairscale>=0.4.13",
-    "gigapath",
     "h5py>=3.13.0",
     "hdbscan>=0.8.40",
     "imagecodecs>=2024.12.30",
@@ -40,22 +46,33 @@ dependencies = [
     "streamlit-aggrid>=0.3.4.post3",
     "taskipy>=1.14.1",
     "tifffile>=2025.2.18",
-    "timm==0.9.16",
-    "torch==2.5.1",
-    "torchvision==0.20.1",
+    "timm>=0.9.16",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
     "umap-learn>=0.5.7",
     "zarr>=3",
 ]
 
-[tool.uv.sources]
-gigapath = { git = "https://github.com/prov-gigapath/prov-gigapath.git", rev = "5d77be0"}
-torch = { index = "pytorch" }
+[project.scripts]
+wsi-toolbox = "wsi_toolbox.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/endaaman/wsi-toolbox"
+Repository = "https://github.com/endaaman/wsi-toolbox"
+Documentation = "https://github.com/endaaman/wsi-toolbox/blob/master/README.md"
 
 [[tool.uv.index]]
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu121"
 
 [project.optional-dependencies]
+# Slide-level encoding (CLI only)
+gigapath = [
+    "gigapath @ git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0",
+    "flash-attn>=2.7.4",
+    "einops>=0.8.1",
+    "fairscale>=0.4.13",
+]
 build = ["torch", "packaging", "wheel", "setuptools"]
 compile = ["flash-attn"]
 
@@ -72,6 +89,12 @@ requires-dist = ["torch", "einops"]
 cli = "python -m wsi_toolbox.cli"
 app = "streamlit run wsi_toolbox/app.py --server.address 0.0.0.0 --server.port ${PORT:-8501}"
 watcher = "python -m wsi_toolbox.watcher"
+clean = "rm -rf build/ dist/ *.egg-info/ __pycache__/ && find . -name '*.pyc' -delete && find . -name '__pycache__' -delete"
+build = "python -m build"
+check = "python -m twine check dist/*"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["wsi_toolbox"]
@@ -80,4 +103,8 @@ packages = ["wsi_toolbox"]
 dev = [
     "ipython>=9.1.0",
     "jupyterlab>=4.1.6",
+]
+build = [
+    "build>=1.0.0",
+    "twine>=5.0.0",
 ]

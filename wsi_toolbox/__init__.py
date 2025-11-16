@@ -69,7 +69,6 @@ from .wsi_files import (
 
 # Models
 from .models import (
-    DEFAULT_MODEL,
     MODEL_LABELS,
     create_model,
 )
@@ -111,7 +110,6 @@ __all__ = [
     'create_wsi_file',
 
     # Models
-    'DEFAULT_MODEL',
     'MODEL_LABELS',
     'create_model',
 
