@@ -9,8 +9,18 @@ from pathlib import Path
 import h5py
 import numpy as np
 from PIL import Image
+from pydantic import BaseModel
 
 from . import _progress, get_config
+
+
+class DziExportResult(BaseModel):
+    """Result of DZI export"""
+
+    dzi_path: str
+    max_level: int
+    tile_size: int
+    grid: str
 
 
 class DziExportCommand:
@@ -33,7 +43,7 @@ class DziExportCommand:
         self.jpeg_quality = jpeg_quality
         self.fill_empty = fill_empty
 
-    def __call__(self, hdf5_path: str, output_dir: str, name: str) -> dict:
+    def __call__(self, hdf5_path: str, output_dir: str, name: str) -> DziExportResult:
         """
         Export to DZI format with full pyramid
 
@@ -43,7 +53,7 @@ class DziExportCommand:
             name: Base name for DZI files
 
         Returns:
-            dict: Export metadata
+            DziExportResult: Export metadata
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -118,7 +128,7 @@ class DziExportCommand:
         if get_config().verbose:
             print(f"DZI export complete: {dzi_path}")
 
-        return {"dzi_path": str(dzi_path), "max_level": max_level, "tile_size": tile_size, "grid": f"{cols}x{rows}"}
+        return DziExportResult(dzi_path=str(dzi_path), max_level=max_level, tile_size=tile_size, grid=f"{cols}x{rows}")
 
     def _generate_zoom_level_down(
         self,

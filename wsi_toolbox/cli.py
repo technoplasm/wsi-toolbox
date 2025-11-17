@@ -68,7 +68,7 @@ class CLI(BaseMLCLI):
         # Use new command pattern (progress is auto-set from global config)
         cmd = commands.Wsi2HDF5Command(patch_size=a.patch_size, engine=a.engine, mpp=a.mpp, rotate=not a.norotate)
         result = cmd(a.input_path, output_path)
-        print(f"done: {result['patch_count']} patches extracted")
+        print(f"done: {result.patch_count} patches extracted")
 
     class EmbedArgs(CommonArgs):
         input_path: str = Field(..., l="--in", s="-i")
@@ -427,7 +427,7 @@ class CLI(BaseMLCLI):
 
         result = cmd(hdf5_path=a.input_h5, output_dir=str(output_dir), name=name)
 
-        print(f"Export completed: {result['dzi_path']}")
+        print(f"Export completed: {result.dzi_path}")
 
 
 def main():
