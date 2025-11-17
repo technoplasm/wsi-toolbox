@@ -3781,7 +3781,7 @@ requires-dist = [
     { name = "wheel", marker = "extra == 'build'" },
     { name = "zarr", specifier = ">=3" },
 ]
-provides-extras = ["gigapath", "build", "compile"]
+provides-extras = ["build", "compile", "gigapath"]
 
 [package.metadata.requires-dev]
 build = [

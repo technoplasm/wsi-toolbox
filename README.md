@@ -21,10 +21,14 @@ cd WSI-toolbox
 uv sync
 ```
 
-**Note**: For gigapath slide-level encoder (CLI only), install manually:
+**Note**: For gigapath slide-level encoder (CLI only):
 ```bash
-pip install git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0
-pip install flash-attn einops fairscale
+# For flash-attn (requires CUDA, takes time to build)
+uv sync --extra build
+uv sync --extra build --extra compile
+
+# Then install gigapath
+uv sync --extra gigapath
 ```
 
 ## Quick Start
