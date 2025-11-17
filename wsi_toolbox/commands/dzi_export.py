@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 from PIL import Image
 
-from . import get_config, _progress
+from . import _progress, get_config
 
 
 class DziExportCommand:

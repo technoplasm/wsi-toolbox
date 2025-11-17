@@ -8,11 +8,12 @@ Provides unified interface for different WSI formats:
 """
 
 import os
+
 import cv2
 import numpy as np
-from openslide import OpenSlide
 import tifffile
 import zarr
+from openslide import OpenSlide
 
 
 class WSIFile:

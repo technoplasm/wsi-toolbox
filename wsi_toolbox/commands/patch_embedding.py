@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from ..models import create_model
 from ..utils.helpers import safe_del
-from . import get_config, _get, _progress
+from . import _get, _progress, get_config
 
 
 class PatchEmbeddingResult(BaseModel):

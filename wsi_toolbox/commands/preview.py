@@ -4,10 +4,11 @@ Preview generation commands using Template Method Pattern
 
 import h5py
 import numpy as np
+from matplotlib import colors as mcolors
+from matplotlib import pyplot as plt
 from PIL import Image, ImageFont
-from matplotlib import pyplot as plt, colors as mcolors
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler
 
 from ..utils import create_frame, get_platform_font
 from . import _get, _progress

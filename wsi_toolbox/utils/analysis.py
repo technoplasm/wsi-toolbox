@@ -1,14 +1,14 @@
 import multiprocessing
-import numpy as np
-from sklearn.decomposition import PCA
-from sklearn.neighbors import NearestNeighbors
-import networkx as nx
+
 import igraph as ig
 import leidenalg as la
+import networkx as nx
+import numpy as np
 from joblib import Parallel, delayed
+from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
 
 from .progress import tqdm_or_st
-
 
 
 def find_optimal_components(features, threshold=0.95):
@@ -58,28 +58,28 @@ def leiden_cluster(features, umap_emb_func=None, resolution=1.0, n_jobs=-1, prog
 
     # 1. UMAP cluster if needed
     if use_umap_embs:
-        tq.set_description(f'UMAP projection...')
+        tq.set_description('UMAP projection...')
         umap_embeddings = umap_emb_func()
         tq.update(1)
     else:
         umap_embeddings = None
 
     # 2. pre-PCA
-    tq.set_description(f'Processing PCA...')
+    tq.set_description('Processing PCA...')
     n_components = find_optimal_components(features)
     pca = PCA(n_components)
     target_features = pca.fit_transform(features)
     tq.update(1)
 
     # 3. KNN
-    tq.set_description(f'Processing KNN...')
+    tq.set_description('Processing KNN...')
     k = int(np.sqrt(len(target_features)))
     nn = NearestNeighbors(n_neighbors=k).fit(target_features)
     distances, indices = nn.kneighbors(target_features)
     tq.update(1)
 
     # 4. Build graph
-    tq.set_description(f'Processing edges...')
+    tq.set_description('Processing edges...')
     G = nx.Graph()
     G.add_nodes_from(range(n_samples))
 
@@ -99,7 +99,7 @@ def leiden_cluster(features, umap_emb_func=None, resolution=1.0, n_jobs=-1, prog
     tq.update(1)
 
     # 5. Leiden clustering
-    tq.set_description(f'Leiden clustering...')
+    tq.set_description('Leiden clustering...')
     edges = list(G.edges())
     weights = [G[u][v]['weight'] for u, v in edges]
     ig_graph = ig.Graph(n=n_samples, edges=edges, edge_attrs={'weight': weights})
@@ -115,7 +115,7 @@ def leiden_cluster(features, umap_emb_func=None, resolution=1.0, n_jobs=-1, prog
     tq.update(1)
 
     # 6. Finalize
-    tq.set_description(f'Finalize...')
+    tq.set_description('Finalize...')
     clusters = np.full(n_samples, -1)  # Initialize all as noise
     for i, community in enumerate(partition):
         for node in community:

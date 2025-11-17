@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sklearn.preprocessing import StandardScaler
 
 from ..utils.analysis import leiden_cluster
-from . import get_config, _get
+from . import _get, get_config
 
 
 class ClusteringResult(BaseModel):

@@ -3,7 +3,6 @@ Helper utility functions for WSI processing
 """
 
 import numpy as np
-import h5py
 
 
 def is_white_patch(patch, rgb_std_threshold=7.0, white_ratio=0.7):

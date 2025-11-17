@@ -1,14 +1,13 @@
+import argparse
 import os
 import time
-import argparse
-import asyncio
 from pathlib import Path
-from typing import Dict, Set, Callable, Optional
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from typing import Callable, Dict, Optional
 
-from .utils import plot_umap
+from rich.console import Console
+
 from . import commands
+from .utils import plot_umap
 
 DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'uni')
 
@@ -51,7 +50,7 @@ class Task:
         self.append_log("="*50)
         self.append_log(f"Processing folder: {self.folder}")
         self.append_log(f"Request options: {self.options_line}")
-        self.append_log(f"Parsed options:")
+        self.append_log("Parsed options:")
         self.append_log(f"  - Model: {self.model_name} (default: {DEFAULT_MODEL})")
         self.append_log(f"  - Rotation: {'enabled' if self.should_rotate else 'disabled'}")
         self.append_log(f"Found {len(self.wsi_files)} WSI files:")
@@ -116,7 +115,7 @@ class Task:
                         fig.savefig(umap_path, bbox_inches='tight', pad_inches=0.5)
                         self.append_log(f"UMAP plot completed. Saved to {os.path.basename(umap_path)}")
                     else:
-                        self.append_log(f"UMAP plot already exists. Skipped.")
+                        self.append_log("UMAP plot already exists. Skipped.")
 
                     # サムネイル生成
                     self.append_log("Starting thumbnail generation...")
@@ -128,7 +127,7 @@ class Task:
                         img.save(thumb_path)
                         self.append_log(f"Thumbnail generation completed. Saved to {thumb_path.name}")
                     else:
-                        self.append_log(f"Thumbnail already exists. Skipped.")
+                        self.append_log("Thumbnail already exists. Skipped.")
 
                     self.append_log("="*30)
 

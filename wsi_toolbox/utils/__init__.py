@@ -1,17 +1,13 @@
+import logging
 import sys
 import warnings
-import logging
 
-from PIL import Image, ImageFont, ImageDraw
-from PIL.Image import Image as ImageType
-from sklearn.decomposition import PCA
-import cv2
 import numpy as np
-from matplotlib import pyplot as plt, colors as mcolors
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-
-from .cli import BaseMLCLI, BaseMLArgs
-
+from matplotlib import colors as mcolors
+from matplotlib import pyplot as plt
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
+from PIL import Image, ImageDraw
+from PIL.Image import Image as ImageType
 
 
 def yes_no_prompt(question):

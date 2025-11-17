@@ -1,20 +1,18 @@
-import re
-import time
 import os
-import warnings
-from pathlib import Path as P
+import re
 import sys
-from enum import Enum, auto
-from typing import Optional, List, Dict, Any, Tuple
+import warnings
 from datetime import datetime
+from pathlib import Path as P
+from typing import Any, Dict, List, Optional
 
-import numpy as np
-from PIL import Image
 import h5py
-import torch
+import numpy as np
 import pandas as pd
-from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode
-from pydantic import BaseModel, Field
+import torch
+from PIL import Image
+from pydantic import BaseModel
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 torch.classes.__path__ = []
 import streamlit as st
@@ -22,11 +20,10 @@ import streamlit as st
 sys.path.append(str(P(__file__).parent))
 __package__ = 'wsi_toolbox'
 
-from .models import MODEL_LABELS, _MODEL_NAMES_BY_LABEL
-from .utils.progress import tqdm_or_st
-from .utils.st import st_horizontal
-from .utils import plot_umap
 from . import commands
+from .models import _MODEL_NAMES_BY_LABEL, MODEL_LABELS
+from .utils import plot_umap
+from .utils.st import st_horizontal
 
 # Suppress warnings
 # sklearn 1.6+ internal deprecation warning
@@ -423,7 +420,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
     hdf5_paths = []
     if st.button('処理を実行', disabled=st.session_state.locked, on_click=lock):
         set_locked_state(True)
-        st.write(f'WSIから画像をパッチ分割しHDF5ファイルを構築します。')
+        st.write('WSIから画像をパッチ分割しHDF5ファイルを構築します。')
         with st.container(border=True):
             for i, f in enumerate(selected_files):
                 st.write(f'**[{i+1}/{len(selected_files)}] 処理中のWSIファイル: {f.name}**')
@@ -458,14 +455,14 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     st.divider()
 
         if do_clustering:
-            st.write(f'クラスタリングを行います。')
+            st.write('クラスタリングを行います。')
             with st.container(border=True):
                 for i, (f, hdf5_path) in enumerate(zip(selected_files, hdf5_paths)):
                     st.write(f'**[{i+1}/{len(selected_files)}] 処理ファイル: {f.name}**')
                     base, ext = os.path.splitext(f.path)
                     umap_path = f'{base}_umap.png'
                     thumb_path = f'{base}_thumb.jpg'
-                    with st.spinner(f'クラスタリング中...', show_time=True):
+                    with st.spinner('クラスタリング中...', show_time=True):
                         # Use new command pattern
                         commands.set_default_model_preset(st.session_state.model)
                         cmd = commands.ClusteringCommand(

@@ -1,41 +1,23 @@
 import os
-import sys
 import warnings
-from glob import glob
 from pathlib import Path as P
 
-from tqdm import tqdm
+import h5py
+import numpy as np
+import seaborn as sns
+import torch
+import umap
+from matplotlib import pyplot as plt
 from pydantic import Field
 from pydantic_autocli import param
-from PIL import Image, ImageDraw, ImageFont
-import cv2
-import numpy as np
-import pandas as pd
-from matplotlib import pyplot as plt, colors as mcolors
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox, TextArea, VPacker
-import seaborn as sns
-import h5py
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.neighbors import NearestNeighbors
-from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
-import networkx as nx
-import leidenalg as la
-import igraph as ig
-import hdbscan
-import torch
-from torchvision import transforms
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch.amp import autocast
-import timm
-import umap
 
 from . import commands, common
-from .models import create_model
 from .utils import plot_umap
-from .utils.cli import BaseMLCLI, BaseMLArgs
 from .utils.analysis import leiden_cluster
-from .utils.progress import tqdm_or_st
-
+from .utils.cli import BaseMLArgs, BaseMLCLI
 
 warnings.filterwarnings('ignore', category=FutureWarning, message='.*force_all_finite.*')
 warnings.filterwarnings('ignore', category=FutureWarning, message="You are using `torch.load` with `weights_only=False`")

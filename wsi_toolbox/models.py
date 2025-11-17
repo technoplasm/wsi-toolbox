@@ -1,8 +1,6 @@
-import os
-import torch
 import timm
+import torch
 from timm.layers import SwiGLUPacked
-
 
 MODEL_LABELS = {
     'uni':  'UNI',

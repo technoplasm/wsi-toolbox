@@ -7,29 +7,28 @@ Design pattern: __init__ for configuration, __call__ for execution
 # Import configuration from common module
 from ..common import (
     Config,
-    get_config,
-    set_default_progress,
-    set_default_model,
-    set_default_model_preset,
-    set_default_device,
-    set_verbose,
     _get,
     _progress,
+    get_config,
+    set_default_device,
+    set_default_model,
+    set_default_model_preset,
+    set_default_progress,
+    set_verbose,
 )
-
-
-# Import and export all commands
-from .wsi import Wsi2HDF5Command
-from .patch_embedding import PatchEmbeddingCommand
 from .clustering import ClusteringCommand
+from .dzi_export import DziExportCommand
+from .patch_embedding import PatchEmbeddingCommand
 from .preview import (
     BasePreviewCommand,
     PreviewClustersCommand,
-    PreviewScoresCommand,
-    PreviewLatentPCACommand,
     PreviewLatentClusterCommand,
+    PreviewLatentPCACommand,
+    PreviewScoresCommand,
 )
-from .dzi_export import DziExportCommand
+
+# Import and export all commands
+from .wsi import Wsi2HDF5Command
 
 __all__ = [
     # Config

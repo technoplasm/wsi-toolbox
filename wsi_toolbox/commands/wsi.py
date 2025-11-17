@@ -7,9 +7,9 @@ import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..wsi_files import create_wsi_file
 from ..utils.helpers import is_white_patch
-from . import get_config, _progress
+from ..wsi_files import create_wsi_file
+from . import _progress, get_config
 
 
 class Wsi2HDF5Result(BaseModel):

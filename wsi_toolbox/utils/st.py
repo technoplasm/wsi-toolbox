@@ -1,5 +1,6 @@
-import streamlit as st
 from contextlib import contextmanager
+
+import streamlit as st
 
 HORIZONTAL_STYLE = """
 <style class="hide-element">
