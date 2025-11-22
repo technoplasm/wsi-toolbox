@@ -170,7 +170,7 @@ class CLI(AutoCLI):
 
     def run_umap(self, a: UmapArgs):
         # Build parent_filters if filter_ids specified
-        parent_filters = [[a.filter_ids]] if len(a.filter_ids) > 0 else []
+        parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
 
         # Create UMAP command
         cmd = commands.UmapCommand(
@@ -263,7 +263,7 @@ class CLI(AutoCLI):
 
     def run_cluster(self, a: ClusterArgs):
         # Build parent_filters
-        parent_filters = [[a.filter_ids]] if len(a.filter_ids) > 0 else []
+        parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
 
         # Execute clustering
         cmd = commands.ClusteringCommand(
@@ -296,7 +296,7 @@ class CLI(AutoCLI):
 
     def run_pca(self, a: PcaArgs):
         # Build parent_filters
-        parent_filters = [[a.filter_ids]] if len(a.filter_ids) > 0 else []
+        parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
 
         # Execute PCA command
         cmd = commands.PCACommand(
@@ -332,8 +332,8 @@ class CLI(AutoCLI):
         # Determine namespace
         namespace = a.namespace if a.namespace else cmd.namespace
 
-        # Build cluster path
-        cluster_path = build_cluster_path(a.model, namespace, filters=parent_filters, dataset="clusters")
+        # Build cluster path - use parent clusters (without filters)
+        cluster_path = build_cluster_path(a.model, namespace, filters=None, dataset="clusters")
 
         # Check if clusters exist
         with h5py.File(a.input_paths[0], "r") as f:
@@ -392,6 +392,9 @@ class CLI(AutoCLI):
             # Determine which clusters to plot
             if a.cluster_filter:
                 cluster_ids = a.cluster_filter
+            elif a.filter_ids:
+                # Use parent filter clusters
+                cluster_ids = a.filter_ids
             else:
                 # Show all clusters except noise (-1)
                 cluster_ids = sorted([c for c in np.unique(all_clusters) if c >= 0])
