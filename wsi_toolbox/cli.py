@@ -416,22 +416,24 @@ class CLI(AutoCLI):
         input_path: str = Field(..., l="--in", s="-i")
         output_path: str = Field("", l="--out", s="-o")
         namespace: str = Field("default", l="--namespace", s="-N")
-        filter_ids: str = Field("", l="--filter", s="-f", description="Filter path (e.g., '1+2+3')")
+        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
         size: int = 64
         rotate: bool = False
         open: bool = False
 
     def run_preview(self, a):
         output_path = a.output_path
+        filter_str = ''
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
             suffix = f"_{a.namespace}" if a.namespace != "default" else ""
-            if a.filter_ids:
-                suffix += f"_filter_{a.filter_ids.replace('+', '-')}"
+            if len(a.filter_ids) > 0:
+                filter_str = "+".join(map(str, a.filter_ids))
+                suffix += f"_{filter_str}"
             output_path = f"{base}{suffix}_preview.jpg"
 
         cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model, rotate=a.rotate)
-        img = cmd(a.input_path, namespace=a.namespace, filter_path=a.filter_ids)
+        img = cmd(a.input_path, namespace=a.namespace, filter_path=filter_str)
         img.save(output_path)
         print(f"wrote {output_path}")
 
@@ -441,9 +443,9 @@ class CLI(AutoCLI):
     class PreviewPcaArgs(CommonArgs):
         input_path: str = Field(..., l="--in", s="-i")
         output_path: str = Field("", l="--out", s="-o")
-        score_name: str = Field(..., l="--name", s="-N", description="Score name (e.g., 'pca1', 'pca2')")
-        namespace: str = Field("default", l="--namespace", description="Namespace")
-        filter_ids: str = Field("", l="--filter", s="-f", description="Filter path (e.g., '1+2+3')")
+        score_name: str = Field(..., l="--name", s="-n", description="Score name (e.g., 'pca1', 'pca2')")
+        namespace: str = Field("default", l="--namespace", s="-N", description="Namespace")
+        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
         cmap: str = Field("viridis", l="--cmap", s="-c", description="Colormap name")
         size: int = 64
         rotate: bool = False
@@ -451,15 +453,17 @@ class CLI(AutoCLI):
 
     def run_preview_pca(self, a):
         output_path = a.output_path
+        filter_str = ''
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
             suffix = f"_{a.namespace}" if a.namespace != "default" else ""
-            if a.filter_ids:
-                suffix += f"_filter_{a.filter_ids.replace('/', '_')}"
+            if len(a.filter_ids) > 0:
+                filter_str = "+".join(map(str, a.filter_ids))
+                suffix += f"_{filter_str}"
             output_path = f"{base}{suffix}_{a.score_name}_preview.jpg"
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
-        img = cmd(a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=a.filter_ids, cmap_name=a.cmap)
+        img = cmd(a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=filter_str, cmap_name=a.cmap)
         img.save(output_path)
         print(f"wrote {output_path}")
 
