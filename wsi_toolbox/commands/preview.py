@@ -193,7 +193,14 @@ class PreviewScoresCommand(BasePreviewCommand):
         image = cmd(hdf5_path='data.h5', score_name='pca1', namespace='default')
     """
 
-    def _prepare(self, f: h5py.File, score_name: str, namespace: str = "default", filter_path: str = "", cmap_name: str = "viridis"):
+    def _prepare(
+        self,
+        f: h5py.File,
+        score_name: str,
+        namespace: str = "default",
+        filter_path: str = "",
+        cmap_name: str = "viridis",
+    ):
         """
         Prepare PCA visualization data
 

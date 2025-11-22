@@ -1,25 +1,18 @@
 import os
 import warnings
-from pathlib import Path as P
 from pathlib import Path
+from pathlib import Path as P
 
 import h5py
 import numpy as np
-import seaborn as sns
-import torch
-import umap
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, Field
 from pydantic_autocli import AutoCLI, param
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from torch.amp import autocast
 
 from . import commands, common
-from .utils.analysis import leiden_cluster
-from .utils.seed import fix_global_seed, get_global_seed
 from .utils.hdf5_paths import build_cluster_path
 from .utils.plot import plot_scatter_2d, plot_violin_1d
+from .utils.seed import fix_global_seed, get_global_seed
 
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 warnings.filterwarnings(
@@ -78,17 +71,15 @@ class CLI(AutoCLI):
         if d:
             os.makedirs(d, exist_ok=True)
 
-        print('Output path:', output_path)
-        print('Temporary path:', tmp_path)
+        print("Output path:", output_path)
+        print("Temporary path:", tmp_path)
 
         # Use new command pattern (progress is auto-set from global config)
-        cmd = commands.Wsi2HDF5Command(
-            patch_size=a.patch_size, engine=a.engine, mpp=a.mpp, rotate=a.rotate
-        )
+        cmd = commands.Wsi2HDF5Command(patch_size=a.patch_size, engine=a.engine, mpp=a.mpp, rotate=a.rotate)
         result = cmd(a.input_path, tmp_path)
 
         os.rename(tmp_path, output_path)
-        print('Renamed ', tmp_path, ' -> ', output_path)
+        print("Renamed ", tmp_path, " -> ", output_path)
         print(f"done: {result.patch_count} patches extracted")
 
     class EmbedArgs(CommonArgs):
@@ -173,10 +164,7 @@ class CLI(AutoCLI):
         namespace = a.namespace if a.namespace else cmd.namespace
 
         cluster_path = build_cluster_path(
-            a.model,
-            namespace,
-            filters=None if a.use_parent_clusters else parent_filters,
-            dataset="clusters"
+            a.model, namespace, filters=None if a.use_parent_clusters else parent_filters, dataset="clusters"
         )
 
         # Check if clusters exist
@@ -264,7 +252,6 @@ class CLI(AutoCLI):
 
         plt.show()
 
-
     class PcaArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
@@ -306,10 +293,7 @@ class CLI(AutoCLI):
         namespace = a.namespace if a.namespace else cmd.namespace
 
         cluster_path = build_cluster_path(
-            a.model,
-            namespace,
-            filters=None if a.use_parent_clusters else parent_filters,
-            dataset="clusters"
+            a.model, namespace, filters=None if a.use_parent_clusters else parent_filters, dataset="clusters"
         )
 
         # Check if clusters exist
@@ -423,7 +407,7 @@ class CLI(AutoCLI):
 
     def run_preview(self, a):
         output_path = a.output_path
-        filter_str = ''
+        filter_str = ""
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
             suffix = f"_{a.namespace}" if a.namespace != "default" else ""
@@ -453,7 +437,7 @@ class CLI(AutoCLI):
 
     def run_preview_pca(self, a):
         output_path = a.output_path
-        filter_str = ''
+        filter_str = ""
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
             suffix = f"_{a.namespace}" if a.namespace != "default" else ""
@@ -463,7 +447,9 @@ class CLI(AutoCLI):
             output_path = f"{base}{suffix}_{a.score_name}_preview.jpg"
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
-        img = cmd(a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=filter_str, cmap_name=a.cmap)
+        img = cmd(
+            a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=filter_str, cmap_name=a.cmap
+        )
         img.save(output_path)
         print(f"wrote {output_path}")
 
