@@ -1,6 +1,7 @@
 import os
 import warnings
 from pathlib import Path as P
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -18,6 +19,7 @@ from . import commands, common
 from .utils import plot_umap, plot_umap_multi
 from .utils.analysis import leiden_cluster
 from .utils.seed import fix_global_seed, get_global_seed
+from .utils.hdf5_paths import build_cluster_path
 
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 warnings.filterwarnings(
@@ -139,7 +141,6 @@ class CLI(AutoCLI):
         input_paths: list[str] = Field(..., l="--in", s="-i")
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
         filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        n_components: int = Field(2, description="Number of UMAP dimensions")
         n_neighbors: int = Field(15, description="UMAP n_neighbors")
         min_dist: float = Field(0.1, description="UMAP min_dist")
         overwrite: bool = param(False, s="-O")
@@ -155,7 +156,7 @@ class CLI(AutoCLI):
         cmd = commands.UmapCommand(
             namespace=a.namespace if a.namespace else None,
             parent_filters=parent_filters,
-            n_components=a.n_components,
+            n_components=2,
             n_neighbors=a.n_neighbors,
             min_dist=a.min_dist,
             overwrite=a.overwrite,
@@ -165,27 +166,18 @@ class CLI(AutoCLI):
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
         else:
-            print(f"✓ UMAP computed: {result.n_samples} samples → {result.n_components}D")
+            print(f"✓ UMAP computed: {result.n_samples} samples → 2D")
         print(f"  Path: {result.target_path}")
-
-        # Show plot if requested
-        if not (a.show and a.n_components == 2):
-            return
-
-        from pathlib import Path
-
-        from .utils.hdf5_paths import build_cluster_path
 
         # Determine namespace
         namespace = a.namespace if a.namespace else cmd.namespace
 
-        # Build cluster path
-        if a.use_parent_clusters:
-            # Use parent clusters (without filters)
-            cluster_path = build_cluster_path(a.model, namespace, filters=None, dataset="clusters")
-        else:
-            # Use sub-clusters (with filters)
-            cluster_path = build_cluster_path(a.model, namespace, filters=parent_filters, dataset="clusters")
+        cluster_path = build_cluster_path(
+            a.model,
+            namespace,
+            filters=None if a.use_parent_clusters else parent_filters,
+            dataset="clusters"
+        )
 
         # Check if clusters exist
         with h5py.File(a.input_paths[0], "r") as f:
@@ -299,24 +291,19 @@ class CLI(AutoCLI):
         print(f"  Samples:    {result.n_samples}")
         print(f"  Path:       {result.target_path}")
 
-        # Plot if requested
-        if not a.show:
+        # Plot if requested (show or save)
+        if not (a.show or a.save):
             return
-
-        from pathlib import Path
-
-        from .utils.hdf5_paths import build_cluster_path
 
         # Determine namespace
         namespace = a.namespace if a.namespace else cmd.namespace
 
-        # Build cluster path
-        if a.use_parent_clusters:
-            # Use parent clusters (without filters)
-            cluster_path = build_cluster_path(a.model, namespace, filters=None, dataset="clusters")
-        else:
-            # Use sub-clusters (with filters)
-            cluster_path = build_cluster_path(a.model, namespace, filters=parent_filters, dataset="clusters")
+        cluster_path = build_cluster_path(
+            a.model,
+            namespace,
+            filters=None if a.use_parent_clusters else parent_filters,
+            dataset="clusters"
+        )
 
         # Check if clusters exist
         with h5py.File(a.input_paths[0], "r") as f:
