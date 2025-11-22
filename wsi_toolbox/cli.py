@@ -15,7 +15,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch.amp import autocast
 
 from . import commands, common
-from .utils import plot_umap
+from .utils import plot_umap, plot_umap_multi
 from .utils.seed import fix_global_seed, get_global_seed
 from .utils.analysis import leiden_cluster
 
@@ -177,153 +177,70 @@ class CLI(AutoCLI):
         print(f"  Path: {result.target_path}")
 
         # Show plot if requested
-        if a.show and a.n_components == 2:
-            from .utils.hdf5_paths import build_cluster_path
-            from pathlib import Path
-            import matplotlib.cm as cm
+        if not (a.show and a.n_components == 2):
+            return
 
-            # Determine namespace
-            namespace = a.namespace if a.namespace else cmd.namespace
+        from .utils.hdf5_paths import build_cluster_path
+        from pathlib import Path
 
-            # Try to load clusters for coloring
-            cluster_path = build_cluster_path(
-                a.model,
-                namespace,
-                filters=parent_filters,
-                dataset="clusters"
-            )
+        # Determine namespace
+        namespace = a.namespace if a.namespace else cmd.namespace
 
-            # Check if clusters exist in first file
-            with h5py.File(a.input_paths[0], "r") as f:
-                has_clusters = cluster_path in f
+        # Build cluster path
+        cluster_path = build_cluster_path(
+            a.model,
+            namespace,
+            filters=parent_filters,
+            dataset="clusters"
+        )
 
-            if not has_clusters:
+        # Check if clusters exist
+        with h5py.File(a.input_paths[0], "r") as f:
+            if cluster_path not in f:
                 print("No clusters found. Skipping plot.")
-            else:
-                # Load UMAP coordinates and clusters from all files
-                all_coords = []
-                all_clusters = []
-                all_files = []
+                return
 
-                for hdf5_path in a.input_paths:
-                    with h5py.File(hdf5_path, "r") as f:
-                        # Check if both datasets exist
-                        if result.target_path not in f:
-                            print(f"Error: UMAP coordinates not found in {hdf5_path}")
-                            continue
-                        if cluster_path not in f:
-                            print(f"Error: Clusters not found in {hdf5_path}")
-                            continue
+        # Load UMAP coordinates and clusters from all files
+        coords_list = []
+        clusters_list = []
+        filenames = []
 
-                        umap_coords = f[result.target_path][:]
-                        clusters = f[cluster_path][:]
+        for hdf5_path in a.input_paths:
+            with h5py.File(hdf5_path, "r") as f:
+                # Check if both datasets exist
+                if result.target_path not in f:
+                    print(f"Error: UMAP coordinates not found in {hdf5_path}")
+                    continue
+                if cluster_path not in f:
+                    print(f"Error: Clusters not found in {hdf5_path}")
+                    continue
 
-                        # Check lengths match
-                        if len(umap_coords) != len(clusters):
-                            print(f"Error: Length mismatch in {hdf5_path}: "
-                                  f"UMAP coords={len(umap_coords)}, clusters={len(clusters)}")
-                            continue
+                umap_coords = f[result.target_path][:]
+                clusters = f[cluster_path][:]
 
-                        # Filter out NaN
-                        valid_mask = ~np.isnan(umap_coords[:, 0])
-                        valid_coords = umap_coords[valid_mask]
-                        valid_clusters = clusters[valid_mask]
+                # Check lengths match
+                if len(umap_coords) != len(clusters):
+                    print(f"Error: Length mismatch in {hdf5_path}: "
+                          f"UMAP coords={len(umap_coords)}, clusters={len(clusters)}")
+                    continue
 
-                        all_coords.append(valid_coords)
-                        all_clusters.append(valid_clusters)
-                        # Extract filename without extension
-                        filename = Path(hdf5_path).stem
-                        all_files.append(filename)
+                # Filter out NaN
+                valid_mask = ~np.isnan(umap_coords[:, 0])
+                valid_coords = umap_coords[valid_mask]
+                valid_clusters = clusters[valid_mask]
 
-                # Check if we have any valid data
-                if len(all_coords) == 0:
-                    print("No valid data to plot.")
-                    return
+                coords_list.append(valid_coords)
+                clusters_list.append(valid_clusters)
+                filenames.append(Path(hdf5_path).stem)
 
-                # Plot
-                if len(a.input_paths) == 1:
-                    # Single file: use plot_umap utility
-                    fig = plot_umap(all_coords[0], all_clusters[0], title="UMAP Projection")
-                else:
-                    # Multiple files: different markers per file
-                    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+        # Check if we have any valid data
+        if len(coords_list) == 0:
+            print("No valid data to plot.")
+            return
 
-                    # Get all unique clusters across all files (same namespace = same clusters)
-                    all_unique_clusters = sorted(np.unique(np.concatenate(all_clusters)))
-                    colors = cm.rainbow(np.linspace(0, 1, len(all_unique_clusters)))
-                    cluster_to_color = dict(zip(all_unique_clusters, colors))
-
-                    fig, ax = plt.subplots(figsize=(12, 8))
-
-                    # Plot: cluster-first, then file-specific markers
-                    cluster_handles = []
-                    file_handles = []
-
-                    # Create handles for cluster legend (colors)
-                    for cluster_id in all_unique_clusters:
-                        handle = plt.Line2D([0], [0], marker='o', color='w',
-                                          markerfacecolor=cluster_to_color[cluster_id],
-                                          markersize=8, label=f'Cluster {cluster_id}')
-                        cluster_handles.append(handle)
-
-                    # Create handles for file legend (markers)
-                    for i, filename in enumerate(all_files):
-                        marker = markers[i % len(markers)]
-                        handle = plt.Line2D([0], [0], marker=marker, color='w',
-                                          markerfacecolor='gray', markersize=8,
-                                          label=filename)
-                        file_handles.append(handle)
-
-                    # Plot all data
-                    for cluster_id in all_unique_clusters:
-                        for i, (coords, clusters, filename) in enumerate(zip(all_coords, all_clusters, all_files)):
-                            mask = clusters == cluster_id
-                            if np.sum(mask) > 0:  # Only plot if this file has patches in this cluster
-                                marker = markers[i % len(markers)]
-                                ax.scatter(
-                                    coords[mask, 0],
-                                    coords[mask, 1],
-                                    marker=marker,
-                                    c=[cluster_to_color[cluster_id]],
-                                    s=10,
-                                    alpha=0.6
-                                )
-
-                    # Draw cluster numbers at centroids
-                    all_coords_combined = np.concatenate(all_coords)
-                    all_clusters_combined = np.concatenate(all_clusters)
-                    for cluster_id in all_unique_clusters:
-                        if cluster_id < 0:  # Skip noise cluster
-                            continue
-                        cluster_points = all_coords_combined[all_clusters_combined == cluster_id]
-                        if len(cluster_points) < 1:
-                            continue
-                        centroid_x = np.mean(cluster_points[:, 0])
-                        centroid_y = np.mean(cluster_points[:, 1])
-                        ax.text(
-                            centroid_x,
-                            centroid_y,
-                            str(cluster_id),
-                            fontsize=12,
-                            fontweight="bold",
-                            ha="center",
-                            va="center",
-                            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-                        )
-
-                    # Add legends
-                    legend1 = ax.legend(handles=cluster_handles, title="Clusters",
-                                       loc='upper left', bbox_to_anchor=(1.02, 1))
-                    ax.add_artist(legend1)
-                    legend2 = ax.legend(handles=file_handles, title="Sources",
-                                       loc='upper left', bbox_to_anchor=(1.02, 0.5))
-
-                    ax.set_title("UMAP Projection")
-                    ax.set_xlabel("UMAP 1")
-                    ax.set_ylabel("UMAP 2")
-                    plt.tight_layout()
-
-                plt.show()
+        # Plot
+        fig = plot_umap_multi(coords_list, clusters_list, filenames, title="UMAP Projection")
+        plt.show()
 
     class ClusterArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")

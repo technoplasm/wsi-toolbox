@@ -87,6 +87,117 @@ def plot_umap(embeddings, clusters, title="UMAP + Clustering", figsize=(10, 8)):
     return fig
 
 
+def plot_umap_multi(
+    coords_list: list[np.ndarray],
+    clusters_list: list[np.ndarray],
+    filenames: list[str],
+    title: str = "UMAP Projection",
+    figsize: tuple = (12, 8),
+):
+    """
+    Plot UMAP embeddings from single or multiple files
+
+    Args:
+        coords_list: List of coordinate arrays (one per file)
+        clusters_list: List of cluster arrays (one per file)
+        filenames: List of file names for legend
+        title: Plot title
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure
+    """
+    # Single file case: use existing plot_umap
+    if len(coords_list) == 1:
+        return plot_umap(coords_list[0], clusters_list[0], title=title, figsize=figsize)
+
+    # Multiple files case
+    import matplotlib.cm as cm
+
+    markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "h"]
+
+    # Get all unique clusters (same namespace = same clusters)
+    all_unique_clusters = sorted(np.unique(np.concatenate(clusters_list)))
+    colors = cm.rainbow(np.linspace(0, 1, len(all_unique_clusters)))
+    cluster_to_color = dict(zip(all_unique_clusters, colors))
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Create handles for cluster legend (colors)
+    cluster_handles = []
+    for cluster_id in all_unique_clusters:
+        if cluster_id < 0:  # Skip noise
+            continue
+        handle = plt.Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=cluster_to_color[cluster_id],
+            markersize=8,
+            label=f"Cluster {cluster_id}",
+        )
+        cluster_handles.append(handle)
+
+    # Create handles for file legend (markers)
+    file_handles = []
+    for i, filename in enumerate(filenames):
+        marker = markers[i % len(markers)]
+        handle = plt.Line2D(
+            [0], [0], marker=marker, color="w", markerfacecolor="gray", markersize=8, label=filename
+        )
+        file_handles.append(handle)
+
+    # Plot all data: cluster-first, then file-specific markers
+    for cluster_id in all_unique_clusters:
+        for i, (coords, clusters, filename) in enumerate(zip(coords_list, clusters_list, filenames)):
+            mask = clusters == cluster_id
+            if np.sum(mask) > 0:  # Only plot if this file has patches in this cluster
+                marker = markers[i % len(markers)]
+                ax.scatter(
+                    coords[mask, 0],
+                    coords[mask, 1],
+                    marker=marker,
+                    c=[cluster_to_color[cluster_id]],
+                    s=10,
+                    alpha=0.6,
+                )
+
+    # Draw cluster numbers at centroids
+    all_coords_combined = np.concatenate(coords_list)
+    all_clusters_combined = np.concatenate(clusters_list)
+    for cluster_id in all_unique_clusters:
+        if cluster_id < 0:  # Skip noise cluster
+            continue
+        cluster_points = all_coords_combined[all_clusters_combined == cluster_id]
+        if len(cluster_points) < 1:
+            continue
+        centroid_x = np.mean(cluster_points[:, 0])
+        centroid_y = np.mean(cluster_points[:, 1])
+        ax.text(
+            centroid_x,
+            centroid_y,
+            str(cluster_id),
+            fontsize=12,
+            fontweight="bold",
+            ha="center",
+            va="center",
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+        )
+
+    # Add legends
+    legend1 = ax.legend(handles=cluster_handles, title="Clusters", loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.add_artist(legend1)
+    legend2 = ax.legend(handles=file_handles, title="Sources", loc="upper left", bbox_to_anchor=(1.02, 0.5))
+
+    ax.set_title(title)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    plt.tight_layout()
+
+    return fig
+
+
 def hover_images_on_scatters(scatters, imagess, ax=None, offset=(150, 30)):
     if ax is None:
         ax = plt.gca()
