@@ -105,59 +105,6 @@ class CLI(AutoCLI):
         if not result.skipped:
             print(f"done: {result.feature_dim}D features extracted")
 
-    class ProcessSlideArgs(CommonArgs):
-        device: str = "cuda"
-        input_path: str = Field(..., l="--in", s="-i")
-        overwrite: bool = Field(False, s="-O")
-
-    def run_process_slide(self, a: ProcessSlideArgs):
-        from gigapath import slide_encoder
-
-        with h5py.File(a.input_path, "a") as f:
-            if "gigapath/slide_feature" in f:
-                if not a.overwrite:
-                    print("feature embeddings are already obtained.")
-                    return
-            if "slide_feature" in f:
-                # migrate
-                slide_feature = f["slide_feature"][:]
-                f.create_dataset("gigapath/slide_feature", data=slide_feature)
-                del f["slide_feature"]
-                print('Migrated from "slide_feature" to "gigapath/slide_feature"')
-                return
-            features = f["gigapath/features"][:]
-            coords = f["coordinates"][:]
-
-        features = torch.tensor(features, dtype=torch.float32)[None, ...].to(a.device)  # (1, L, D)
-        coords = torch.tensor(coords, dtype=torch.float32)[None, ...].to(a.device)  # (1, L, 2)
-
-        print("Loading LongNet...")
-        long_net = (
-            slide_encoder.create_model(
-                "data/slide_encoder.pth",
-                "gigapath_slide_enc12l768d",
-                1536,
-            )
-            .eval()
-            .to(a.device)
-        )
-
-        print("LongNet loaded.")
-
-        with torch.set_grad_enabled(False):
-            with autocast(a.device, dtype=torch.float16):
-                output = long_net(features, coords)
-            # output = output.cpu().detach()
-            slide_feature = output[0][0].cpu().detach()
-
-        print("slide_feature dimension:", slide_feature.shape)
-
-        with h5py.File(a.input_path, "a") as f:
-            if a.overwrite and "slide_feature" in f:
-                print("Overwriting slide_feature.")
-                del f["gigapath/slide_feature"]
-            f.create_dataset("gigapath/slide_feature", data=slide_feature)
-
     class UmapArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
@@ -460,62 +407,6 @@ class CLI(AutoCLI):
 
         plt.show()
 
-    class ClusterLatentArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i")
-        name: str = ""
-        resolution: float = 1
-        use_umap_embs: float = False
-        save: bool = False
-        noshow: bool = False
-        overwrite: bool = Field(False, s="-O")
-
-    def run_cluster_latent(self, a):
-        target_path = f"{a.model}/latent_clusters"
-        skip = False
-        with h5py.File(a.input_path, "r") as f:
-            features = f[f"{a.model}/latent_features"][:]
-            if target_path in f:
-                if a.overwrite:
-                    print(f"overwriting old {target_path} of {a.input_path}")
-                else:
-                    skip = True
-                    clusters = f[target_path][:]
-                    # raise RuntimeError(f'{target_path} already exists in {a.input_path}')
-
-        # scaler = StandardScaler()
-        # features = scaler.fit_transform(features)
-        s = features.shape
-        h = features.reshape(s[0] * s[1], s[-1])  # B*16*16, 3
-
-        if not skip:
-            clusters = leiden_cluster(h, umap_emb_func=None, resolution=a.resolution, n_jobs=-1, progress="tqdm")
-
-            clusters = clusters.reshape(s[0], s[1])
-
-            with h5py.File(a.input_path, "a") as f:
-                if target_path in f:
-                    del f[target_path]
-                f.create_dataset(target_path, data=clusters)
-
-        print(features.reshape(s[0] * s[1], -1).shape)
-        print(clusters.reshape(s[0] * s[1]).shape)
-
-        reducer = umap.UMAP(
-            # n_neighbors=30,
-            # min_dist=0.05,
-            n_components=2,
-            # random_state=a.seed
-        )
-
-        embs = reducer.fit_transform(features.reshape(s[0] * s[1], -1))
-        fig = plot_umap(embeddings=embs, clusters=clusters.reshape(s[0] * s[1]))
-        if a.save:
-            p = P(a.input_path)
-            fig_path = str(p.parent / f"{p.stem}_latent_umap.png")
-            fig.savefig(fig_path)
-            print(f"wrote {fig_path}")
-        plt.show()
-
     class PreviewArgs(CommonArgs):
         input_path: str = Field(..., l="--in", s="-i")
         output_path: str = Field("", l="--out", s="-o")
@@ -564,50 +455,6 @@ class CLI(AutoCLI):
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=a.filter_ids, cmap_name=a.cmap)
-        img.save(output_path)
-        print(f"wrote {output_path}")
-
-        if a.open:
-            os.system(f"xdg-open {output_path}")
-
-    class PreviewLatentPcaArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i")
-        output_path: str = Field("", l="--out", s="-o")
-        size: int = 64
-        rotate: bool = False
-        open: bool = False
-
-    def run_preview_latent_pca(self, a: PreviewLatentPcaArgs):
-        output_path = a.output_path
-        if not output_path:
-            base, ext = os.path.splitext(a.input_path)
-            output_path = f"{base}_latent_pca.jpg"
-
-        # Use new command pattern
-        cmd = commands.PreviewLatentPCACommand(size=a.size, rotate=a.rotate)
-        img = cmd(a.input_path)
-        img.save(output_path)
-        print(f"wrote {output_path}")
-
-        if a.open:
-            os.system(f"xdg-open {output_path}")
-
-    class PreviewLatentArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i")
-        output_path: str = Field("", l="--out", s="-o")
-        size: int = 64
-        rotate: bool = False
-        open: bool = False
-
-    def run_preview_latent(self, a: PreviewLatentArgs):
-        output_path = a.output_path
-        if not output_path:
-            base, ext = os.path.splitext(a.input_path)
-            output_path = f"{base}_latent_clusters.jpg"
-
-        # Use new command pattern
-        cmd = commands.PreviewLatentClusterCommand(size=a.size, rotate=a.rotate)
-        img = cmd(a.input_path)
         img.save(output_path)
         print(f"wrote {output_path}")
 
