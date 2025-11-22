@@ -430,6 +430,131 @@ class CLI(BaseMLCLI):
         if a.open:
             os.system(f"xdg-open {output_path}")
 
+    class ShowArgs(CommonArgs):
+        input_path: str = Field(..., l="--in", s="-i", description="HDF5ファイルパス")
+        verbose: bool = Field(False, s="-v", description="詳細表示")
+
+    def run_show(self, a: ShowArgs):
+        """Show HDF5 file structure and contents"""
+        import h5py
+        from .utils.hdf5_paths import list_namespaces, list_filters
+
+        with h5py.File(a.input_path, "r") as f:
+            print(f"\n{'='*60}")
+            print(f"HDF5 File: {a.input_path}")
+            print(f"{'='*60}\n")
+
+            # Basic metadata
+            if "metadata/patch_count" in f:
+                print("📊 Basic Info:")
+                print(f"  Patch Count:  {f['metadata/patch_count'][()]}")
+                print(f"  Patch Size:   {f['metadata/patch_size'][()]}px")
+                print(f"  Grid:         {f['metadata/cols'][()]} x {f['metadata/rows'][()]} (cols x rows)")
+                if "metadata/mpp" in f:
+                    mpp = f["metadata/mpp"][()]
+                    print(f"  MPP:          {mpp:.4f}" + (" (estimated)" if mpp > 0 else ""))
+                print()
+
+            # Available models
+            available_models = [k for k in f.keys() if k in ["uni", "gigapath", "virchow2"]]
+            if available_models:
+                print("🤖 Available Models:")
+                for model in available_models:
+                    has_features = f"{model}/features" in f
+                    has_latent = f"{model}/latent_features" in f
+                    feat_str = "✓ features" if has_features else "✗ features"
+                    latent_str = ", ✓ latent" if has_latent else ""
+
+                    if has_features:
+                        feat_shape = f[f"{model}/features"].shape
+                        feat_str += f" {feat_shape}"
+
+                    print(f"  {model:12s} {feat_str}{latent_str}")
+                print()
+
+            # Namespaces and clusters
+            for model in available_models:
+                namespaces = list_namespaces(f, model)
+                if not namespaces:
+                    continue
+
+                print(f"🗂️  {model.upper()} Namespaces:")
+                for ns in namespaces:
+                    # Get cluster info
+                    cluster_path = f"{model}/{ns}/clusters"
+                    if cluster_path in f:
+                        clusters = f[cluster_path][:]
+                        unique_clusters = [c for c in sorted(set(clusters)) if c >= 0]  # Exclude -1
+                        n_clustered = sum(clusters >= 0)
+                        n_total = len(clusters)
+
+                        # Check UMAP
+                        umap_path = f"{model}/{ns}/umap_coordinates"
+                        has_umap = "✓" if umap_path in f else "✗"
+
+                        # Display namespace
+                        ns_display = "default" if ns == "default" else ns
+                        print(f"  📁 {ns_display}/")
+                        print(f"     clusters: {len(unique_clusters)} clusters, {n_clustered}/{n_total} patches")
+                        if a.verbose:
+                            cluster_list = ", ".join(map(str, unique_clusters[:10]))
+                            if len(unique_clusters) > 10:
+                                cluster_list += f", ... ({len(unique_clusters)} total)"
+                            print(f"               [{cluster_list}]")
+                        print(f"     umap:     {has_umap}")
+
+                        # Check filters
+                        filter_base = f"{model}/{ns}/filter"
+                        if filter_base in f:
+                            filters = self._list_filters_recursive(f, filter_base)
+                            if filters:
+                                print(f"     filters:")
+                                for filter_path in sorted(filters):
+                                    full_path = f"{filter_base}/{filter_path}/clusters"
+                                    if full_path in f:
+                                        fclusters = f[full_path][:]
+                                        funique = [c for c in sorted(set(fclusters)) if c >= 0]
+                                        fn_clustered = sum(fclusters >= 0)
+                                        print(f"       {filter_path}/ → {len(funique)} clusters, {fn_clustered} patches")
+                print()
+
+            # Scores
+            for model in available_models:
+                score_datasets = [k for k in f.get(model, {}).keys() if k.startswith("scores_")]
+                if score_datasets:
+                    print(f"📈 {model.upper()} Scores:")
+                    for score in score_datasets:
+                        score_name = score.replace("scores_", "")
+                        print(f"  {score_name}")
+                    print()
+
+            print(f"{'='*60}\n")
+
+    def _list_filters_recursive(self, f, base_path, prefix=""):
+        """Recursively list all filter paths"""
+        import h5py
+
+        filters = []
+        if base_path not in f:
+            return filters
+
+        for key in f[base_path].keys():
+            current_path = f"{prefix}{key}"
+            item_path = f"{base_path}/{key}"
+
+            if isinstance(f[item_path], h5py.Group):
+                # Check if this is a filter result (has clusters)
+                if "clusters" in f[item_path]:
+                    filters.append(current_path)
+
+                # Check for nested filters
+                nested_base = f"{item_path}/filter"
+                if nested_base in f:
+                    nested = self._list_filters_recursive(f, nested_base, f"{current_path}/filter/")
+                    filters.extend(nested)
+
+        return filters
+
     class ExportDziArgs(CommonArgs):
         input_h5: str = Field(..., l="--input", s="-i", description="入力HDF5ファイルパス")
         output_dir: str = Field(..., l="--output", s="-o", description="出力ディレクトリ")
