@@ -23,7 +23,7 @@ class BasePreviewCommand:
     - _get_frame(index, data, f): Get frame for specific patch
     """
 
-    def __init__(self, size: int = 64, font_size: int = 16, model_name: str | None = None):
+    def __init__(self, size: int = 64, font_size: int = 16, model_name: str | None = None, rotate: bool = False):
         """
         Initialize preview command
 
@@ -31,10 +31,12 @@ class BasePreviewCommand:
             size: Thumbnail patch size
             font_size: Font size for labels
             model_name: Model name (None to use global default)
+            rotate: Whether to rotate patches 180 degrees
         """
         self.size = size
         self.font_size = font_size
         self.model_name = _get("model_name", model_name)
+        self.rotate = rotate
 
     def __call__(self, hdf5_path: str, **kwargs) -> Image.Image:
         """
@@ -68,9 +70,18 @@ class BasePreviewCommand:
                 # Get subclass-specific frame
                 frame = self._get_frame(i, data, f)
 
-                # Render patch
-                x, y = coord // patch_size * S
-                patch = Image.fromarray(patch_array).resize((S, S))
+                # Render patch with optional rotation
+                if self.rotate:
+                    # Transform coordinates for 180-degree rotation
+                    orig_x, orig_y = coord // patch_size * S
+                    x = (cols - 1) * S - orig_x
+                    y = (rows - 1) * S - orig_y
+                    # Rotate patch 180 degrees
+                    patch = Image.fromarray(patch_array).resize((S, S)).rotate(180)
+                else:
+                    x, y = coord // patch_size * S
+                    patch = Image.fromarray(patch_array).resize((S, S))
+
                 if frame:
                     patch.paste(frame, (0, 0), frame)
                 canvas.paste(patch, (x, y, x + S, y + S))

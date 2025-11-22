@@ -428,6 +428,7 @@ class CLI(AutoCLI):
         namespace: str = Field("default", l="--namespace", s="-N")
         filter_ids: str = Field("", l="--filter", s="-f", description="Filter path (e.g., '1+2+3')")
         size: int = 64
+        rotate: bool = False
         open: bool = False
 
     def run_preview(self, a):
@@ -437,9 +438,9 @@ class CLI(AutoCLI):
             suffix = f"_{a.namespace}" if a.namespace != "default" else ""
             if a.filter_ids:
                 suffix += f"_filter_{a.filter_ids.replace('+', '-')}"
-            output_path = f"{base}{suffix}_thumb.jpg"
+            output_path = f"{base}{suffix}_preview.jpg"
 
-        cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model)
+        cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(a.input_path, namespace=a.namespace, filter_path=a.filter_ids)
         img.save(output_path)
         print(f"wrote {output_path}")
@@ -452,15 +453,16 @@ class CLI(AutoCLI):
         output_path: str = Field("", l="--out", s="-o")
         score_name: str = Field(..., l="--name", s="-N")
         size: int = 64
+        rotate: bool = False
         open: bool = False
 
     def run_preview_scores(self, a):
         output_path = a.output_path
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
-            output_path = f"{base}_score-{a.score_name}_thumb.jpg"
+            output_path = f"{base}_score-{a.score_name}_preview.jpg"
 
-        cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model)
+        cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(a.input_path, score_name=a.score_name)
         img.save(output_path)
         print(f"wrote {output_path}")
@@ -472,6 +474,7 @@ class CLI(AutoCLI):
         input_path: str = Field(..., l="--in", s="-i")
         output_path: str = Field("", l="--out", s="-o")
         size: int = 64
+        rotate: bool = False
         open: bool = False
 
     def run_preview_latent_pca(self, a: PreviewLatentPcaArgs):
@@ -481,7 +484,7 @@ class CLI(AutoCLI):
             output_path = f"{base}_latent_pca.jpg"
 
         # Use new command pattern
-        cmd = commands.PreviewLatentPCACommand(size=a.size)
+        cmd = commands.PreviewLatentPCACommand(size=a.size, rotate=a.rotate)
         img = cmd(a.input_path)
         img.save(output_path)
         print(f"wrote {output_path}")
@@ -493,6 +496,7 @@ class CLI(AutoCLI):
         input_path: str = Field(..., l="--in", s="-i")
         output_path: str = Field("", l="--out", s="-o")
         size: int = 64
+        rotate: bool = False
         open: bool = False
 
     def run_preview_latent(self, a: PreviewLatentArgs):
@@ -502,7 +506,7 @@ class CLI(AutoCLI):
             output_path = f"{base}_latent_clusters.jpg"
 
         # Use new command pattern
-        cmd = commands.PreviewLatentClusterCommand(size=a.size)
+        cmd = commands.PreviewLatentClusterCommand(size=a.size, rotate=a.rotate)
         img = cmd(a.input_path)
         img.save(output_path)
         print(f"wrote {output_path}")
