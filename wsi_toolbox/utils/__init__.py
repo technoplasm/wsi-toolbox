@@ -42,10 +42,11 @@ def create_frame(size, color, text, font):
 
 
 def plot_umap(embeddings, clusters, title="UMAP + Clustering", figsize=(10, 8)):
+    from ..common import get_cluster_color
+
     cluster_ids = sorted(list(set(clusters)))
 
     fig, ax = plt.subplots(figsize=figsize)
-    cmap = plt.get_cmap("tab20")
 
     for i, cluster_id in enumerate(cluster_ids):
         coords = embeddings[clusters == cluster_id]
@@ -54,7 +55,7 @@ def plot_umap(embeddings, clusters, title="UMAP + Clustering", figsize=(10, 8)):
             label = "Noise"
             size = 12
         else:
-            color = [cmap(cluster_id % 20)]
+            color = [get_cluster_color(cluster_id)]
             label = f"Cluster {cluster_id}"
             size = 7
         plt.scatter(coords[:, 0], coords[:, 1], s=size, c=color, label=label)
@@ -112,14 +113,13 @@ def plot_umap_multi(
         return plot_umap(coords_list[0], clusters_list[0], title=title, figsize=figsize)
 
     # Multiple files case
-    import matplotlib.cm as cm
+    from ..common import get_cluster_color
 
     markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "h"]
 
     # Get all unique clusters (same namespace = same clusters)
     all_unique_clusters = sorted(np.unique(np.concatenate(clusters_list)))
-    colors = cm.rainbow(np.linspace(0, 1, len(all_unique_clusters)))
-    cluster_to_color = dict(zip(all_unique_clusters, colors))
+    cluster_to_color = {cluster_id: get_cluster_color(cluster_id) for cluster_id in all_unique_clusters}
 
     fig, ax = plt.subplots(figsize=figsize)
 

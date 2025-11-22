@@ -17,6 +17,7 @@ class Config(BaseModel):
     model_instance: object | None = Field(default=None, description="Custom model instance")
     verbose: bool = Field(default=True, description="Verbose output")
     device: str = Field(default="cuda", description="Device for computation")
+    cluster_cmap: str = Field(default="tab20", description="Cluster colormap name")
 
     class Config:
         arbitrary_types_allowed = True
@@ -75,6 +76,27 @@ def set_verbose(verbose: bool):
     _config.verbose = verbose
 
 
+def set_default_cluster_cmap(cmap_name: str):
+    """Set global cluster colormap ('tab20', 'tab10', 'Set1', etc.)"""
+    _config.cluster_cmap = cmap_name
+
+
+def get_cluster_color(cluster_id: int):
+    """
+    Get color for cluster ID using global colormap
+
+    Args:
+        cluster_id: Cluster ID
+
+    Returns:
+        Color in matplotlib format (array or string)
+    """
+    from matplotlib import pyplot as plt
+
+    cmap = plt.get_cmap(_config.cluster_cmap)
+    return cmap(cluster_id % 20)  # Modulo to handle colormaps with limited colors
+
+
 def _get(key: str, value):
     """Get value or fall back to global default"""
     if value is not None:
@@ -95,6 +117,8 @@ __all__ = [
     "set_default_model_preset",
     "set_default_device",
     "set_verbose",
+    "set_default_cluster_cmap",
+    "get_cluster_color",
     "_get",
     "_progress",
 ]

@@ -164,12 +164,16 @@ class PreviewClustersCommand(BasePreviewCommand):
         clusters = f[cluster_path][:]
 
         # Prepare frames for each cluster
+        from . import get_cluster_color
+
         font = ImageFont.truetype(font=get_platform_font(), size=self.font_size)
-        cmap = plt.get_cmap("tab20")
         frames = {}
 
         for cluster in np.unique(clusters).tolist() + [-1]:
-            color = mcolors.rgb2hex(cmap(cluster)[:3]) if cluster >= 0 else "#111"
+            if cluster >= 0:
+                color = mcolors.rgb2hex(get_cluster_color(cluster)[:3])
+            else:
+                color = "#111"
             frames[cluster] = create_frame(self.size, color, f"{cluster}", font)
 
         return {"clusters": clusters, "frames": frames}
@@ -182,31 +186,52 @@ class PreviewClustersCommand(BasePreviewCommand):
 
 class PreviewScoresCommand(BasePreviewCommand):
     """
-    Generate thumbnail with score visualization
+    Generate thumbnail with PCA visualization
 
     Usage:
         cmd = PreviewScoresCommand(size=64)
-        image = cmd(hdf5_path='data.h5', score_name='pca')
+        image = cmd(hdf5_path='data.h5', score_name='pca1', namespace='default')
     """
 
-    def _prepare(self, f: h5py.File, score_name: str):
+    def _prepare(self, f: h5py.File, score_name: str, namespace: str = "default", filter_path: str = "", cmap_name: str = "viridis"):
         """
-        Prepare score visualization data
+        Prepare PCA visualization data
 
         Args:
             f: HDF5 file handle
-            score_name: Score dataset name
+            score_name: Score dataset name (e.g., 'pca1', 'pca2')
+            namespace: Namespace (e.g., "default", "001+002")
+            filter_path: Filter path (e.g., "1+2+3" or "1+2+3/0+1")
+            cmap_name: Colormap name
 
         Returns:
             dict with 'scores', 'cmap', and 'font'
         """
-        # Load scores
-        score_path = f"{self.model_name}/scores_{score_name}"
-        scores = f[score_path][()]
+        from ..utils.hdf5_paths import build_cluster_path
+
+        # Parse filter path
+        filters = None
+        if filter_path:
+            filters = []
+            for part in filter_path.split("/"):
+                filter_ids = [int(x) for x in part.split("+")]
+                filters.append(filter_ids)
+
+        # Build hierarchical path
+        score_path = build_cluster_path(self.model_name, namespace, filters, dataset=score_name)
+
+        if score_path not in f:
+            raise RuntimeError(f"{score_path} does not exist in HDF5 file")
+
+        scores = f[score_path][:]
+
+        # Handle multi-dimensional scores (take first component)
+        if scores.ndim > 1:
+            scores = scores[:, 0]
 
         # Prepare font and colormap
         font = ImageFont.truetype(font=get_platform_font(), size=self.font_size)
-        cmap = plt.get_cmap("viridis")
+        cmap = plt.get_cmap(cmap_name)
 
         return {"scores": scores, "cmap": cmap, "font": font}
 

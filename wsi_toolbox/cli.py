@@ -28,6 +28,7 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
 
 common.set_default_progress("tqdm")
 common.set_default_model_preset(DEFAULT_MODEL)
+common.set_default_cluster_cmap("tab20")
 
 
 def sigmoid(x):
@@ -284,14 +285,14 @@ class CLI(AutoCLI):
 
     class PcaArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
-        n_components: int = Field(2, s="-n", description="Number of PCA components (1, 2, or 3)")
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Parent filter cluster IDs")
+        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
+        n_components: int = Field(2, s="-n", description="Number of PCA components (1, 2, or 3)")
         cluster_filter: list[int] = Field([], s="-C", description="Compute PCA only on these cluster IDs")
-        scaler: str = Field("minmax", choices=["std", "minmax"])
+        scaler: str = Field("minmax", s="-s", choices=["std", "minmax"], description="Scaling method")
         overwrite: bool = Field(False, s="-O")
-        show: bool = False
-        save: bool = False
+        show: bool = Field(False, description="Show PCA plot")
+        save: bool = Field(False, description="Save plot to file")
 
     def run_pca(self, a: PcaArgs):
         # Build parent_filters
@@ -419,11 +420,23 @@ class CLI(AutoCLI):
             plt.figure(figsize=(12, 8))
             sns.set_style("whitegrid")
             ax = plt.subplot(111)
-            sns.violinplot(data=data, ax=ax, inner="box", cut=0, zorder=1, alpha=0.5)
 
+            # Prepare colors: gray for "All", then cluster colors
+            palette = ["gray"]  # Color for "All"
+            for cluster_id in cluster_ids:
+                color = common.get_cluster_color(cluster_id)
+                palette.append(color)
+
+            sns.violinplot(data=data, ax=ax, inner="box", cut=0, zorder=1, alpha=0.5, palette=palette)
+
+            # Scatter: first is "All" with gray, then clusters
             for i, d in enumerate(data):
                 x = np.random.normal(i, 0.05, size=len(d))
-                ax.scatter(x, d, alpha=0.8, s=5, color=f"C{i}", zorder=2)
+                if i == 0:
+                    color = "gray"  # All
+                else:
+                    color = common.get_cluster_color(cluster_ids[i - 1])
+                ax.scatter(x, d, alpha=0.8, s=5, color=color, zorder=2)
 
             ax.set_xticks(np.arange(0, len(labels)))
             ax.set_xticklabels(labels)
@@ -526,22 +539,28 @@ class CLI(AutoCLI):
         if a.open:
             os.system(f"xdg-open {output_path}")
 
-    class PreviewScoresArgs(CommonArgs):
+    class PreviewPcaArgs(CommonArgs):
         input_path: str = Field(..., l="--in", s="-i")
         output_path: str = Field("", l="--out", s="-o")
-        score_name: str = Field(..., l="--name", s="-N")
+        score_name: str = Field(..., l="--name", s="-N", description="Score name (e.g., 'pca1', 'pca2')")
+        namespace: str = Field("default", l="--namespace", description="Namespace")
+        filter_ids: str = Field("", l="--filter", s="-f", description="Filter path (e.g., '1+2+3')")
+        cmap: str = Field("viridis", l="--cmap", s="-c", description="Colormap name")
         size: int = 64
         rotate: bool = False
         open: bool = False
 
-    def run_preview_scores(self, a):
+    def run_preview_pca(self, a):
         output_path = a.output_path
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
-            output_path = f"{base}_score-{a.score_name}_preview.jpg"
+            suffix = f"_{a.namespace}" if a.namespace != "default" else ""
+            if a.filter_ids:
+                suffix += f"_filter_{a.filter_ids.replace('/', '_')}"
+            output_path = f"{base}{suffix}_{a.score_name}_preview.jpg"
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
-        img = cmd(a.input_path, score_name=a.score_name)
+        img = cmd(a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=a.filter_ids, cmap_name=a.cmap)
         img.save(output_path)
         print(f"wrote {output_path}")
 

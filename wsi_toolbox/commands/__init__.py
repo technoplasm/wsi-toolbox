@@ -9,7 +9,9 @@ from ..common import (
     Config,
     _get,
     _progress,
+    get_cluster_color,
     get_config,
+    set_default_cluster_cmap,
     set_default_device,
     set_default_model,
     set_default_model_preset,
@@ -42,9 +44,11 @@ __all__ = [
     "set_default_model_preset",
     "set_default_device",
     "set_verbose",
+    "set_default_cluster_cmap",
     # Helper functions
     "_get",
     "_progress",
+    "get_cluster_color",
     # Commands
     "Wsi2HDF5Command",
     "PatchEmbeddingCommand",
