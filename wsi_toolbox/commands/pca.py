@@ -23,6 +23,7 @@ class PCAResult(BaseModel):
 
     n_samples: int
     n_components: int
+    namespace: str
     target_path: str
     skipped: bool = False
 
@@ -135,7 +136,11 @@ class PCACommand:
                     if get_config().verbose:
                         print(f"PCA scores already exist at {target_path}")
                     return PCAResult(
-                        n_samples=n_samples, n_components=self.n_components, target_path=target_path, skipped=True
+                        n_samples=n_samples,
+                        n_components=self.n_components,
+                        namespace=self.namespace,
+                        target_path=target_path,
+                        skipped=True,
                     )
 
         # Execute with progress tracking
@@ -171,7 +176,9 @@ class PCACommand:
             print(f"Computed PCA: {len(features)} samples → {self.n_components}D")
             print(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")
 
-        return PCAResult(n_samples=len(features), n_components=self.n_components, target_path=target_path)
+        return PCAResult(
+            n_samples=len(features), n_components=self.n_components, namespace=self.namespace, target_path=target_path
+        )
 
     def _load_cluster_mask(self, hdf5_paths: list[str], masks: list[np.ndarray]) -> np.ndarray:
         """Load cluster mask for filtering"""

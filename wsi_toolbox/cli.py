@@ -105,6 +105,36 @@ class CLI(AutoCLI):
         if not result.skipped:
             print(f"done: {result.feature_dim}D features extracted")
 
+    class ClusterArgs(CommonArgs):
+        input_paths: list[str] = Field(..., l="--in", s="-i")
+        namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
+        resolution: float = Field(1.0, description="Clustering resolution")
+        source: str = Field("features", choices=["features", "umap"], description="Data source")
+        overwrite: bool = Field(False, s="-O")
+
+    def run_cluster(self, a: ClusterArgs):
+        # Build parent_filters
+        parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
+
+        # Execute clustering
+        cmd = commands.ClusteringCommand(
+            resolution=a.resolution,
+            namespace=a.namespace if a.namespace else None,
+            parent_filters=parent_filters,
+            source=a.source,
+            overwrite=a.overwrite,
+        )
+        result = cmd(a.input_paths)
+
+        if result.skipped:
+            print(f"⊘ Skipped (already exists): {result.target_path}")
+        else:
+            print("✓ Clustering completed")
+        print(f"  Clusters: {result.cluster_count}")
+        print(f"  Samples:  {result.feature_count}")
+        print(f"  Path:     {result.target_path}")
+
     class UmapArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
@@ -114,6 +144,8 @@ class CLI(AutoCLI):
         min_dist: float = Field(0.1, description="UMAP min_dist")
         overwrite: bool = param(False, s="-O")
         show: bool = Field(False, description="Show UMAP plot")
+        save: bool = Field(False, description="Save plot to file")
+        use_parent_clusters: bool = Field(False, l="--parent", s="-P", description="Use parent clusters for plotting")
 
     def run_umap(self, a: UmapArgs):
         # Build parent_filters if filter_ids specified
@@ -148,12 +180,22 @@ class CLI(AutoCLI):
         namespace = a.namespace if a.namespace else cmd.namespace
 
         # Build cluster path
-        cluster_path = build_cluster_path(a.model, namespace, filters=parent_filters, dataset="clusters")
+        if a.use_parent_clusters:
+            # Use parent clusters (without filters)
+            cluster_path = build_cluster_path(a.model, namespace, filters=None, dataset="clusters")
+        else:
+            # Use sub-clusters (with filters)
+            cluster_path = build_cluster_path(a.model, namespace, filters=parent_filters, dataset="clusters")
 
         # Check if clusters exist
         with h5py.File(a.input_paths[0], "r") as f:
             if cluster_path not in f:
-                print("No clusters found. Skipping plot.")
+                if a.use_parent_clusters:
+                    print(f"Error: Parent clusters not found at {cluster_path}")
+                else:
+                    print(f"Error: Sub-clusters not found at {cluster_path}")
+                    if parent_filters:
+                        print("Hint: Run clustering with same filter first, or use --parent to use parent clusters")
                 return
 
         # Load UMAP coordinates and clusters from all files
@@ -198,48 +240,43 @@ class CLI(AutoCLI):
 
         # Plot
         plot_umap_multi(coords_list, clusters_list, filenames, title="UMAP Projection")
+
+        if a.save:
+            # Build filename
+            if len(a.input_paths) == 1:
+                # Single file: use input filename
+                base_name = P(a.input_paths[0]).stem
+            else:
+                # Multiple files: use namespace
+                base_name = result.namespace
+
+            # Add filter if present
+            if a.filter_ids:
+                filter_str = "+".join(map(str, a.filter_ids))
+                filename = f"{base_name}_{filter_str}_umap.png"
+            else:
+                filename = f"{base_name}_umap.png"
+
+            # Save to first input file's directory
+            p = P(a.input_paths[0])
+            fig_path = str(p.parent / filename)
+            plt.savefig(fig_path)
+            print(f"wrote {fig_path}")
+
         plt.show()
 
-    class ClusterArgs(CommonArgs):
-        input_paths: list[str] = Field(..., l="--in", s="-i")
-        namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        resolution: float = Field(1.0, description="Clustering resolution")
-        source: str = Field("features", choices=["features", "umap"], description="Data source")
-        overwrite: bool = Field(False, s="-O")
-
-    def run_cluster(self, a: ClusterArgs):
-        # Build parent_filters
-        parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
-
-        # Execute clustering
-        cmd = commands.ClusteringCommand(
-            resolution=a.resolution,
-            namespace=a.namespace if a.namespace else None,
-            parent_filters=parent_filters,
-            source=a.source,
-            overwrite=a.overwrite,
-        )
-        result = cmd(a.input_paths)
-
-        if result.skipped:
-            print(f"⊘ Skipped (already exists): {result.target_path}")
-        else:
-            print("✓ Clustering completed")
-        print(f"  Clusters: {result.cluster_count}")
-        print(f"  Samples:  {result.feature_count}")
-        print(f"  Path:     {result.target_path}")
 
     class PcaArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
         filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        n_components: int = Field(2, s="-n", description="Number of PCA components (1, 2, or 3)")
+        n_components: int = Field(1, s="-n", description="Number of PCA components (1, 2, or 3)")
         cluster_filter: list[int] = Field([], s="-C", description="Compute PCA only on these cluster IDs")
         scaler: str = Field("minmax", s="-s", choices=["std", "minmax"], description="Scaling method")
         overwrite: bool = Field(False, s="-O")
         show: bool = Field(False, description="Show PCA plot")
         save: bool = Field(False, description="Save plot to file")
+        use_parent_clusters: bool = Field(False, l="--parent", s="-P", description="Use parent clusters for plotting")
 
     def run_pca(self, a: PcaArgs):
         # Build parent_filters
@@ -268,10 +305,6 @@ class CLI(AutoCLI):
         if not a.show:
             return
 
-        if a.n_components not in [1, 2]:
-            print("Plotting only supported for 1D or 2D PCA")
-            return
-
         from pathlib import Path
 
         from .utils.hdf5_paths import build_cluster_path
@@ -279,14 +312,28 @@ class CLI(AutoCLI):
         # Determine namespace
         namespace = a.namespace if a.namespace else cmd.namespace
 
-        # Build cluster path - use parent clusters (without filters)
-        cluster_path = build_cluster_path(a.model, namespace, filters=None, dataset="clusters")
+        # Build cluster path
+        if a.use_parent_clusters:
+            # Use parent clusters (without filters)
+            cluster_path = build_cluster_path(a.model, namespace, filters=None, dataset="clusters")
+        else:
+            # Use sub-clusters (with filters)
+            cluster_path = build_cluster_path(a.model, namespace, filters=parent_filters, dataset="clusters")
 
         # Check if clusters exist
         with h5py.File(a.input_paths[0], "r") as f:
             if cluster_path not in f:
-                print("No clusters found. Skipping plot.")
+                if a.use_parent_clusters:
+                    print(f"Error: Parent clusters not found at {cluster_path}")
+                else:
+                    print(f"Error: Sub-clusters not found at {cluster_path}")
+                    if parent_filters:
+                        print("Hint: Run clustering with same filter first, or use --parent to use parent clusters")
                 return
+
+        if a.n_components not in [1, 2]:
+            print("Plotting only supported for 1D or 2D PCA")
+            return
 
         # Load PCA values and clusters from all files
         pca_list = []
@@ -339,8 +386,8 @@ class CLI(AutoCLI):
             # Determine which clusters to plot
             if a.cluster_filter:
                 cluster_ids = a.cluster_filter
-            elif a.filter_ids:
-                # Use parent filter clusters
+            elif a.use_parent_clusters and a.filter_ids:
+                # Use parent filter clusters only when --parent is specified
                 cluster_ids = a.filter_ids
             else:
                 # Show all clusters except noise (-1)
@@ -400,8 +447,24 @@ class CLI(AutoCLI):
             plot_umap_multi(pca_list, clusters_list, filenames, title="PCA Projection")
 
         if a.save:
+            # Build filename
+            if len(a.input_paths) == 1:
+                # Single file: use input filename
+                base_name = P(a.input_paths[0]).stem
+            else:
+                # Multiple files: use namespace
+                base_name = result.namespace
+
+            # Add filter if present
+            if a.filter_ids:
+                filter_str = "+".join(map(str, a.filter_ids))
+                filename = f"{base_name}_{filter_str}_pca{a.n_components}.png"
+            else:
+                filename = f"{base_name}_pca{a.n_components}.png"
+
+            # Save to first input file's directory
             p = P(a.input_paths[0])
-            fig_path = str(p.parent / f"{p.stem}_pca{a.n_components}.png")
+            fig_path = str(p.parent / filename)
             plt.savefig(fig_path)
             print(f"wrote {fig_path}")
 

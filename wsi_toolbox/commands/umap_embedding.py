@@ -16,6 +16,7 @@ class UmapResult(BaseModel):
 
     n_samples: int
     n_components: int
+    namespace: str
     target_path: str
     skipped: bool = False
 
@@ -106,7 +107,11 @@ class UmapCommand:
                     if get_config().verbose:
                         print(f"UMAP already exists at {target_path}")
                     return UmapResult(
-                        n_samples=n_samples, n_components=self.n_components, target_path=target_path, skipped=True
+                        n_samples=n_samples,
+                        n_components=self.n_components,
+                        namespace=self.namespace,
+                        target_path=target_path,
+                        skipped=True,
                     )
 
         # Execute with progress tracking
@@ -140,7 +145,9 @@ class UmapCommand:
             print(f"Computing UMAP: {len(features)} samples → {self.n_components}D")
             print(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")
 
-        return UmapResult(n_samples=len(features), n_components=self.n_components, target_path=target_path)
+        return UmapResult(
+            n_samples=len(features), n_components=self.n_components, namespace=self.namespace, target_path=target_path
+        )
 
     def _write_results(self, target_path: str, masks: list[np.ndarray]):
         """Write UMAP coordinates to HDF5 files"""
