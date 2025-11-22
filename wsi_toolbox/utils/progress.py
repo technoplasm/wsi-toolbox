@@ -7,10 +7,65 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-class StreamlitProgress:
-    """tqdmと同じインターフェースを持つStreamlitのプログレスバー"""
+class BaseProgress:
+    """Base interface for progress bars"""
+
+    def update(self, n: int = 1) -> None:
+        raise NotImplementedError
+
+    def set_description(self, desc: str = None, refresh: bool = True) -> None:
+        raise NotImplementedError
+
+    def set_postfix(self, ordered_dict=None, **kwargs) -> None:
+        raise NotImplementedError
+
+    def refresh(self) -> None:
+        """Force refresh the progress bar display"""
+        pass
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
+class TqdmProgress(BaseProgress):
+    """tqdm wrapper"""
 
     def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
+        from tqdm import tqdm
+
+        self._pbar = tqdm(iterable=iterable, total=total, desc=desc, **kwargs)
+
+    def update(self, n: int = 1) -> None:
+        self._pbar.update(n)
+
+    def set_description(self, desc: str = None, refresh: bool = True) -> None:
+        self._pbar.set_description(desc, refresh=refresh)
+
+    def set_postfix(self, ordered_dict=None, **kwargs) -> None:
+        self._pbar.set_postfix(ordered_dict, **kwargs)
+
+    def refresh(self) -> None:
+        self._pbar.refresh()
+
+    def close(self) -> None:
+        self._pbar.close()
+
+    def __iter__(self):
+        return iter(self._pbar)
+
+
+class StreamlitProgress(BaseProgress):
+    """Streamlit progress bar wrapper"""
+
+    def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
+        import streamlit as st  # noqa: E402
+
         self.iterable = iterable
         self.total = (
             total
@@ -21,19 +76,14 @@ class StreamlitProgress:
         self.n = 0
         self.kwargs = kwargs
 
-        try:
-            import streamlit as st
-
-            # 説明テキスト用のコンテナ
-            self.text_container = st.empty()
-            if desc:
-                self.text_container.text(desc)
-            # プログレスバー
-            self.progress_bar = st.progress(0)
-            # 後置テキスト用のコンテナ
-            self.postfix_container = st.empty()
-        except ImportError:
-            raise ImportError("streamlitがインストールされていません。")
+        # 説明テキスト用のコンテナ
+        self.text_container = st.empty()
+        if desc:
+            self.text_container.text(desc)
+        # プログレスバー
+        self.progress_bar = st.progress(0)
+        # 後置テキスト用のコンテナ
+        self.postfix_container = st.empty()
 
     def update(self, n: int = 1) -> None:
         """進捗を更新する"""
@@ -92,6 +142,74 @@ class StreamlitProgress:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """コンテキスト終了時に呼ばれる"""
         self.close()
+
+
+class DummyProgress(BaseProgress):
+    """Dummy progress bar (no output)"""
+
+    def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
+        self.iterable = iterable
+        self.total = total
+        self.desc = desc
+        self.n = 0
+
+    def update(self, n: int = 1) -> None:
+        self.n += n
+
+    def set_description(self, desc: str = None, refresh: bool = True) -> None:
+        if desc is not None:
+            self.desc = desc
+
+    def set_postfix(self, ordered_dict=None, **kwargs) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def __iter__(self):
+        if self.iterable is None:
+            raise ValueError("No iterable provided")
+        for obj in self.iterable:
+            yield obj
+            self.update(1)
+
+
+def Progress(
+    iterable: Optional[Iterable[T]] = None,
+    backend: str = "tqdm",
+    total: Optional[int] = None,
+    desc: str = "",
+    **kwargs,
+) -> BaseProgress:
+    """
+    Create a progress bar with the specified backend
+
+    Args:
+        iterable: Optional iterable to track
+        backend: Backend type ("tqdm", "streamlit", "dummy")
+        total: Total iterations (required if iterable is None)
+        desc: Description text
+        **kwargs: Additional arguments passed to the backend
+
+    Returns:
+        BaseProgress instance
+    """
+    if backend == "tqdm":
+        try:
+            return TqdmProgress(iterable=iterable, total=total, desc=desc, **kwargs)
+        except ImportError:
+            print("tqdm not found, falling back to dummy progress")
+            return DummyProgress(iterable=iterable, total=total, desc=desc, **kwargs)
+    elif backend == "streamlit":
+        try:
+            return StreamlitProgress(iterable=iterable, total=total, desc=desc, **kwargs)
+        except ImportError:
+            print("streamlit not found, falling back to dummy progress")
+            return DummyProgress(iterable=iterable, total=total, desc=desc, **kwargs)
+    elif backend == "dummy":
+        return DummyProgress(iterable=iterable, total=total, desc=desc, **kwargs)
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
 
 
 def tqdm_or_st(

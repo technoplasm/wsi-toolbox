@@ -54,6 +54,7 @@ dependencies = [
 
 [project.scripts]
 wsi-toolbox = "wsi_toolbox.cli:main"
+wt = "wsi_toolbox.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/technoplasm/wsi-toolbox"

@@ -4,7 +4,7 @@ Global configuration and settings for WSI-toolbox
 
 from pydantic import BaseModel, Field
 
-from .utils.progress import tqdm_or_st
+from .utils.progress import Progress
 
 
 # === Global Configuration (Pydantic) ===
@@ -82,9 +82,9 @@ def _get(key: str, value):
     return getattr(_config, key)
 
 
-def _progress(iterable, **kwargs):
-    """Wrapper for tqdm_or_st that uses global config"""
-    return tqdm_or_st(iterable, backend=_config.progress, **kwargs)
+def _progress(iterable=None, total=None, desc="", **kwargs):
+    """Create a progress bar using global config backend"""
+    return Progress(iterable=iterable, backend=_config.progress, total=total, desc=desc, **kwargs)
 
 
 __all__ = [

@@ -2,11 +2,19 @@
 Clustering command for WSI features
 """
 
-import h5py
-import numpy as np
-from pydantic import BaseModel
+import multiprocessing
 
-from ..utils.analysis import leiden_cluster
+import h5py
+import igraph as ig
+import leidenalg as la
+import networkx as nx
+import numpy as np
+from joblib import Parallel, delayed
+from pydantic import BaseModel
+from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+
+from ..utils.analysis import find_optimal_components, process_edges_batch
 from ..utils.hdf5_paths import build_cluster_path, build_namespace
 from . import _get, get_config
 from .data_loader import DataLoader
@@ -127,27 +135,31 @@ class ClusteringCommand:
                         skipped=True,
                     )
 
-        # Load data
-        loader = DataLoader(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
-        data, masks = loader.load_features(source=self.source)
+        # Execute with progress tracking
+        from ..common import _progress
 
+        # Total: 1 (load) + 5 (clustering steps) + 1 (write) = 7
+        with _progress(total=7, desc="Clustering") as pbar:
+            # Load data
+            pbar.set_description("Loading data")
+            loader = DataLoader(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
+            data, masks = loader.load_features(source=self.source)
+            pbar.update(1)
+
+            # Perform clustering (5 internal steps)
+            self.clusters = self._perform_clustering(data, pbar)
+            cluster_count = len(set(self.clusters))
+
+            # Write results
+            pbar.set_description("Writing results")
+            self._write_results(target_path, masks)
+            pbar.update(1)
+
+        # Verbose output after progress bar closes
         if get_config().verbose:
             print(f"Loaded {len(data)} samples from {self.source}")
-
-        # Perform clustering
-        self.clusters = leiden_cluster(
-            data,
-            umap_emb_func=None,
-            resolution=self.resolution,
-            progress=get_config().progress,
-        )
-
-        cluster_count = len(set(self.clusters))
-        if get_config().verbose:
             print(f"Found {cluster_count} clusters")
-
-        # Write results
-        self._write_results(target_path, masks)
+            print(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")
 
         return ClusteringResult(cluster_count=cluster_count, feature_count=len(data), target_path=target_path)
 
@@ -176,9 +188,6 @@ class ClusteringCommand:
                 ds.attrs["source"] = self.source
                 ds.attrs["model"] = self.model_name
 
-                if get_config().verbose:
-                    print(f"Wrote {target_path} to {hdf5_path}")
-
             cursor += count
 
     def _ensure_groups(self, h5file: h5py.File, path: str):
@@ -191,3 +200,63 @@ class ClusteringCommand:
             current = f"{current}/{part}" if current else part
             if current not in h5file:
                 h5file.create_group(current)
+
+    def _perform_clustering(self, features, pbar, n_jobs=-1):
+        """Perform clustering with integrated progress tracking"""
+        if n_jobs < 0:
+            n_jobs = multiprocessing.cpu_count()
+        n_samples = features.shape[0]
+
+        # 1. PCA
+        pbar.set_description("Processing PCA")
+        n_components = find_optimal_components(features)
+        pca = PCA(n_components)
+        target_features = pca.fit_transform(features)
+        pbar.update(1)
+
+        # 2. KNN
+        pbar.set_description("Processing KNN")
+        k = int(np.sqrt(len(target_features)))
+        nn = NearestNeighbors(n_neighbors=k).fit(target_features)
+        distances, indices = nn.kneighbors(target_features)
+        pbar.update(1)
+
+        # 3. Build graph
+        pbar.set_description("Processing edges")
+        G = nx.Graph()
+        G.add_nodes_from(range(n_samples))
+
+        batch_size = max(1, n_samples // n_jobs)
+        batches = [list(range(i, min(i + batch_size, n_samples))) for i in range(0, n_samples, batch_size)]
+        results = Parallel(n_jobs=n_jobs)(
+            [delayed(process_edges_batch)(batch, indices, target_features, False, pca) for batch in batches]
+        )
+
+        for batch_edges, batch_weights in results:
+            for (i, j), weight in zip(batch_edges, batch_weights):
+                G.add_edge(i, j, weight=weight)
+        pbar.update(1)
+
+        # 4. Leiden clustering
+        pbar.set_description("Leiden clustering")
+        edges = list(G.edges())
+        weights = [G[u][v]["weight"] for u, v in edges]
+        ig_graph = ig.Graph(n=n_samples, edges=edges, edge_attrs={"weight": weights})
+
+        partition = la.find_partition(
+            ig_graph,
+            la.RBConfigurationVertexPartition,
+            weights="weight",
+            resolution_parameter=self.resolution,
+        )
+        pbar.update(1)
+
+        # 5. Finalize
+        pbar.set_description("Finalize")
+        clusters = np.full(n_samples, -1)
+        for i, community in enumerate(partition):
+            for node in community:
+                clusters[node] = i
+        pbar.update(1)
+
+        return clusters

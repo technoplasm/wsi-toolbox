@@ -109,24 +109,36 @@ class UmapCommand:
                         n_samples=n_samples, n_components=self.n_components, target_path=target_path, skipped=True
                     )
 
-        # Load features
-        loader = DataLoader(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
-        features, masks = loader.load_features(source="features")
+        # Execute with progress tracking
+        from ..common import _progress
 
+        with _progress(total=3, desc="UMAP") as pbar:
+            # Load features
+            pbar.set_description("Loading features")
+            loader = DataLoader(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
+            features, masks = loader.load_features(source="features")
+            pbar.update(1)
+
+            # Compute UMAP
+            pbar.set_description("Computing UMAP")
+            reducer = umap.UMAP(
+                n_components=self.n_components,
+                n_neighbors=self.n_neighbors,
+                min_dist=self.min_dist,
+                metric=self.metric,
+            )
+            self.umap_embeddings = reducer.fit_transform(features)
+            pbar.update(1)
+
+            # Write results
+            pbar.set_description("Writing results")
+            self._write_results(target_path, masks)
+            pbar.update(1)
+
+        # Verbose output after progress bar closes
         if get_config().verbose:
             print(f"Computing UMAP: {len(features)} samples → {self.n_components}D")
-
-        # Compute UMAP
-        reducer = umap.UMAP(
-            n_components=self.n_components,
-            n_neighbors=self.n_neighbors,
-            min_dist=self.min_dist,
-            metric=self.metric,
-        )
-        self.umap_embeddings = reducer.fit_transform(features)
-
-        # Write results
-        self._write_results(target_path, masks)
+            print(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")
 
         return UmapResult(n_samples=len(features), n_components=self.n_components, target_path=target_path)
 
@@ -158,9 +170,6 @@ class UmapCommand:
                 ds.attrs["min_dist"] = self.min_dist
                 ds.attrs["metric"] = self.metric
                 ds.attrs["model"] = self.model_name
-
-                if get_config().verbose:
-                    print(f"Wrote {target_path} to {hdf5_path}")
 
             cursor += count
 

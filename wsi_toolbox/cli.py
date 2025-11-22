@@ -53,13 +53,17 @@ class CLI(AutoCLI):
         engine: str = param("auto", choices=["auto", "openslide", "tifffile"])
         mpp: float = 0
         rotate: bool = False
+        no_temp: bool = Field(False, description="Don't use temporary file (less safe)")
 
     def run_wsi2h5(self, a: Wsi2h5Args):
         commands.set_default_device(a.device)
         output_path = a.output_path
+
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
             output_path = base + ".h5"
+
+        tmp_path = output_path + ".tmp"
 
         if os.path.exists(output_path):
             if not a.overwrite:
@@ -71,9 +75,17 @@ class CLI(AutoCLI):
         if d:
             os.makedirs(d, exist_ok=True)
 
+        print('Output path:', output_path)
+        print('Temporary path:', tmp_path)
+
         # Use new command pattern (progress is auto-set from global config)
-        cmd = commands.Wsi2HDF5Command(patch_size=a.patch_size, engine=a.engine, mpp=a.mpp, rotate=a.rotate)
-        result = cmd(a.input_path, output_path)
+        cmd = commands.Wsi2HDF5Command(
+            patch_size=a.patch_size, engine=a.engine, mpp=a.mpp, rotate=a.rotate
+        )
+        result = cmd(a.input_path, tmp_path)
+
+        os.rename(tmp_path, output_path)
+        print('Renamed ', tmp_path, ' -> ', output_path)
         print(f"done: {result.patch_count} patches extracted")
 
     class EmbedArgs(CommonArgs):
@@ -424,7 +436,7 @@ class CLI(AutoCLI):
             base, ext = os.path.splitext(a.input_path)
             suffix = f"_{a.namespace}" if a.namespace != "default" else ""
             if a.filter_ids:
-                suffix += f"_filter_{a.filter_ids.replace('/', '_')}"
+                suffix += f"_filter_{a.filter_ids.replace('+', '-')}"
             output_path = f"{base}{suffix}_thumb.jpg"
 
         cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model)
