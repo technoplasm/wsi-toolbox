@@ -80,7 +80,7 @@ class CLI(AutoCLI):
         patch_size: int = param(256, s="-S")
         overwrite: bool = param(False, s="-O")
         engine: str = param("auto", choices=["auto", "openslide", "tifffile"])
-        mpp: float = 0
+        mpp: float = 0.5
         rotate: bool = False
         no_temp: bool = Field(False, description="Don't use temporary file (less safe)")
         detect_white: list[str] = Field(

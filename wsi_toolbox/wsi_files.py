@@ -153,14 +153,14 @@ class StandardImage(WSIFile):
         return self.image[y : y + h, x : x + w]
 
 
-def create_wsi_file(image_path: str, engine: str = "auto", **kwargs) -> WSIFile:
+def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> WSIFile:
     """
     Factory function to create appropriate WSIFile instance
 
     Args:
         image_path: Path to WSI file
         engine: Engine type ('auto', 'openslide', 'tifffile', 'standard')
-        **kwargs: Additional arguments (e.g., mpp for standard images)
+        mpp: Defautl Micro Per Pixcel (only used when engine == 'standard')
 
     Returns:
         WSIFile: Appropriate WSIFile subclass instance
@@ -182,7 +182,6 @@ def create_wsi_file(image_path: str, engine: str = "auto", **kwargs) -> WSIFile:
     elif engine == "tifffile":
         return TiffFile(image_path)
     elif engine == "standard":
-        mpp = kwargs.get("mpp", None)
         return StandardImage(image_path, mpp=mpp)
     else:
         raise ValueError(f"Invalid engine: {engine}")
