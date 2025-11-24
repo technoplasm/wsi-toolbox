@@ -5,29 +5,6 @@ Helper utility functions for WSI processing
 import numpy as np
 
 
-def is_white_patch(patch, rgb_std_threshold=7.0, white_ratio=0.7):
-    """
-    Check if a patch is mostly white/blank
-
-    Args:
-        patch: RGB patch (H, W, 3)
-        rgb_std_threshold: Threshold for RGB standard deviation
-        white_ratio: Ratio threshold for white pixels
-
-    Returns:
-        bool: True if patch is considered white/blank
-    """
-    # white: RGB std < 7.0
-    rgb_std_pixels = np.std(patch, axis=2) < rgb_std_threshold
-    white_pixels = np.sum(rgb_std_pixels)
-    total_pixels = patch.shape[0] * patch.shape[1]
-    white_ratio_calculated = white_pixels / total_pixels
-    # print('whi' if white_ratio_calculated > white_ratio else 'use',
-    #       'std{:.3f}'.format(np.sum(rgb_std_pixels)/total_pixels)
-    #      )
-    return white_ratio_calculated > white_ratio
-
-
 def cosine_distance(x, y):
     """
     Calculate cosine distance with exponential weighting

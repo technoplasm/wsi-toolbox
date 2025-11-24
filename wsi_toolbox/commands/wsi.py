@@ -3,13 +3,13 @@ WSI to HDF5 conversion command
 """
 
 import os
+from typing import Callable
 
 import cv2
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..utils.helpers import is_white_patch
 from ..wsi_files import create_wsi_file
 from . import _progress, get_config
 
@@ -40,7 +40,14 @@ class Wsi2HDF5Command:
         result = cmd(input_path='image.ndpi', output_path='output.h5')
     """
 
-    def __init__(self, patch_size: int = 256, engine: str = "auto", mpp: float = 0, rotate: bool = True):
+    def __init__(
+        self,
+        patch_size: int = 256,
+        engine: str = "auto",
+        mpp: float = 0,
+        rotate: bool = True,
+        white_detector: Callable[[np.ndarray], bool] = None,
+    ):
         """
         Initialize WSI to HDF5 converter
 
@@ -49,6 +56,8 @@ class Wsi2HDF5Command:
             engine: WSI reader engine ('auto', 'openslide', 'tifffile', 'standard')
             mpp: Microns per pixel (for standard images)
             rotate: Whether to rotate patches 180 degrees
+            white_detector: Function that takes (H, W, 3) array and returns bool.
+                          If None, uses legacy is_white_patch with default params.
 
         Note:
             progress and verbose are controlled by global config:
@@ -59,6 +68,15 @@ class Wsi2HDF5Command:
         self.engine = engine
         self.mpp = mpp
         self.rotate = rotate
+
+        # Set white detection function
+        if white_detector is None:
+            # Default: use ptp method with default threshold
+            from ..utils.white import create_white_detector
+
+            self._is_white_patch = create_white_detector("ptp")
+        else:
+            self._is_white_patch = white_detector
 
     def __call__(self, input_path: str, output_path: str) -> Wsi2HDF5Result:
         """
@@ -148,7 +166,7 @@ class Wsi2HDF5Command:
                     # Filter white patches and collect valid ones
                     batch = []
                     for col, patch in enumerate(patches):
-                        if is_white_patch(patch):
+                        if self._is_white_patch(patch):
                             continue
 
                         if self.rotate:

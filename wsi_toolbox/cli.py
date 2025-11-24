@@ -40,6 +40,39 @@ class CLI(AutoCLI):
         fix_global_seed(a.seed)
         common.set_default_model_preset(a.model)
 
+    def _parse_white_detect(self, detect_white: list[str]) -> tuple[str, float | None]:
+        """
+        Parse white detection arguments
+
+        Args:
+            detect_white: List of strings [method, threshold]
+
+        Returns:
+            Tuple of (method, threshold). threshold is None for default.
+
+        Raises:
+            ValueError: If arguments are invalid
+        """
+        if not detect_white:
+            # Default: ptp with default threshold
+            return ("ptp", None)
+
+        if len(detect_white) < 2:
+            raise ValueError("--detect-white requires method and threshold (e.g., 'ptp 0.9')")
+
+        method = detect_white[0]
+        try:
+            threshold = float(detect_white[1])
+        except ValueError:
+            raise ValueError(f"Invalid threshold value '{detect_white[1]}'. Must be a number.")
+
+        # Validate method
+        valid_methods = ["ptp", "otsu", "std", "green"]
+        if method not in valid_methods:
+            raise ValueError(f"Invalid method '{method}'. Must be one of {valid_methods}")
+
+        return (method, threshold)
+
     class Wsi2h5Args(CommonArgs):
         device: str = "cuda"
         input_path: str = param(..., l="--in", s="-i")
@@ -50,6 +83,9 @@ class CLI(AutoCLI):
         mpp: float = 0
         rotate: bool = False
         no_temp: bool = Field(False, description="Don't use temporary file (less safe)")
+        detect_white: list[str] = Field(
+            [], l="--detect-white", s="-w", description="White detection: method threshold (e.g., 'ptp 0.9')"
+        )
 
     def run_wsi2h5(self, a: Wsi2h5Args):
         commands.set_default_device(a.device)
@@ -71,11 +107,26 @@ class CLI(AutoCLI):
         if d:
             os.makedirs(d, exist_ok=True)
 
+        # Parse white detection settings and create detector function
+        from .utils.white import create_white_detector
+
+        white_method, white_threshold = self._parse_white_detect(a.detect_white)
+        white_detector = create_white_detector(white_method, white_threshold)
+
         print("Output path:", output_path)
         print("Temporary path:", tmp_path)
+        print(
+            f"White detection: {white_method} (threshold: {white_threshold if white_threshold is not None else 'default'})"
+        )
 
         # Use new command pattern (progress is auto-set from global config)
-        cmd = commands.Wsi2HDF5Command(patch_size=a.patch_size, engine=a.engine, mpp=a.mpp, rotate=a.rotate)
+        cmd = commands.Wsi2HDF5Command(
+            patch_size=a.patch_size,
+            engine=a.engine,
+            mpp=a.mpp,
+            rotate=a.rotate,
+            white_detector=white_detector,
+        )
         result = cmd(a.input_path, tmp_path)
 
         os.rename(tmp_path, output_path)
