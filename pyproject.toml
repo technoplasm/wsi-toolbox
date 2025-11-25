@@ -114,10 +114,12 @@ packages = ["wsi_toolbox"]
 
 [dependency-groups]
 dev = [
+    "fastapi>=0.115.0",
     "ipython>=9.1.0",
     "jupyterlab>=4.1.6",
     "ruff>=0.8.0",
     "taskipy>=1.14.1",
+    "uvicorn>=0.32.0",
 ]
 build = [
     "build>=1.0.0",
