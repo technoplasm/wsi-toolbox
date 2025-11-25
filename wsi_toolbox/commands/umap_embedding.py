@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..utils.hdf5_paths import build_cluster_path, build_namespace
+from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
 from . import _get, _progress, get_config
 from .data_loader import DataLoader
 
@@ -157,7 +157,7 @@ class UmapCommand:
 
             with h5py.File(hdf5_path, "a") as f:
                 # Ensure parent groups exist
-                self._ensure_groups(f, target_path)
+                ensure_groups(f, target_path)
 
                 # Delete if exists
                 if target_path in f:
@@ -179,17 +179,6 @@ class UmapCommand:
                 ds.attrs["model"] = self.model_name
 
             cursor += count
-
-    def _ensure_groups(self, h5file: h5py.File, path: str):
-        """Ensure all parent groups exist for given path"""
-        parts = path.split("/")
-        group_parts = parts[:-1]
-
-        current = ""
-        for part in group_parts:
-            current = f"{current}/{part}" if current else part
-            if current not in h5file:
-                h5file.create_group(current)
 
     def get_embeddings(self):
         """Get computed UMAP embeddings"""

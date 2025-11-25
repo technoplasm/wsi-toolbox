@@ -227,3 +227,26 @@ def list_filters(h5_file, model_name: str, namespace: str) -> list[str]:
     h5_file[base_path].visititems(visit_filters)
 
     return filters
+
+
+def ensure_groups(h5file: h5py.File, path: str) -> None:
+    """
+    Ensure all parent groups exist for a given path.
+
+    Args:
+        h5file: Open h5py.File object
+        path: Full path to dataset (e.g., "model/namespace/clusters")
+
+    Example:
+        >>> with h5py.File("data.h5", "a") as f:
+        ...     ensure_groups(f, "uni/default/filter/1+2/clusters")
+        ...     f.create_dataset("uni/default/filter/1+2/clusters", data=clusters)
+    """
+    parts = path.split("/")
+    group_parts = parts[:-1]  # Exclude the dataset name
+
+    current = ""
+    for part in group_parts:
+        current = f"{current}/{part}" if current else part
+        if current not in h5file:
+            h5file.create_group(current)

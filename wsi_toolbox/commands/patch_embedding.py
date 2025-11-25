@@ -103,6 +103,7 @@ class PatchEmbeddingCommand:
                         if (self.feature_name in f) and (self.latent_feature_name in f):
                             if get_config().verbose:
                                 print("Already extracted. Skipped.")
+                            done = True
                             return PatchEmbeddingResult(skipped=True)
                         if (self.feature_name in f) or (self.latent_feature_name in f):
                             raise RuntimeError(f"Either {self.feature_name} or {self.latent_feature_name} exists.")
@@ -110,6 +111,7 @@ class PatchEmbeddingCommand:
                         if self.feature_name in f:
                             if get_config().verbose:
                                 print("Already extracted. Skipped.")
+                            done = True
                             return PatchEmbeddingResult(skipped=True)
 
                 # Delete if overwrite
@@ -167,7 +169,6 @@ class PatchEmbeddingCommand:
                     print(f"Embeddings dimension: {f[self.feature_name].shape}")
 
                 done = True
-
                 return PatchEmbeddingResult(
                     feature_dim=model.num_features,
                     patch_count=patch_count,
