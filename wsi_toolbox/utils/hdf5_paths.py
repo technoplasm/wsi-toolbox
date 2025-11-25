@@ -11,10 +11,6 @@ import h5py
 # These conflict with existing HDF5 structure (e.g., model/features, model/metadata)
 RESERVED_NAMESPACES = frozenset({"features", "metadata", "latent_features"})
 
-# Valid namespace pattern (allows +, -, _, alphanumeric)
-# Examples: "default", "experiment001", "file1+file2"
-_NAMESPACE_PATTERN = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_+\-]*$")
-
 
 def validate_namespace(namespace: str) -> bool:
     """
@@ -25,18 +21,6 @@ def validate_namespace(namespace: str) -> bool:
 
     Returns:
         True if valid, False if invalid
-
-    Rules:
-        - Cannot be a reserved name (features, metadata, latent_features)
-        - Must match pattern: alphanumeric, underscore, hyphen, +
-        - Cannot be empty
-
-    Examples:
-        >>> validate_namespace("default")  # True
-        >>> validate_namespace("experiment001")  # True
-        >>> validate_namespace("file1+file2")  # True
-        >>> validate_namespace("features")  # False (reserved)
-        >>> validate_namespace("")  # False (empty)
     """
     if not namespace:
         return False
@@ -44,7 +28,7 @@ def validate_namespace(namespace: str) -> bool:
     if namespace in RESERVED_NAMESPACES:
         return False
 
-    return bool(_NAMESPACE_PATTERN.match(namespace))
+    return True
 
 
 def normalize_filename(path: str) -> str:
@@ -100,7 +84,7 @@ def build_cluster_path(
         model_name: Model name (e.g., "uni", "gigapath")
         namespace: Namespace (e.g., "default", "001+002")
         filters: Nested list of cluster filters, e.g., [[1,2,3], [0,1]]
-        dataset: Dataset name ("clusters" or "umap_coordinates")
+        dataset: Dataset name ("clusters", "umap", "pca1", "pca2", "pca3")
 
     Returns:
         Full HDF5 path

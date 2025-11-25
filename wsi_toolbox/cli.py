@@ -306,7 +306,7 @@ class CLI(AutoCLI):
 
         if a.save:
             # Build filename
-            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else namespace
+            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else ''
             if a.filter_ids:
                 filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_umap.png"
             else:
@@ -316,7 +316,8 @@ class CLI(AutoCLI):
             plt.savefig(fig_path)
             print(f"wrote {fig_path}")
 
-        plt.show()
+        if a.show:
+            plt.show()
 
     class PcaArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
@@ -440,7 +441,7 @@ class CLI(AutoCLI):
 
         if a.save:
             # Build filename
-            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else namespace
+            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else ''
             if a.filter_ids:
                 filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_pca{a.n_components}.png"
             else:
@@ -488,6 +489,7 @@ class CLI(AutoCLI):
         namespace: str = Field("default", l="--namespace", s="-N", description="Namespace")
         filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
         cmap: str = Field("viridis", l="--cmap", s="-c", description="Colormap name")
+        invert: bool = Field(False, l="--invert", s="-I", description="Invert scores (1 - score)")
         size: int = 64
         rotate: bool = False
         open: bool = False
@@ -506,7 +508,12 @@ class CLI(AutoCLI):
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(
-            a.input_path, score_name=a.score_name, namespace=a.namespace, filter_path=filter_str, cmap_name=a.cmap
+            a.input_path,
+            score_name=a.score_name,
+            namespace=a.namespace,
+            filter_path=filter_str,
+            cmap_name=a.cmap,
+            invert=a.invert,
         )
         img.save(output_path)
         print(f"wrote {output_path}")
@@ -570,7 +577,7 @@ class CLI(AutoCLI):
                         n_total = len(clusters)
 
                         # Check UMAP
-                        umap_path = f"{model}/{ns}/umap_coordinates"
+                        umap_path = f"{model}/{ns}/umap"
                         has_umap = "✓" if umap_path in f else "✗"
 
                         # Display namespace
