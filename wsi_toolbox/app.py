@@ -144,6 +144,8 @@ def lock():
 
 def unlock():
     set_locked_state(False)
+    # キャッシュをクリア（処理後にファイルが更新されているため）
+    st.cache_data.clear()
 
 
 st.set_page_config(page_title="WSI Analysis System", page_icon="🔬", layout="wide")
@@ -220,9 +222,19 @@ class FileEntry(BaseModel):
         }
 
 
-def get_hdf5_detail(hdf_path) -> Optional[HDF5Detail]:
+@st.cache_data(ttl=60)
+def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[HDF5Detail]:
+    """
+    HDF5ファイルの詳細を取得（キャッシュ付き）
+
+    Args:
+        hdf_path: HDF5ファイルパス
+        model_name: モデル名
+        _mtime: ファイル更新時刻（キャッシュ無効化用）
+    """
+    from .utils.hdf5_paths import list_namespaces
+
     try:
-        model_name = st.session_state.model
         with h5py.File(hdf_path, "r") as f:
             if "metadata/patch_count" not in f:
                 return HDF5Detail(
@@ -239,8 +251,6 @@ def get_hdf5_detail(hdf_path) -> Optional[HDF5Detail]:
             has_features = (f"{model_name}/features" in f) and (len(f[f"{model_name}/features"]) == patch_count)
             cluster_names = ["未施行"]
             if model_name in f:
-                from .utils.hdf5_paths import list_namespaces
-
                 # List all namespaces (directories with clusters dataset)
                 namespaces = list_namespaces(f, model_name)
                 if namespaces:
@@ -307,7 +317,8 @@ def list_files(directory) -> List[FileEntry]:
 
         detail = None
         if file_type == FileType.HDF5:
-            detail = get_hdf5_detail(str(item_path))
+            mtime = os.path.getmtime(item_path)
+            detail = get_hdf5_detail(str(item_path), st.session_state.model, mtime)
 
         exists = item_path.exists()
 
