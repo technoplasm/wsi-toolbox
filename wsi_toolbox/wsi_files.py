@@ -289,7 +289,7 @@ class PyramidalTiffFile(PyramidalWSIFile):
     def _build_level_info(self) -> list[NativeLevel]:
         """Build pyramid level information from TIFF pages."""
         levels = []
-        base_width, base_height = None, None
+        base_width = None
 
         for i, page in enumerate(self.tif.pages):
             # Skip non-image pages (thumbnails, etc.)
@@ -299,7 +299,7 @@ class PyramidalTiffFile(PyramidalWSIFile):
             h, w = page.shape[0], page.shape[1]
 
             if base_width is None:
-                base_width, base_height = w, h
+                base_width = w
                 downsample = 1.0
             else:
                 downsample = base_width / w

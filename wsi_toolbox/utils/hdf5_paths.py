@@ -2,7 +2,6 @@
 HDF5 path utilities for consistent namespace and filter handling
 """
 
-import re
 from pathlib import Path
 
 import h5py

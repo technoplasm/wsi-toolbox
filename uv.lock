@@ -3896,6 +3896,7 @@ dev = [
     { name = "ipython" },
     { name = "jupyterlab" },
     { name = "ruff" },
+    { name = "taskipy" },
 ]
 gigapath = [
     { name = "einops" },
@@ -3952,6 +3953,7 @@ dev = [
     { name = "ipython", specifier = ">=9.1.0" },
     { name = "jupyterlab", specifier = ">=4.1.6" },
     { name = "ruff", specifier = ">=0.8.0" },
+    { name = "taskipy", specifier = ">=1.14.1" },
 ]
 gigapath = [
     { name = "einops", specifier = ">=0.8.1" },

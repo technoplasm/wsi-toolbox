@@ -117,6 +117,7 @@ dev = [
     "ipython>=9.1.0",
     "jupyterlab>=4.1.6",
     "ruff>=0.8.0",
+    "taskipy>=1.14.1",
 ]
 build = [
     "build>=1.0.0",

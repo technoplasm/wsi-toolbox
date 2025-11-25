@@ -10,12 +10,12 @@ Usage:
 import argparse
 import csv
 import time
+from collections import defaultdict
 from pathlib import Path
 
 from tqdm import tqdm
 
 from wsi_toolbox.wsi_files import OpenSlideFile, PyramidalTiffFile, PyramidalWSIFile
-
 
 # Relative to repository root
 SCRIPT_DIR = Path(__file__).parent
@@ -214,7 +214,6 @@ def print_summary(results: list[dict]):
     print(f"{'='*60}")
 
     # Group by file and engine
-    from collections import defaultdict
     grouped = defaultdict(list)
     for r in results:
         key = (r["file"], r["engine"])

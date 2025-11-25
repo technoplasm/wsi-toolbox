@@ -10,7 +10,6 @@ from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 
 
-
 def find_optimal_components(features, threshold=0.95):
     pca = PCA()
     pca.fit(features)
