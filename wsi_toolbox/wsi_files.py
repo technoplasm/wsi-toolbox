@@ -485,16 +485,16 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
     Args:
         image_path: Path to WSI file
         engine: Engine type ('auto', 'openslide', 'tifffile', 'standard')
-        mpp: Defautl Micro Per Pixcel (only used when engine == 'standard')
+        mpp: Default Microns Per Pixel (only used when engine == 'standard')
 
     Returns:
         WSIFile: Appropriate WSIFile subclass instance
     """
+    ext = os.path.splitext(image_path)[1].lower()
+    basename = os.path.basename(image_path)
+
     if engine == "auto":
-        ext = os.path.splitext(image_path)[1].lower()
-        if ext == ".ndpi":
-            engine = "tifffile"
-        elif ext in [".tif", ".tiff"]:
+        if ext in [".tif", ".tiff"]:
             # Check if pyramidal TIFF or single-level
             if _is_pyramidal_tiff(image_path):
                 engine = "tifffile"
@@ -503,13 +503,19 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
         elif ext in [".jpg", ".jpeg", ".png"]:
             engine = "standard"
         else:
+            # Default to openslide for WSI formats (.svs, .ndpi, etc.)
             engine = "openslide"
-        print(f"using {engine} engine for {os.path.basename(image_path)}")
+        print(f"using {engine} engine for {basename}")
 
     engine = engine.lower()
 
     if engine == "openslide":
-        return OpenSlideFile(image_path)
+        try:
+            return OpenSlideFile(image_path)
+        except Exception as e:
+            # Fallback to tifffile for NDPI files that OpenSlide can't handle
+            print(f"OpenSlide failed for {basename}, falling back to tifffile: {e}")
+            return PyramidalTiffFile(image_path)
     elif engine == "tifffile":
         return PyramidalTiffFile(image_path)
     elif engine == "standard":
