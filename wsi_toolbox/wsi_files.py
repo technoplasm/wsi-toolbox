@@ -127,6 +127,79 @@ class WSIFile(ABC):
         """
         raise NotImplementedError("DZI not supported for this file type")
 
+    def generate_thumbnail(
+        self,
+        width: int = -1,
+        height: int = -1,
+    ) -> np.ndarray:
+        """Generate thumbnail from WSI.
+
+        Args:
+            width: Target width. If < 0, calculated from height keeping aspect ratio.
+            height: Target height. If < 0, calculated from width keeping aspect ratio.
+                   If both specified, image is center-cropped to match target aspect ratio.
+
+        Returns:
+            np.ndarray: RGB thumbnail image (H, W, 3)
+
+        Raises:
+            ValueError: If both width and height are < 0
+        """
+        if width < 0 and height < 0:
+            raise ValueError("Either width or height must be specified")
+
+        src_w, src_h = self.get_original_size()
+        src_aspect = src_w / src_h
+
+        # Determine target dimensions
+        if width < 0:
+            # Height specified, calculate width
+            width = int(height * src_aspect)
+        elif height < 0:
+            # Width specified, calculate height
+            height = int(width / src_aspect)
+
+        # Both specified: center crop to match target aspect ratio
+        target_aspect = width / height
+
+        if abs(src_aspect - target_aspect) < 0.01:
+            # Same aspect ratio, no crop needed
+            crop_x, crop_y, crop_w, crop_h = 0, 0, src_w, src_h
+        elif src_aspect > target_aspect:
+            # Source is wider, crop horizontally
+            crop_h = src_h
+            crop_w = int(src_h * target_aspect)
+            crop_x = (src_w - crop_w) // 2
+            crop_y = 0
+        else:
+            # Source is taller, crop vertically
+            crop_w = src_w
+            crop_h = int(src_w / target_aspect)
+            crop_x = 0
+            crop_y = (src_h - crop_h) // 2
+
+        # Read cropped region (subclasses may override for efficiency)
+        region = self._read_for_thumbnail(crop_x, crop_y, crop_w, crop_h, width, height)
+
+        # Resize to target
+        img = Image.fromarray(region)
+        thumbnail = img.resize((width, height), Image.Resampling.LANCZOS)
+        return np.array(thumbnail)
+
+    def _read_for_thumbnail(
+        self, x: int, y: int, w: int, h: int, target_w: int, target_h: int
+    ) -> np.ndarray:
+        """Read region for thumbnail. Override for efficient multi-resolution reading.
+
+        Args:
+            x, y, w, h: Crop region in level 0 coordinates
+            target_w, target_h: Final target size (for downsample calculation)
+
+        Returns:
+            np.ndarray: RGB image (H, W, 3)
+        """
+        return self.read_region((x, y, w, h))
+
 
 class PyramidalWSIFile(WSIFile):
     """Base class for pyramidal WSI files with DZI support.
@@ -266,6 +339,34 @@ class PyramidalWSIFile(WSIFile):
                 best_idx = idx
 
         return best_idx
+
+    def _read_for_thumbnail(
+        self, x: int, y: int, w: int, h: int, target_w: int, target_h: int
+    ) -> np.ndarray:
+        """Read region using pyramid levels for efficiency.
+
+        Args:
+            x, y, w, h: Crop region in level 0 coordinates
+            target_w, target_h: Final target size (for downsample calculation)
+
+        Returns:
+            np.ndarray: RGB image (H, W, 3)
+        """
+        # Calculate required downsample factor
+        target_downsample = max(w / target_w, h / target_h)
+
+        # Find best native level
+        native_levels = self._get_native_levels()
+        best_level_idx = self._find_best_native_level(native_levels, target_downsample)
+        level_downsample = native_levels[best_level_idx].downsample
+
+        # Convert to native level coordinates
+        level_x = int(x / level_downsample)
+        level_y = int(y / level_downsample)
+        level_w = int(w / level_downsample)
+        level_h = int(h / level_downsample)
+
+        return self._read_native_region(best_level_idx, level_x, level_y, level_w, level_h)
 
 
 class PyramidalTiffFile(PyramidalWSIFile):

@@ -6,14 +6,16 @@ from pathlib import Path as P
 import h5py
 import numpy as np
 from matplotlib import pyplot as plt
+from PIL import Image
 from pydantic import BaseModel, Field
 from pydantic_autocli import AutoCLI, param
 
 from . import commands, common
-from .utils.hdf5_paths import build_cluster_path, list_namespaces
+from .utils.hdf5_paths import build_cluster_path
 from .utils.plot import plot_scatter_2d, plot_violin_1d
 from .utils.seed import fix_global_seed, get_global_seed
 from .utils.white import create_white_detector
+from .wsi_files import create_wsi_file
 
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 warnings.filterwarnings(
@@ -555,6 +557,33 @@ class CLI(AutoCLI):
         result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name)
 
         print(f"Export completed: {result.dzi_path}")
+
+    class ThumbArgs(CommonArgs):
+        input_path: str = Field(..., l="--in", s="-i", description="入力WSIファイルパス")
+        output_path: str = Field("", l="--out", s="-o", description="出力パス")
+        width: int = Field(-1, s="-w", description="幅（-1で自動）")
+        height: int = Field(-1, s="-h", description="高さ（-1で自動）")
+        quality: int = Field(90, s="-q", description="JPEG品質(1-100)")
+        open: bool = False
+
+    def run_thumb(self, a: ThumbArgs):
+        """Generate thumbnail from WSI"""
+        wsi = create_wsi_file(a.input_path)
+
+        thumb_array = wsi.generate_thumbnail(width=a.width, height=a.height)
+        actual_h, actual_w = thumb_array.shape[:2]
+
+        output_path = a.output_path
+        if not output_path:
+            stem = P(a.input_path).stem
+            output_path = str(P(a.input_path).parent / f"{stem}_thumb_{actual_w}x{actual_h}.jpg")
+
+        img = Image.fromarray(thumb_array)
+        img.save(output_path, "JPEG", quality=a.quality)
+        print(f"wrote {output_path}")
+
+        if a.open:
+            os.system(f"xdg-open {output_path}")
 
 
 def main():
