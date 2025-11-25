@@ -2,20 +2,12 @@
 Clustering command for WSI features
 """
 
-import multiprocessing
-
 import h5py
-import igraph as ig
-import leidenalg as la
-import networkx as nx
 import numpy as np
-from joblib import Parallel, delayed
 from pydantic import BaseModel
-from sklearn.decomposition import PCA
-from sklearn.neighbors import NearestNeighbors
 
-from ..utils.analysis import find_optimal_components, process_edges_batch
-from ..utils.hdf5_paths import build_cluster_path, build_namespace
+from ..utils.analysis import leiden_cluster
+from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
 from . import _get, _progress, get_config
 from .data_loader import DataLoader
 
@@ -146,8 +138,16 @@ class ClusteringCommand:
             data, masks = loader.load_features(source=self.source)
             pbar.update(1)
 
-            # Perform clustering (5 internal steps)
-            self.clusters = self._perform_clustering(data, pbar)
+            # Perform clustering using analysis module
+            def on_progress(msg: str):
+                pbar.set_description(msg)
+                pbar.update(1)
+
+            self.clusters = leiden_cluster(
+                data,
+                resolution=self.resolution,
+                on_progress=on_progress,
+            )
             cluster_count = len(set(self.clusters))
 
             # Write results
@@ -172,7 +172,7 @@ class ClusteringCommand:
 
             with h5py.File(hdf5_path, "a") as f:
                 # Ensure parent groups exist
-                self._ensure_groups(f, target_path)
+                ensure_groups(f, target_path)
 
                 # Delete if exists
                 if target_path in f:
@@ -190,73 +190,3 @@ class ClusteringCommand:
 
             cursor += count
 
-    def _ensure_groups(self, h5file: h5py.File, path: str):
-        """Ensure all parent groups exist"""
-        parts = path.split("/")
-        group_parts = parts[:-1]
-
-        current = ""
-        for part in group_parts:
-            current = f"{current}/{part}" if current else part
-            if current not in h5file:
-                h5file.create_group(current)
-
-    def _perform_clustering(self, features, pbar, n_jobs=-1):
-        """Perform clustering with integrated progress tracking"""
-        if n_jobs < 0:
-            n_jobs = multiprocessing.cpu_count()
-        n_samples = features.shape[0]
-
-        # 1. PCA
-        pbar.set_description("Processing PCA")
-        n_components = find_optimal_components(features)
-        pca = PCA(n_components)
-        target_features = pca.fit_transform(features)
-        pbar.update(1)
-
-        # 2. KNN
-        pbar.set_description("Processing KNN")
-        k = int(np.sqrt(len(target_features)))
-        nn = NearestNeighbors(n_neighbors=k).fit(target_features)
-        distances, indices = nn.kneighbors(target_features)
-        pbar.update(1)
-
-        # 3. Build graph
-        pbar.set_description("Processing edges")
-        G = nx.Graph()
-        G.add_nodes_from(range(n_samples))
-
-        batch_size = max(1, n_samples // n_jobs)
-        batches = [list(range(i, min(i + batch_size, n_samples))) for i in range(0, n_samples, batch_size)]
-        results = Parallel(n_jobs=n_jobs)(
-            [delayed(process_edges_batch)(batch, indices, target_features, False, pca) for batch in batches]
-        )
-
-        for batch_edges, batch_weights in results:
-            for (i, j), weight in zip(batch_edges, batch_weights):
-                G.add_edge(i, j, weight=weight)
-        pbar.update(1)
-
-        # 4. Leiden clustering
-        pbar.set_description("Leiden clustering")
-        edges = list(G.edges())
-        weights = [G[u][v]["weight"] for u, v in edges]
-        ig_graph = ig.Graph(n=n_samples, edges=edges, edge_attrs={"weight": weights})
-
-        partition = la.find_partition(
-            ig_graph,
-            la.RBConfigurationVertexPartition,
-            weights="weight",
-            resolution_parameter=self.resolution,
-        )
-        pbar.update(1)
-
-        # 5. Finalize
-        pbar.set_description("Finalize")
-        clusters = np.full(n_samples, -1)
-        for i, community in enumerate(partition):
-            for node in community:
-                clusters[node] = i
-        pbar.update(1)
-
-        return clusters

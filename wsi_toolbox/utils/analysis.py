@@ -1,6 +1,6 @@
 import multiprocessing
+from typing import Callable
 
-from tqdm import tqdm
 import igraph as ig
 import leidenalg as la
 import networkx as nx
@@ -46,58 +46,61 @@ def process_edges_batch(batch_indices, all_indices, h, use_umap_embs, pca=None):
     return edges, weights
 
 
-def leiden_cluster(features, umap_emb_func=None, resolution=1.0, n_jobs=-1, progress="tqdm"):
+def leiden_cluster(
+    features: np.ndarray,
+    resolution: float = 1.0,
+    n_jobs: int = -1,
+    on_progress: Callable[[str], None] | None = None,
+) -> np.ndarray:
+    """
+    Perform Leiden clustering on feature embeddings.
+
+    Args:
+        features: Feature matrix (n_samples, n_features)
+        resolution: Leiden clustering resolution parameter
+        n_jobs: Number of parallel jobs (-1 = all CPUs)
+        on_progress: Optional callback for progress updates, receives message string
+
+    Returns:
+        np.ndarray: Cluster labels for each sample
+    """
     if n_jobs < 0:
         n_jobs = multiprocessing.cpu_count()
-    use_umap_embs = umap_emb_func is not None
     n_samples = features.shape[0]
 
-    progress_count = 5  # (UMAP), PCA, KNN, edges, leiden, Finalize
-    if use_umap_embs:
-        progress_count += 1
-    tq = tqdm(total=progress_count, backend=progress)
+    def _progress(msg: str):
+        if on_progress:
+            on_progress(msg)
 
-    # 1. UMAP cluster if needed
-    if use_umap_embs:
-        tq.set_description("UMAP projection...")
-        umap_embeddings = umap_emb_func()
-        tq.update(1)
-    else:
-        umap_embeddings = None
-
-    # 2. pre-PCA
-    tq.set_description("Processing PCA...")
+    # 1. PCA
+    _progress("Processing PCA")
     n_components = find_optimal_components(features)
     pca = PCA(n_components)
     target_features = pca.fit_transform(features)
-    tq.update(1)
 
-    # 3. KNN
-    tq.set_description("Processing KNN...")
+    # 2. KNN
+    _progress("Processing KNN")
     k = int(np.sqrt(len(target_features)))
     nn = NearestNeighbors(n_neighbors=k).fit(target_features)
     distances, indices = nn.kneighbors(target_features)
-    tq.update(1)
 
-    # 4. Build graph
-    tq.set_description("Processing edges...")
+    # 3. Build graph
+    _progress("Building graph")
     G = nx.Graph()
     G.add_nodes_from(range(n_samples))
 
-    h = umap_embeddings if use_umap_embs else target_features
     batch_size = max(1, n_samples // n_jobs)
     batches = [list(range(i, min(i + batch_size, n_samples))) for i in range(0, n_samples, batch_size)]
     results = Parallel(n_jobs=n_jobs)(
-        [delayed(process_edges_batch)(batch, indices, h, use_umap_embs, pca) for batch in batches]
+        [delayed(process_edges_batch)(batch, indices, target_features, False, pca) for batch in batches]
     )
 
     for batch_edges, batch_weights in results:
         for (i, j), weight in zip(batch_edges, batch_weights):
             G.add_edge(i, j, weight=weight)
-    tq.update(1)
 
-    # 5. Leiden clustering
-    tq.set_description("Leiden clustering...")
+    # 4. Leiden clustering
+    _progress("Leiden clustering")
     edges = list(G.edges())
     weights = [G[u][v]["weight"] for u, v in edges]
     ig_graph = ig.Graph(n=n_samples, edges=edges, edge_attrs={"weight": weights})
@@ -106,19 +109,14 @@ def leiden_cluster(features, umap_emb_func=None, resolution=1.0, n_jobs=-1, prog
         ig_graph,
         la.RBConfigurationVertexPartition,
         weights="weight",
-        resolution_parameter=resolution,  # maybe most adaptive
-        # resolution_parameter=1.0, # maybe most adaptive
-        # resolution_parameter=0.5, # more coarse cluster
+        resolution_parameter=resolution,
     )
-    tq.update(1)
 
-    # 6. Finalize
-    tq.set_description("Finalize...")
-    clusters = np.full(n_samples, -1)  # Initialize all as noise
+    # 5. Finalize
+    _progress("Finalizing")
+    clusters = np.full(n_samples, -1)
     for i, community in enumerate(partition):
         for node in community:
             clusters[node] = i
-    tq.update(1)
-    tq.close()
 
     return clusters
