@@ -22,6 +22,31 @@ warnings.filterwarnings(
 
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
 
+
+def build_output_path(input_path: str, namespace: str, filename: str) -> str:
+    """
+    Build output path based on namespace.
+
+    - namespace="default": save in same directory as input file
+    - namespace=other: save in namespace subdirectory (created if needed)
+
+    Args:
+        input_path: Input file path (used to determine base directory)
+        namespace: Namespace string
+        filename: Output filename (with extension)
+
+    Returns:
+        Full output path
+    """
+    p = P(input_path)
+    if namespace == "default":
+        output_dir = p.parent
+    else:
+        output_dir = p.parent / namespace
+        os.makedirs(output_dir, exist_ok=True)
+    return str(output_dir / filename)
+
+
 common.set_default_progress("tqdm")
 common.set_default_model_preset(DEFAULT_MODEL)
 common.set_default_cluster_cmap("tab20")
@@ -284,23 +309,13 @@ class CLI(AutoCLI):
 
         if a.save:
             # Build filename
-            if len(a.input_paths) == 1:
-                # Single file: use input filename
-                base_name = P(a.input_paths[0]).stem
-            else:
-                # Multiple files: use namespace
-                base_name = result.namespace
-
-            # Add filter if present
+            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else namespace
             if a.filter_ids:
-                filter_str = "+".join(map(str, a.filter_ids))
-                filename = f"{base_name}_{filter_str}_umap.png"
+                filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_umap.png"
             else:
                 filename = f"{base_name}_umap.png"
 
-            # Save to first input file's directory
-            p = P(a.input_paths[0])
-            fig_path = str(p.parent / filename)
+            fig_path = build_output_path(a.input_paths[0], namespace, filename)
             plt.savefig(fig_path)
             print(f"wrote {fig_path}")
 
@@ -428,23 +443,13 @@ class CLI(AutoCLI):
 
         if a.save:
             # Build filename
-            if len(a.input_paths) == 1:
-                # Single file: use input filename
-                base_name = P(a.input_paths[0]).stem
-            else:
-                # Multiple files: use namespace
-                base_name = result.namespace
-
-            # Add filter if present
+            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else namespace
             if a.filter_ids:
-                filter_str = "+".join(map(str, a.filter_ids))
-                filename = f"{base_name}_{filter_str}_pca{a.n_components}.png"
+                filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_pca{a.n_components}.png"
             else:
                 filename = f"{base_name}_pca{a.n_components}.png"
 
-            # Save to first input file's directory
-            p = P(a.input_paths[0])
-            fig_path = str(p.parent / filename)
+            fig_path = build_output_path(a.input_paths[0], namespace, filename)
             plt.savefig(fig_path)
             print(f"wrote {fig_path}")
 
@@ -463,12 +468,13 @@ class CLI(AutoCLI):
         output_path = a.output_path
         filter_str = ""
         if not output_path:
-            base, ext = os.path.splitext(a.input_path)
-            suffix = f"_{a.namespace}" if a.namespace != "default" else ""
+            base_name = P(a.input_path).stem
             if len(a.filter_ids) > 0:
                 filter_str = "+".join(map(str, a.filter_ids))
-                suffix += f"_{filter_str}"
-            output_path = f"{base}{suffix}_preview.jpg"
+                filename = f"{base_name}_{filter_str}_preview.jpg"
+            else:
+                filename = f"{base_name}_preview.jpg"
+            output_path = build_output_path(a.input_path, a.namespace, filename)
 
         cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(a.input_path, namespace=a.namespace, filter_path=filter_str)
@@ -493,12 +499,13 @@ class CLI(AutoCLI):
         output_path = a.output_path
         filter_str = ""
         if not output_path:
-            base, ext = os.path.splitext(a.input_path)
-            suffix = f"_{a.namespace}" if a.namespace != "default" else ""
+            base_name = P(a.input_path).stem
             if len(a.filter_ids) > 0:
                 filter_str = "+".join(map(str, a.filter_ids))
-                suffix += f"_{filter_str}"
-            output_path = f"{base}{suffix}_{a.score_name}_preview.jpg"
+                filename = f"{base_name}_{filter_str}_{a.score_name}_preview.jpg"
+            else:
+                filename = f"{base_name}_{a.score_name}_preview.jpg"
+            output_path = build_output_path(a.input_path, a.namespace, filename)
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(
