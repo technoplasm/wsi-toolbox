@@ -22,7 +22,7 @@ __package__ = "wsi_toolbox"
 
 from . import commands
 from .models import _MODEL_NAMES_BY_LABEL, MODEL_LABELS
-from .utils import plot_umap
+from .utils.plot import plot_scatter_2d
 from .utils.st import st_horizontal
 
 # Suppress warnings
@@ -506,7 +506,14 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
 
                         # Plot UMAP
                         umap_embs = umap_cmd.get_embeddings()
-                        fig = plot_umap(umap_embs, cluster_cmd.total_clusters)
+                        fig = plot_scatter_2d(
+                            [umap_embs],
+                            [cluster_cmd.clusters],
+                            [P(hdf5_path).stem],
+                            title="UMAP Projection",
+                            xlabel="UMAP 1",
+                            ylabel="UMAP 2",
+                        )
                         fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
                     st.write(f"クラスタリング結果を{os.path.basename(umap_path)}に出力しました。")
 
@@ -514,7 +521,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                         # Use new command pattern
                         commands.set_default_model_preset(st.session_state.model)
                         preview_cmd = commands.PreviewClustersCommand(size=THUMBNAIL_SIZE)
-                        img = preview_cmd(hdf5_path, cluster_name="")
+                        img = preview_cmd(hdf5_path, namespace="default")
                         img.save(thumb_path)
                     st.write(f"オーバービューを{os.path.basename(thumb_path)}に出力しました。")
                 if i < len(selected_files) - 1:
@@ -692,7 +699,15 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
 
             # Plot UMAP
             umap_embs = umap_cmd.get_embeddings()
-            fig = plot_umap(umap_embs, cluster_cmd.total_clusters)
+            filenames = [P(f.path).stem for f in selected_files]
+            fig = plot_scatter_2d(
+                [umap_embs],
+                [cluster_cmd.clusters],
+                filenames,
+                title="UMAP Projection",
+                xlabel="UMAP 1",
+                ylabel="UMAP 2",
+            )
             fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
 
         st.subheader("UMAP投射 + クラスタリング")
@@ -717,15 +732,14 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
                     base += f"_{subcluster_label}"
                 thumb_path = str(p.parent / f"{base}_thumb.jpg")
 
+                # Determine namespace and filter_path for preview
+                ns = cluster_name if cluster_name else "default"
                 if subcluster_filter:
-                    if subcluster_name == "デフォルト":
-                        c = subcluster_label
-                    else:
-                        c = f"{cluster_name}_{subcluster_label}"
+                    filter_path = "+".join(map(str, subcluster_filter))
                 else:
-                    c = cluster_name
+                    filter_path = ""
 
-                thumb = preview_cmd(f.path, cluster_name=c)
+                thumb = preview_cmd(f.path, namespace=ns, filter_path=filter_path)
                 thumb.save(thumb_path)
                 st.subheader("オーバービュー")
                 thumb_filename = os.path.basename(thumb_path)
