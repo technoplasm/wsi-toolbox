@@ -1,6 +1,5 @@
 /.venv
-/DLBCL_subtyping.egg-info
 /data
+/weights
 /out
-/viewer/dzi
 /dist
