@@ -636,24 +636,29 @@ class CLI(AutoCLI):
 
         return filters
 
-    class ExportDziArgs(CommonArgs):
-        input_h5: str = Field(..., l="--input", s="-i", description="入力HDF5ファイルパス")
+    class DziArgs(CommonArgs):
+        input_wsi: str = Field(..., l="--input", s="-i", description="入力WSIファイルパス")
         output_dir: str = Field(..., l="--output", s="-o", description="出力ディレクトリ")
+        tile_size: int = Field(256, l="--tile-size", s="-t", description="タイルサイズ")
+        overlap: int = Field(0, l="--overlap", description="オーバーラップ")
         jpeg_quality: int = Field(90, s="-q", description="JPEG品質(1-100)")
-        fill_empty: bool = Field(False, l="--fill-empty", description="空白パッチに黒画像を出力")
 
-    def run_export_dzi(self, a: ExportDziArgs):
-        """Export HDF5 patches to Deep Zoom Image (DZI) format for OpenSeadragon"""
+    def run_dzi(self, a: DziArgs):
+        """Export WSI to Deep Zoom Image (DZI) format for OpenSeadragon"""
 
-        # Get name from H5 filename
-        name = P(a.input_h5).stem
+        # Get name from WSI filename
+        name = P(a.input_wsi).stem
 
         # Use specified output directory as-is
         output_dir = P(a.output_dir)
 
-        cmd = commands.DziExportCommand(jpeg_quality=a.jpeg_quality, fill_empty=a.fill_empty)
+        cmd = commands.DziCommand(
+            tile_size=a.tile_size,
+            overlap=a.overlap,
+            jpeg_quality=a.jpeg_quality,
+        )
 
-        result = cmd(hdf5_path=a.input_h5, output_dir=str(output_dir), name=name)
+        result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name)
 
         print(f"Export completed: {result.dzi_path}")
 

@@ -38,7 +38,7 @@ __version__ = "0.1.0"
 # Commands
 from .commands import (
     ClusteringCommand,
-    DziExportCommand,
+    DziCommand,
     PatchEmbeddingCommand,
     PreviewClustersCommand,
     PreviewLatentClusterCommand,
@@ -73,8 +73,8 @@ from .utils.analysis import leiden_cluster
 # WSI file classes
 from .wsi_files import (
     OpenSlideFile,
+    PyramidalTiffFile,
     StandardImage,
-    TiffFile,
     WSIFile,
     create_wsi_file,
 )
@@ -98,7 +98,7 @@ __all__ = [
     "PreviewScoresCommand",
     "PreviewLatentPCACommand",
     "PreviewLatentClusterCommand",
-    "DziExportCommand",
+    "DziCommand",
     # Result types
     "Wsi2HDF5Result",
     "PatchEmbeddingResult",
@@ -106,7 +106,7 @@ __all__ = [
     # WSI files
     "WSIFile",
     "OpenSlideFile",
-    "TiffFile",
+    "PyramidalTiffFile",
     "StandardImage",
     "create_wsi_file",
     # Models

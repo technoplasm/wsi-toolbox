@@ -19,7 +19,7 @@ from ..common import (
     set_verbose,
 )
 from .clustering import ClusteringCommand
-from .dzi_export import DziExportCommand
+from .dzi import DziCommand
 from .patch_embedding import PatchEmbeddingCommand
 from .pca import PCACommand
 from .preview import (
@@ -60,5 +60,5 @@ __all__ = [
     "PreviewScoresCommand",
     "PreviewLatentPCACommand",
     "PreviewLatentClusterCommand",
-    "DziExportCommand",
+    "DziCommand",
 ]
