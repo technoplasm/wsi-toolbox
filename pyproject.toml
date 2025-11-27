@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wsi-toolbox"
-version = "0.1.2"
+version = "0.2.0"
 description = "A comprehensive toolkit for Whole Slide Image processing, feature extraction, and clustering analysis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -69,14 +69,6 @@ explicit = true
 [project.optional-dependencies]
 build = ["torch", "packaging", "wheel", "setuptools"]
 compile = ["flash-attn"]
-# Slide-level encoding (CLI only)
-# Note: gigapath moved to dependency-groups because PyPI doesn't allow git dependencies
-# gigapath = [
-#     "gigapath @ git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0",
-#     "flash-attn>=2.7.4",
-#     "einops>=0.8.1",
-#     "fairscale>=0.4.13",
-# ]
 
 [tool.uv]
 no-build-isolation-package = ["flash-attn"]
