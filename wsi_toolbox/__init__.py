@@ -66,6 +66,8 @@ from .models import (
 
 # Utility functions
 from .utils.analysis import leiden_cluster, reorder_clusters_by_pca
+from .utils.hdf5_paths import remove_namespace, rename_namespace
+from .utils.progress import BaseProgress, register_progress
 
 # WSI file classes
 from .wsi_files import (
@@ -119,4 +121,9 @@ __all__ = [
     # Utilities
     "leiden_cluster",
     "reorder_clusters_by_pca",
+    "rename_namespace",
+    "remove_namespace",
+    # Progress
+    "BaseProgress",
+    "register_progress",
 ]

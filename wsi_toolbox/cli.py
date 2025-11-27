@@ -10,8 +10,11 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from pydantic_autocli import AutoCLI, param
 
+from rich.console import Console
+from rich.prompt import Confirm, Prompt
+
 from . import commands, common
-from .utils.hdf5_paths import build_cluster_path
+from .utils.hdf5_paths import build_cluster_path, list_namespaces, remove_namespace, rename_namespace
 from .utils.plot import plot_scatter_2d, plot_violin_1d
 from .utils.seed import fix_global_seed, get_global_seed
 from .utils.white import create_white_detector
@@ -587,6 +590,158 @@ class CLI(AutoCLI):
 
         if a.open:
             os.system(f"xdg-open {output_path}")
+
+    class RenameNsArgs(CommonArgs):
+        input_paths: list[str] = Field(..., l="--in", s="-i", description="HDF5 file path(s)")
+        old_name: str = Field("", l="--from", description="Current namespace (interactive if empty)")
+        new_name: str = Field("", l="--to", description="New namespace name (interactive if empty)")
+
+    def run_rename_ns(self, a: RenameNsArgs):
+        """Rename namespace in HDF5 file"""
+
+        console = Console()
+
+        # Find all models and their common namespaces across all files
+        # model_name -> set of common namespaces
+        model_namespaces: dict[str, set[str]] = {}
+
+        for hdf5_path in a.input_paths:
+            with h5py.File(hdf5_path, "r") as f:
+                # Find models in this file
+                models = [k for k in f.keys() if isinstance(f[k], h5py.Group) and k not in ("metadata", "patches", "coordinates")]
+
+                for model in models:
+                    ns_set = set(list_namespaces(f, model))
+                    if model not in model_namespaces:
+                        model_namespaces[model] = ns_set
+                    else:
+                        model_namespaces[model] &= ns_set
+
+        # Remove models with no namespaces
+        model_namespaces = {m: ns for m, ns in model_namespaces.items() if ns}
+
+        if not model_namespaces:
+            console.print("[red]✗ No namespaces found[/red]")
+            return False
+
+        # Interactive selection if --from not specified
+        old_name = a.old_name
+        selected_model = None
+
+        if not old_name:
+            # Build numbered list: (index, model, namespace)
+            choices: list[tuple[str, str]] = []
+            idx = 1
+
+            console.print()
+            for model in sorted(model_namespaces.keys()):
+                console.print(f"[bold]{model}/[/bold]")
+                for ns in sorted(model_namespaces[model]):
+                    console.print(f"  [cyan]{idx}[/cyan]. {ns}")
+                    choices.append((model, ns))
+                    idx += 1
+
+            console.print()
+
+            choice = Prompt.ask(
+                "Select namespace to rename (n=cancel)",
+                choices=[str(i) for i in range(1, len(choices) + 1)] + ["n"],
+            )
+            if choice == "n":
+                console.print("Cancelled.")
+                return
+            selected_model, old_name = choices[int(choice) - 1]
+
+        # Interactive input if --to not specified
+        new_name = a.new_name
+        if not new_name:
+            new_name = Prompt.ask("Enter new namespace name")
+            if not new_name:
+                console.print("[red]✗ New namespace name cannot be empty[/red]")
+                return False
+
+        # Rename in all files
+        for hdf5_path in a.input_paths:
+            try:
+                renamed = rename_namespace(hdf5_path, old_name, new_name, model_name=selected_model)
+                for path in renamed:
+                    console.print(f"[green]✓[/green] {P(hdf5_path).name}: {path}")
+            except ValueError as e:
+                console.print(f"[red]✗[/red] {P(hdf5_path).name}: {e}")
+                return False
+
+    class RemoveNsArgs(CommonArgs):
+        input_paths: list[str] = Field(..., l="--in", s="-i", description="HDF5 file path(s)")
+        name: str = Field("", l="--name", s="-n", description="Namespace to remove (interactive if empty)")
+
+    def run_remove_ns(self, a: RemoveNsArgs):
+        """Remove namespace from HDF5 file"""
+
+        console = Console()
+
+        # Find all models and their common namespaces across all files
+        model_namespaces: dict[str, set[str]] = {}
+
+        for hdf5_path in a.input_paths:
+            with h5py.File(hdf5_path, "r") as f:
+                models = [k for k in f.keys() if isinstance(f[k], h5py.Group) and k not in ("metadata",)]
+
+                for model in models:
+                    ns_set = set(list_namespaces(f, model))
+                    if model not in model_namespaces:
+                        model_namespaces[model] = ns_set
+                    else:
+                        model_namespaces[model] &= ns_set
+
+        # Remove models with no namespaces
+        model_namespaces = {m: ns for m, ns in model_namespaces.items() if ns}
+
+        if not model_namespaces:
+            console.print("[red]✗ No namespaces found[/red]")
+            return False
+
+        # Interactive selection if --name not specified
+        ns_name = a.name
+        selected_model = None
+
+        if not ns_name:
+            choices: list[tuple[str, str]] = []
+            idx = 1
+
+            console.print()
+            for model in sorted(model_namespaces.keys()):
+                console.print(f"[bold]{model}/[/bold]")
+                for ns in sorted(model_namespaces[model]):
+                    console.print(f"  [cyan]{idx}[/cyan]. {ns}")
+                    choices.append((model, ns))
+                    idx += 1
+
+            console.print()
+
+            choice = Prompt.ask(
+                "Select namespace to remove (n=cancel)",
+                choices=[str(i) for i in range(1, len(choices) + 1)] + ["n"],
+            )
+            if choice == "n":
+                console.print("Cancelled.")
+                return
+            selected_model, ns_name = choices[int(choice) - 1]
+
+        # Confirm deletion
+        file_count = len(a.input_paths)
+        if not Confirm.ask(f"[yellow]Remove '{ns_name}' from {file_count} file(s)?[/yellow]"):
+            console.print("Cancelled.")
+            return
+
+        # Remove from all files
+        for hdf5_path in a.input_paths:
+            try:
+                removed = remove_namespace(hdf5_path, ns_name, model_name=selected_model)
+                for path in removed:
+                    console.print(f"[green]✓[/green] {P(hdf5_path).name}: removed {path}")
+            except ValueError as e:
+                console.print(f"[red]✗[/red] {P(hdf5_path).name}: {e}")
+                return False
 
 
 def main():
