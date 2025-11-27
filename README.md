@@ -48,19 +48,42 @@ result = cmd('input.ndpi', 'output.h5')
 
 ### As a CLI Tool
 
+After `pip install wsi-toolbox`, the CLI is available as `wsi-toolbox` or `wt`.
+For development, use `uv run wt`.
+
 ```bash
-# Convert WSI to HDF5
-wsi-toolbox wsi2h5 --in input.ndpi --out output.h5 --patch-size 256
+# Extract tile patches from WSI into HDF5
+wt wsi2h5 -i input.ndpi -o output.h5
 
-# Extract features
-wsi-toolbox embed --in output.h5 --model uni
+# Extract patch embeddings using foundation model
+wt embed -i output.h5
 
-# Clustering
-wsi-toolbox cluster --in output.h5 --resolution 1.0
+# Run Leiden clustering on embeddings
+wt cluster -i output.h5
 
-# For all commands
-wsi-toolbox --help
+# Compute UMAP projection
+wt umap -i output.h5
+
+# Compute PCA projection
+wt pca -i output.h5
+
+# Generate cluster overlay preview image
+wt preview -i output.h5
+
+# Generate PCA score heatmap preview
+wt preview-pca -i output.h5 -n pca1
+
+# Show HDF5 file structure
+wt show -i output.h5
+
+# Export WSI to Deep Zoom Image format
+wt dzi -i input.ndpi -o ./output
+
+# Generate thumbnail from WSI
+wt thumb -i input.ndpi
 ```
+
+Each subcommand has detailed help: `wt <subcommand> --help`
 
 ### Streamlit Web Application
 
@@ -112,7 +135,7 @@ WSI-toolbox stores all data in a single HDF5 file:
 
 ## Documentation
 
-- [API Guide](README_API.md) - Comprehensive Python API documentation (日本語)
+- [API Guide](README_API.md) - Python API documentation
 - [CLAUDE.md](CLAUDE.md) - Development guidelines
 
 ## Development

@@ -7,28 +7,22 @@ Basic Usage:
     >>> import wsi_toolbox as wt
     >>>
     >>> # Convert WSI to HDF5
-    >>> wt.set_default_progress('tqdm')
     >>> cmd = wt.Wsi2HDF5Command(patch_size=256)
     >>> result = cmd('input.ndpi', 'output.h5')
     >>>
     >>> # Extract features with preset model
-    >>> wt.set_default_model_preset('gigapath')
+    >>> wt.set_default_model_preset('uni')
     >>> wt.set_default_device('cuda')
     >>> emb_cmd = wt.PatchEmbeddingCommand(batch_size=256)
     >>> emb_result = emb_cmd('output.h5')
     >>>
-    >>> # Or use custom model generator
-    >>> wt.set_default_model('my_model', lambda: MyCustomModel(), label='My Model')
-    >>> model = wt.create_default_model()  # Creates fresh instance
-    >>>
     >>> # Clustering
-    >>> cluster_cmd = wt.ClusteringCommand(resolution=1.0, use_umap=True)
+    >>> cluster_cmd = wt.ClusteringCommand(resolution=1.0)
     >>> cluster_result = cluster_cmd(['output.h5'])
     >>>
-    >>> # Plot UMAP
-    >>> umap_embs = cluster_cmd.get_umap_embeddings()
-    >>> fig = wt.plot_umap(umap_embs, cluster_cmd.total_clusters)
-    >>> fig.savefig('umap.png')
+    >>> # UMAP
+    >>> umap_cmd = wt.UmapCommand()
+    >>> umap_result = umap_cmd('output.h5')
 """
 
 # Version info
@@ -44,10 +38,13 @@ from .commands import (
     PreviewLatentClusterCommand,
     PreviewLatentPCACommand,
     PreviewScoresCommand,
+    ShowCommand,
     Wsi2HDF5Command,
 )
 from .commands.clustering import ClusteringResult
 from .commands.patch_embedding import PatchEmbeddingResult
+from .commands.pca import PCACommand
+from .commands.umap_embedding import UmapCommand
 
 # Command result types
 from .commands.wsi import Wsi2HDF5Result
@@ -63,7 +60,7 @@ from .common import (
 
 # Models
 from .models import (
-    MODEL_LABELS,
+    MODEL_NAMES,
     create_foundation_model,
 )
 
@@ -96,10 +93,13 @@ __all__ = [
     "Wsi2HDF5Command",
     "PatchEmbeddingCommand",
     "ClusteringCommand",
+    "UmapCommand",
+    "PCACommand",
     "PreviewClustersCommand",
     "PreviewScoresCommand",
     "PreviewLatentPCACommand",
     "PreviewLatentClusterCommand",
+    "ShowCommand",
     "DziCommand",
     # Result types
     "Wsi2HDF5Result",
@@ -114,7 +114,7 @@ __all__ = [
     "StandardImage",
     "create_wsi_file",
     # Models
-    "MODEL_LABELS",
+    "MODEL_NAMES",
     "create_foundation_model",
     # Utilities
     "leiden_cluster",

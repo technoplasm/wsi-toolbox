@@ -8,7 +8,7 @@ from typing import Callable
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, Field
 
-from .models import MODEL_LABELS, create_foundation_model
+from .models import MODEL_NAMES, create_foundation_model
 from .utils.progress import Progress
 
 
@@ -18,7 +18,6 @@ class Config(BaseModel):
 
     progress: str = Field(default="tqdm", description="Progress bar backend")
     model_name: str = Field(default="uni", description="Default model name")
-    model_label: str | None = Field(default=None, description="Model display label")
     model_generator: Callable | None = Field(default=None, description="Model generator function")
     verbose: bool = Field(default=True, description="Verbose output")
     device: str = Field(default="cuda", description="Device for computation")
@@ -56,7 +55,6 @@ def set_default_model(name: str, generator: Callable, label: str | None = None):
     """
     _config.model_name = name
     _config.model_generator = generator
-    _config.model_label = label if label is not None else name
 
 
 def set_default_model_preset(preset_name: str):
@@ -65,11 +63,10 @@ def set_default_model_preset(preset_name: str):
     Args:
         preset_name: One of 'uni', 'gigapath', 'virchow2'
     """
-    if preset_name not in MODEL_LABELS:
-        raise ValueError(f"Invalid preset: {preset_name}. Must be one of {list(MODEL_LABELS.keys())}")
+    if preset_name not in MODEL_NAMES:
+        raise ValueError(f"Invalid preset: {preset_name}. Must be one of {MODEL_NAMES}")
 
     _config.model_name = preset_name
-    _config.model_label = MODEL_LABELS[preset_name]
     _config.model_generator = partial(create_foundation_model, preset_name)
 
 

@@ -1,347 +1,345 @@
-# WSI-toolbox API ガイド
+# WSI-toolbox API Guide
 
-## インストール
+## Installation
 
 ```bash
-pip install -e .
+pip install wsi-toolbox
 ```
 
-## 基本的な使い方
-
-### 1. トップレベルからのインポート
+## Basic Usage
 
 ```python
 import wsi_toolbox as wt
 
-# または個別にインポート
-from wsi_toolbox import (
-    Wsi2HDF5Command,
-    PatchEmbeddingCommand,
-    ClusteringCommand,
-    plot_umap,
-)
+# Set global configuration
+wt.set_default_progress('tqdm')       # Progress: 'tqdm' or 'streamlit'
+wt.set_default_model_preset('uni')    # Model: 'uni', 'gigapath', 'virchow2'
+wt.set_default_device('cuda')         # Device: 'cuda' or 'cpu'
 ```
 
-### 2. WSI → HDF5 変換
+## Commands
+
+All commands follow the pattern: `__init__` for configuration, `__call__` for execution.
+Each command returns a Pydantic BaseModel result with type-safe attributes.
+
+### Wsi2HDF5Command
+
+Extract tile patches from WSI and save to HDF5.
+
+**CLI equivalent:** `wt wsi2h5`
 
 ```python
 import wsi_toolbox as wt
 
-# グローバル設定
-wt.set_default_progress('tqdm')  # 進捗表示: 'tqdm' or 'streamlit'
-
-# コマンド作成と実行
 cmd = wt.Wsi2HDF5Command(
-    patch_size=256,
-    rotate=True,
-    engine='auto'
+    patch_size=256,      # Patch size in pixels
+    engine='auto',       # 'auto', 'openslide', 'tifffile'
+    mpp=0.5,             # Microns per pixel (for standard images)
+    rotate=False,        # Rotate patches 180 degrees
 )
 result = cmd('input.ndpi', 'output.h5')
 
-# 結果（pydantic BaseModel）
+# Result attributes
 print(f"Patches: {result.patch_count}")
 print(f"MPP: {result.mpp}")
 print(f"Scale: {result.scale}")
+print(f"Grid: {result.cols} x {result.rows}")
 ```
 
-### 3. 特徴量抽出
+### PatchEmbeddingCommand
+
+Extract embeddings from patches using foundation models.
+
+**CLI equivalent:** `wt embed`
 
 ```python
 import wsi_toolbox as wt
 
-# グローバル設定
-wt.set_default_model_preset('gigapath')  # プリセット: 'gigapath', 'uni', 'virchow2'
-wt.set_default_device('cuda')     # 'cuda' or 'cpu'
-wt.set_default_progress('tqdm')
+wt.set_default_model_preset('uni')
+wt.set_default_device('cuda')
 
-# コマンド作成と実行
 cmd = wt.PatchEmbeddingCommand(
     batch_size=256,
-    with_latent=False,
-    overwrite=False
+    with_latent=False,   # Extract latent features
+    overwrite=False,
+    model_name=None,     # None = use global default
+    device=None,         # None = use global default
 )
 result = cmd('output.h5')
 
-# 結果
 if not result.skipped:
     print(f"Feature dim: {result.feature_dim}")
     print(f"Patch count: {result.patch_count}")
     print(f"Model: {result.model}")
 ```
 
-### 4. クラスタリング + UMAP
+### ClusteringCommand
+
+Perform Leiden clustering on features or UMAP coordinates.
+
+**CLI equivalent:** `wt cluster`
 
 ```python
 import wsi_toolbox as wt
-import matplotlib.pyplot as plt
 
-# グローバル設定
-wt.set_default_model_preset('gigapath')
-wt.set_default_progress('tqdm')
-
-# クラスタリング
 cmd = wt.ClusteringCommand(
-    resolution=1.0,
-    cluster_name='',
-    cluster_filter=[],
-    use_umap=True,
-    overwrite=False
+    resolution=1.0,           # Leiden resolution
+    namespace=None,           # None = auto-generate from filenames
+    parent_filters=None,      # Hierarchical filters, e.g., [[1,2,3], [4,5]]
+    source='features',        # 'features' or 'umap'
+    overwrite=False,
 )
-result = cmd(['output.h5'])
+result = cmd(['output.h5'])   # Accepts single path or list
 
-# 結果
 print(f"Clusters: {result.cluster_count}")
-print(f"Features: {result.feature_count}")
-
-# UMAP プロット
-umap_embs = cmd.get_umap_embeddings()
-fig = wt.plot_umap(umap_embs, cmd.total_clusters)
-fig.savefig('umap.png')
-plt.show()
+print(f"Samples: {result.feature_count}")
+print(f"Path: {result.target_path}")
 ```
 
-### 5. 複数ファイルのクラスタリング
+#### Multi-file Clustering
 
 ```python
-import wsi_toolbox as wt
-
-wt.set_default_model_preset('gigapath')
-
-# 複数ファイルを同時にクラスタリング
-cmd = wt.ClusteringCommand(
-    resolution=1.0,
-    cluster_name='my_experiment',  # 必須！
-    use_umap=True
-)
+# Cluster multiple files together
+cmd = wt.ClusteringCommand(resolution=1.0)
 result = cmd(['file1.h5', 'file2.h5', 'file3.h5'])
+# Namespace auto-generated: "file1+file2+file3"
 ```
 
-### 6. サブクラスタリング
+#### Sub-clustering
 
 ```python
-import wsi_toolbox as wt
-
-wt.set_default_model_preset('gigapath')
-
-# クラスタ 0, 1, 2 のみをサブクラスタリング
+# Sub-cluster only patches in clusters 0, 1, 2
 cmd = wt.ClusteringCommand(
     resolution=2.0,
-    cluster_filter=[0, 1, 2],
-    use_umap=True
+    parent_filters=[[0, 1, 2]],
 )
-result = cmd(['output.h5'])
+result = cmd('output.h5')
+# Output path: uni/default/filter/0+1+2/clusters
 ```
 
-### 7. プレビュー画像生成
+### UmapCommand
 
-#### クラスタプレビュー
+Compute UMAP embeddings from features.
+
+**CLI equivalent:** `wt umap`
 
 ```python
 import wsi_toolbox as wt
 
-wt.set_default_model_preset('gigapath')
-wt.set_default_progress('tqdm')
+cmd = wt.UmapCommand(
+    namespace=None,
+    parent_filters=None,
+    n_components=2,
+    n_neighbors=15,
+    min_dist=0.1,
+    metric='euclidean',
+    overwrite=False,
+)
+result = cmd('output.h5')
 
-# クラスタカラーオーバーレイ
-cmd = wt.PreviewClustersCommand(size=64, font_size=16)
-img = cmd('output.h5', cluster_name='')
+print(f"Samples: {result.n_samples}")
+print(f"Components: {result.n_components}")
+print(f"Path: {result.target_path}")
+
+# Access computed embeddings
+embeddings = cmd.get_embeddings()  # numpy array (N, 2)
+```
+
+### PCACommand
+
+Compute PCA scores from features.
+
+**CLI equivalent:** `wt pca`
+
+```python
+import wsi_toolbox as wt
+
+cmd = wt.PCACommand(
+    n_components=2,       # 1, 2, or 3
+    namespace=None,
+    parent_filters=None,
+    scaler='minmax',      # 'minmax' or 'std'
+    overwrite=False,
+)
+result = cmd('output.h5')
+
+print(f"Samples: {result.n_samples}")
+print(f"Components: {result.n_components}")
+print(f"Path: {result.target_path}")
+```
+
+### PreviewClustersCommand
+
+Generate thumbnail with cluster color overlay.
+
+**CLI equivalent:** `wt preview`
+
+```python
+import wsi_toolbox as wt
+
+cmd = wt.PreviewClustersCommand(
+    size=64,           # Thumbnail patch size
+    font_size=16,
+    rotate=False,
+)
+img = cmd('output.h5', namespace='default', filter_path='')
 img.save('preview_clusters.jpg')
 ```
 
-#### Latent PCA プレビュー
+### PreviewScoresCommand
+
+Generate thumbnail with PCA score heatmap.
+
+**CLI equivalent:** `wt preview-pca`
 
 ```python
 import wsi_toolbox as wt
 
-wt.set_default_model_preset('gigapath')
+cmd = wt.PreviewScoresCommand(size=64)
+img = cmd(
+    'output.h5',
+    score_name='pca1',      # Score dataset: 'pca1', 'pca2', etc.
+    namespace='default',
+    filter_path='',
+    cmap_name='viridis',
+    invert=False,
+)
+img.save('preview_pca.jpg')
+```
+
+### PreviewLatentPCACommand
+
+Generate thumbnail with latent feature PCA visualization.
+
+```python
+import wsi_toolbox as wt
 
 cmd = wt.PreviewLatentPCACommand(size=64)
 img = cmd('output.h5', alpha=0.5)
 img.save('preview_latent_pca.jpg')
 ```
 
-#### Latent クラスタプレビュー
+### PreviewLatentClusterCommand
+
+Generate thumbnail with latent feature cluster visualization.
 
 ```python
 import wsi_toolbox as wt
-
-wt.set_default_model_preset('gigapath')
 
 cmd = wt.PreviewLatentClusterCommand(size=64)
 img = cmd('output.h5', alpha=0.5)
 img.save('preview_latent_cluster.jpg')
 ```
 
-## コマンドパターンの利点
+### ShowCommand
 
-### 1. 設定の分離
+Display HDF5 file structure.
 
-```python
-# グローバル設定（すべてのコマンドに適用）
-wt.set_default_model_preset('gigapath')
-wt.set_default_device('cuda')
-wt.set_default_progress('tqdm')
-
-# コマンド個別の設定（このインスタンスのみ）
-cmd = wt.PatchEmbeddingCommand(
-    batch_size=512,        # このコマンド専用
-    model_name='uni'       # グローバル設定を上書き
-)
-```
-
-### 2. 再利用性
-
-```python
-# コマンドを作成
-cmd = wt.PatchEmbeddingCommand(batch_size=256)
-
-# 複数のファイルに適用
-for file in ['file1.h5', 'file2.h5', 'file3.h5']:
-    result = cmd(file)
-    print(f"{file}: {result.feature_dim}D features")
-```
-
-### 3. 型安全な結果
-
-```python
-# 結果は pydantic BaseModel
-result = cmd('output.h5')
-
-# 属性アクセス（型チェック付き）
-print(result.patch_count)  # OK
-print(result.feature_dim)  # OK
-print(result.unknown)      # AttributeError
-```
-
-## WSI ファイル操作
+**CLI equivalent:** `wt show`
 
 ```python
 import wsi_toolbox as wt
 
-# WSI ファイルを開く
+cmd = wt.ShowCommand(verbose=True)
+result = cmd('output.h5')
+
+print(f"Patches: {result.patch_count}")
+print(f"Models: {result.models}")
+print(f"Namespaces: {result.namespaces}")
+```
+
+### DziCommand
+
+Export WSI to Deep Zoom Image format (for OpenSeadragon).
+
+**CLI equivalent:** `wt dzi`
+
+```python
+import wsi_toolbox as wt
+
+cmd = wt.DziCommand(
+    tile_size=256,
+    overlap=0,
+    jpeg_quality=90,
+    format='jpeg',       # 'jpeg' or 'png'
+)
+result = cmd(wsi_path='input.ndpi', output_dir='./output', name='slide')
+
+print(f"DZI path: {result.dzi_path}")
+print(f"Max level: {result.max_level}")
+print(f"Size: {result.width} x {result.height}")
+```
+
+
+## WSI File Operations
+
+```python
+import wsi_toolbox as wt
+
+# Open WSI file (auto-detect engine)
 wsi = wt.create_wsi_file('input.ndpi', engine='auto')
 
-# または直接クラスを使用
+# Or use specific class
 wsi = wt.OpenSlideFile('input.ndpi')
 
-# 情報取得
+# Get information
 mpp = wsi.get_mpp()
 width, height = wsi.get_original_size()
 
-# 領域を読み込み
+# Read region
 region = wsi.read_region((x, y, width, height))
+
+# Generate thumbnail
+thumb = wsi.generate_thumbnail(width=1000)
 ```
 
-## 利用可能なモデル
+## Available Models
 
 ```python
 import wsi_toolbox as wt
 
-print(wt.DEFAULT_MODEL)  # デフォルトモデル名
-print(wt.MODEL_LABELS)   # モデル一覧
-
-# モデル作成
-model = wt.create_model('gigapath')
+model = wt.create_foundation_model('uni') # 'gigapath' and 'virchow2' are also available.
 ```
 
-## ユーティリティ関数
+## Utilities
 
-### UMAP プロット
 
-```python
-import wsi_toolbox as wt
-import numpy as np
-
-embeddings = np.random.rand(1000, 2)  # (N, 2)
-clusters = np.random.randint(0, 5, 1000)  # (N,)
-
-fig = wt.plot_umap(
-    embeddings,
-    clusters,
-    title="My UMAP",
-    figsize=(12, 10)
-)
-fig.savefig('umap.png')
-```
-
-### Leiden クラスタリング
-
-```python
-import wsi_toolbox as wt
-import numpy as np
-
-features = np.random.rand(1000, 1024)  # (N, D)
-
-clusters = wt.leiden_cluster(
-    features,
-    resolution=1.0,
-    umap_emb_func=None,
-    progress='tqdm'
-)
-```
-
-## エラーハンドリング
+## Complete Example
 
 ```python
 import wsi_toolbox as wt
 
-try:
-    cmd = wt.PatchEmbeddingCommand()
-    result = cmd('output.h5')
-
-    if result.skipped:
-        print("Already processed, skipped")
-    else:
-        print(f"Extracted {result.feature_dim}D features")
-
-except FileNotFoundError:
-    print("HDF5 file not found")
-except RuntimeError as e:
-    print(f"Processing error: {e}")
-```
-
-## 完全な例
-
-```python
-import wsi_toolbox as wt
-import matplotlib.pyplot as plt
-
-# グローバル設定
-wt.set_default_model_preset('gigapath')
+# Global configuration
+wt.set_default_model_preset('uni')
 wt.set_default_device('cuda')
-wt.set_default_progress('tqdm')
 
 # 1. WSI → HDF5
-print("Step 1: Converting WSI to HDF5...")
-wsi_cmd = wt.Wsi2HDF5Command(patch_size=256, rotate=True)
+wsi_cmd = wt.Wsi2HDF5Command(patch_size=256)
 wsi_result = wsi_cmd('input.ndpi', 'output.h5')
-print(f"  ✓ {wsi_result.patch_count} patches extracted")
+print(f"Patches: {wsi_result.patch_count}")
 
-# 2. 特徴量抽出
-print("Step 2: Extracting features...")
-emb_cmd = wt.PatchEmbeddingCommand(batch_size=256, with_latent=True)
+# 2. Feature extraction
+emb_cmd = wt.PatchEmbeddingCommand(batch_size=256)
 emb_result = emb_cmd('output.h5')
-print(f"  ✓ {emb_result.feature_dim}D features extracted")
+print(f"Features: {emb_result.feature_dim}D")
 
-# 3. クラスタリング
-print("Step 3: Clustering...")
-cluster_cmd = wt.ClusteringCommand(resolution=1.0, use_umap=True)
+# 3. Clustering
+cluster_cmd = wt.ClusteringCommand(resolution=1.0)
 cluster_result = cluster_cmd(['output.h5'])
-print(f"  ✓ {cluster_result.cluster_count} clusters found")
+print(f"Clusters: {cluster_result.cluster_count}")
 
-# 4. UMAP 可視化
-print("Step 4: Visualizing UMAP...")
-umap_embs = cluster_cmd.get_umap_embeddings()
-fig = wt.plot_umap(umap_embs, cluster_cmd.total_clusters)
-fig.savefig('umap.png')
-print("  ✓ UMAP saved to umap.png")
+# 4. UMAP
+umap_cmd = wt.UmapCommand()
+umap_result = umap_cmd('output.h5')
+print(f"UMAP: {umap_result.n_samples} samples")
 
-# 5. プレビュー生成
-print("Step 5: Generating preview...")
+# 5. PCA
+pca_cmd = wt.PCACommand(n_components=1)
+pca_result = pca_cmd('output.h5')
+print(f"PCA: {pca_result.n_samples} samples")
+
+# 6. Preview
 preview_cmd = wt.PreviewClustersCommand(size=64)
-img = preview_cmd('output.h5', cluster_name='')
+img = preview_cmd('output.h5', namespace='default')
 img.save('preview.jpg')
-print("  ✓ Preview saved to preview.jpg")
-
-print("\n✓ All steps completed successfully!")
 ```

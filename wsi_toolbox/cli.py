@@ -524,8 +524,8 @@ class CLI(AutoCLI):
             os.system(f"xdg-open {output_path}")
 
     class ShowArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i", description="HDF5ファイルパス")
-        verbose: bool = Field(False, s="-v", description="詳細表示")
+        input_path: str = Field(..., l="--in", s="-i", description="HDF5 file path")
+        verbose: bool = Field(False, s="-v", description="Show detailed info")
 
     def run_show(self, a: ShowArgs):
         """Show HDF5 file structure and contents"""
@@ -533,11 +533,11 @@ class CLI(AutoCLI):
         cmd(a.input_path)
 
     class DziArgs(CommonArgs):
-        input_wsi: str = Field(..., l="--input", s="-i", description="入力WSIファイルパス")
-        output_dir: str = Field(..., l="--output", s="-o", description="出力ディレクトリ")
-        tile_size: int = Field(256, l="--tile-size", s="-t", description="タイルサイズ")
-        overlap: int = Field(0, l="--overlap", description="オーバーラップ")
-        jpeg_quality: int = Field(90, s="-q", description="JPEG品質(1-100)")
+        input_wsi: str = Field(..., l="--input", s="-i", description="Input WSI file path")
+        output_dir: str = Field(..., l="--output", s="-o", description="Output directory")
+        tile_size: int = Field(256, l="--tile-size", s="-t", description="Tile size in pixels")
+        overlap: int = Field(0, l="--overlap", description="Tile overlap in pixels")
+        jpeg_quality: int = Field(90, s="-q", description="JPEG quality (1-100)")
 
     def run_dzi(self, a: DziArgs):
         """Export WSI to Deep Zoom Image (DZI) format for OpenSeadragon"""
@@ -559,11 +559,11 @@ class CLI(AutoCLI):
         print(f"Export completed: {result.dzi_path}")
 
     class ThumbArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i", description="入力WSIファイルパス")
-        output_path: str = Field("", l="--out", s="-o", description="出力パス")
-        width: int = Field(-1, s="-w", description="幅（-1で自動）")
-        height: int = Field(-1, s="-h", description="高さ（-1で自動）")
-        quality: int = Field(90, s="-q", description="JPEG品質(1-100)")
+        input_path: str = Field(..., l="--in", s="-i", description="Input WSI file path")
+        output_path: str = Field("", l="--out", s="-o", description="Output path")
+        width: int = Field(-1, s="-w", description="Width (-1 for auto)")
+        height: int = Field(-1, s="-h", description="Height (-1 for auto)")
+        quality: int = Field(90, s="-q", description="JPEG quality (1-100)")
         open: bool = False
 
     def run_thumb(self, a: ThumbArgs):

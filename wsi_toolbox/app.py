@@ -21,7 +21,6 @@ sys.path.append(str(P(__file__).parent))
 __package__ = "wsi_toolbox"
 
 from . import commands
-from .models import _MODEL_NAMES_BY_LABEL, MODEL_LABELS
 from .utils.plot import plot_scatter_2d
 from .utils.st import st_horizontal
 
@@ -40,6 +39,16 @@ Image.MAX_IMAGE_PIXELS = 3_500_000_000
 
 BASE_DIR = os.getenv("BASE_DIR", "data")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
+
+
+MODEL_LABELS = {
+    "uni": "UNI",
+    "gigapath": "Prov-Gigapath",
+    "virchow2": "Virchow2",
+}
+_MODEL_NAMES_BY_LABEL = {v: k for k, v in MODEL_LABELS.items()}  # Private
+MODEL_NAMES = list(MODEL_LABELS.keys())
+
 
 # Global constants
 BATCH_SIZE = 256

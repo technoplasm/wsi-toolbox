@@ -1,15 +1,4 @@
-MODEL_LABELS = {
-    "uni": "UNI",
-    "gigapath": "Prov-Gigapath",
-    "virchow2": "Virchow2",
-}
-_MODEL_NAMES_BY_LABEL = {v: k for k, v in MODEL_LABELS.items()}  # Private
-MODEL_NAMES = list(MODEL_LABELS.keys())
-
-
-def get_model_label(model_name) -> str:
-    return MODEL_LABELS.get(model_name, model_name)
-
+MODEL_NAMES = ['uni', 'gigapath', 'virchow2']
 
 def create_foundation_model(model_name: str):
     """
