@@ -400,7 +400,7 @@ class CLI(AutoCLI):
         overwrite: bool = Field(False, s="-O")
         show: bool = Field(False, description="Show PCA plot")
         save: bool = Field(False, description="Save plot to file")
-        use_parent_clusters: bool = Field(False, l="--parent", s="-P", description="Use parent clusters for plotting")
+        use_sub_clusters: bool = Field(False, l="--sub", s="-S", description="Use sub-clusters for plotting")
 
     def run_pca(self, a: PcaArgs):
         # Build parent_filters
@@ -428,18 +428,18 @@ class CLI(AutoCLI):
         namespace = a.namespace if a.namespace else cmd.namespace
 
         cluster_path = build_cluster_path(
-            a.model, namespace, filters=None if a.use_parent_clusters else parent_filters, dataset="clusters"
+            a.model, namespace, filters=parent_filters if a.use_sub_clusters else None, dataset="clusters"
         )
 
         # Check if clusters exist
         with h5py.File(a.input_paths[0], "r") as f:
             if cluster_path not in f:
-                if a.use_parent_clusters:
-                    print(f"Error: Parent clusters not found at {cluster_path}")
-                else:
+                if a.use_sub_clusters:
                     print(f"Error: Sub-clusters not found at {cluster_path}")
                     if parent_filters:
-                        print("Hint: Run clustering with same filter first, or use --parent to use parent clusters")
+                        print("Hint: Run clustering with same filter first, or remove --sub to use parent clusters")
+                else:
+                    print(f"Error: Parent clusters not found at {cluster_path}")
                 return
 
         if a.n_components not in [1, 2]:
