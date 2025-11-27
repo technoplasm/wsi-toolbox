@@ -192,7 +192,7 @@ class CLI(AutoCLI):
 
         if os.path.exists(output_path):
             if not a.overwrite:
-                print(f"{output_path} exists. Skipping.")
+                print(f"⊘ {output_path} exists. Skipping.")
                 return
             print(f"{output_path} exists but overwriting it.")
 
@@ -320,7 +320,7 @@ class CLI(AutoCLI):
                     print(f"Error: Sub-clusters not found at {cluster_path}")
                     if parent_filters:
                         print("Hint: Run clustering with same filter first, or use --parent to use parent clusters")
-                return
+                return False
 
         # Load UMAP coordinates and clusters from all files
         coords_list = []
@@ -359,8 +359,8 @@ class CLI(AutoCLI):
 
         # Check if we have any valid data
         if len(coords_list) == 0:
-            print("No valid data to plot.")
-            return
+            print("Error: No valid data to plot.")
+            return False
 
         if (not a.save) and (not a.show):
             # No need to plot
@@ -440,7 +440,7 @@ class CLI(AutoCLI):
                         print("Hint: Run clustering with same filter first, or remove --sub to use parent clusters")
                 else:
                     print(f"Error: Parent clusters not found at {cluster_path}")
-                return
+                return False
 
         if a.n_components not in [1, 2]:
             print("Plotting only supported for 1D or 2D PCA")
@@ -484,8 +484,8 @@ class CLI(AutoCLI):
 
         # Check if we have any valid data
         if len(pca_list) == 0:
-            print("No valid data to plot.")
-            return
+            print("Error: No valid data to plot.")
+            return False
 
         if (not a.save) and (not a.show):
             # No need to plot
@@ -672,7 +672,7 @@ class CLI(AutoCLI):
         if not old_name:
             result = select_namespace(a.input_paths, "Select namespace to rename", console)
             if result is None:
-                return False
+                return
             selected_model, old_name = result
 
         # Interactive input if --to not specified
@@ -708,7 +708,7 @@ class CLI(AutoCLI):
         if not ns_name:
             result = select_namespace(a.input_paths, "Select namespace to remove", console)
             if result is None:
-                return False
+                return
             selected_model, ns_name = result
 
         # Confirm deletion
