@@ -57,6 +57,71 @@ common.set_default_model_preset(DEFAULT_MODEL)
 common.set_default_cluster_cmap("tab20")
 
 
+def select_namespace(
+    input_paths: list[str],
+    prompt_text: str = "Select namespace",
+    console: Console | None = None,
+) -> tuple[str, str] | None:
+    """
+    Interactive namespace selection across multiple HDF5 files.
+
+    Args:
+        input_paths: List of HDF5 file paths
+        prompt_text: Text to show in prompt
+        console: Rich Console instance (creates one if None)
+
+    Returns:
+        (model_name, namespace) tuple, or None if cancelled
+    """
+    if console is None:
+        console = Console()
+
+    # Find all models and their common namespaces across all files
+    model_namespaces: dict[str, set[str]] = {}
+
+    for hdf5_path in input_paths:
+        with h5py.File(hdf5_path, "r") as f:
+            models = [k for k in f.keys() if isinstance(f[k], h5py.Group) and k != "metadata"]
+
+            for model in models:
+                ns_set = set(list_namespaces(f, model))
+                if model not in model_namespaces:
+                    model_namespaces[model] = ns_set
+                else:
+                    model_namespaces[model] &= ns_set
+
+    # Remove models with no namespaces
+    model_namespaces = {m: ns for m, ns in model_namespaces.items() if ns}
+
+    if not model_namespaces:
+        console.print("[red]✗ No namespaces found[/red]")
+        return None
+
+    # Build numbered list
+    choices: list[tuple[str, str]] = []
+    idx = 1
+
+    console.print()
+    for model in sorted(model_namespaces.keys()):
+        console.print(f"[bold]{model}/[/bold]")
+        for ns in sorted(model_namespaces[model]):
+            console.print(f"  [cyan]{idx}[/cyan]. {ns}")
+            choices.append((model, ns))
+            idx += 1
+
+    console.print()
+
+    choice = Prompt.ask(
+        f"{prompt_text} (n=cancel)",
+        choices=[str(i) for i in range(1, len(choices) + 1)] + ["n"],
+    )
+    if choice == "n":
+        console.print("Cancelled.")
+        return None
+
+    return choices[int(choice) - 1]
+
+
 class CLI(AutoCLI):
     class CommonArgs(BaseModel):
         seed: int = get_global_seed()
@@ -496,7 +561,7 @@ class CLI(AutoCLI):
         score_name: str = Field(..., l="--name", s="-n", description="Score name (e.g., 'pca1', 'pca2')")
         namespace: str = Field("default", l="--namespace", s="-N", description="Namespace")
         filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        cmap: str = Field("viridis", l="--cmap", s="-c", description="Colormap name")
+        cmap: str = Field("jet", l="--cmap", s="-c", description="Colormap name")
         invert: bool = Field(False, l="--invert", s="-I", description="Invert scores (1 - score)")
         size: int = 64
         rotate: bool = False
@@ -598,59 +663,17 @@ class CLI(AutoCLI):
 
     def run_rename_ns(self, a: RenameNsArgs):
         """Rename namespace in HDF5 file"""
-
         console = Console()
-
-        # Find all models and their common namespaces across all files
-        # model_name -> set of common namespaces
-        model_namespaces: dict[str, set[str]] = {}
-
-        for hdf5_path in a.input_paths:
-            with h5py.File(hdf5_path, "r") as f:
-                # Find models in this file
-                models = [k for k in f.keys() if isinstance(f[k], h5py.Group) and k not in ("metadata", "patches", "coordinates")]
-
-                for model in models:
-                    ns_set = set(list_namespaces(f, model))
-                    if model not in model_namespaces:
-                        model_namespaces[model] = ns_set
-                    else:
-                        model_namespaces[model] &= ns_set
-
-        # Remove models with no namespaces
-        model_namespaces = {m: ns for m, ns in model_namespaces.items() if ns}
-
-        if not model_namespaces:
-            console.print("[red]✗ No namespaces found[/red]")
-            return False
 
         # Interactive selection if --from not specified
         old_name = a.old_name
         selected_model = None
 
         if not old_name:
-            # Build numbered list: (index, model, namespace)
-            choices: list[tuple[str, str]] = []
-            idx = 1
-
-            console.print()
-            for model in sorted(model_namespaces.keys()):
-                console.print(f"[bold]{model}/[/bold]")
-                for ns in sorted(model_namespaces[model]):
-                    console.print(f"  [cyan]{idx}[/cyan]. {ns}")
-                    choices.append((model, ns))
-                    idx += 1
-
-            console.print()
-
-            choice = Prompt.ask(
-                "Select namespace to rename (n=cancel)",
-                choices=[str(i) for i in range(1, len(choices) + 1)] + ["n"],
-            )
-            if choice == "n":
-                console.print("Cancelled.")
-                return
-            selected_model, old_name = choices[int(choice) - 1]
+            result = select_namespace(a.input_paths, "Select namespace to rename", console)
+            if result is None:
+                return False
+            selected_model, old_name = result
 
         # Interactive input if --to not specified
         new_name = a.new_name
@@ -676,56 +699,17 @@ class CLI(AutoCLI):
 
     def run_remove_ns(self, a: RemoveNsArgs):
         """Remove namespace from HDF5 file"""
-
         console = Console()
-
-        # Find all models and their common namespaces across all files
-        model_namespaces: dict[str, set[str]] = {}
-
-        for hdf5_path in a.input_paths:
-            with h5py.File(hdf5_path, "r") as f:
-                models = [k for k in f.keys() if isinstance(f[k], h5py.Group) and k not in ("metadata",)]
-
-                for model in models:
-                    ns_set = set(list_namespaces(f, model))
-                    if model not in model_namespaces:
-                        model_namespaces[model] = ns_set
-                    else:
-                        model_namespaces[model] &= ns_set
-
-        # Remove models with no namespaces
-        model_namespaces = {m: ns for m, ns in model_namespaces.items() if ns}
-
-        if not model_namespaces:
-            console.print("[red]✗ No namespaces found[/red]")
-            return False
 
         # Interactive selection if --name not specified
         ns_name = a.name
         selected_model = None
 
         if not ns_name:
-            choices: list[tuple[str, str]] = []
-            idx = 1
-
-            console.print()
-            for model in sorted(model_namespaces.keys()):
-                console.print(f"[bold]{model}/[/bold]")
-                for ns in sorted(model_namespaces[model]):
-                    console.print(f"  [cyan]{idx}[/cyan]. {ns}")
-                    choices.append((model, ns))
-                    idx += 1
-
-            console.print()
-
-            choice = Prompt.ask(
-                "Select namespace to remove (n=cancel)",
-                choices=[str(i) for i in range(1, len(choices) + 1)] + ["n"],
-            )
-            if choice == "n":
-                console.print("Cancelled.")
-                return
-            selected_model, ns_name = choices[int(choice) - 1]
+            result = select_namespace(a.input_paths, "Select namespace to remove", console)
+            if result is None:
+                return False
+            selected_model, ns_name = result
 
         # Confirm deletion
         file_count = len(a.input_paths)

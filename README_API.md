@@ -201,7 +201,7 @@ img = cmd(
     score_name='pca1',      # Score dataset: 'pca1', 'pca2', etc.
     namespace='default',
     filter_path='',
-    cmap_name='viridis',
+    cmap_name='jet',
     invert=False,
 )
 img.save('preview_pca.jpg')

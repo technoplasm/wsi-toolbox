@@ -196,7 +196,7 @@ class PreviewScoresCommand(BasePreviewCommand):
         score_name: str,
         namespace: str = "default",
         filter_path: str = "",
-        cmap_name: str = "viridis",
+        cmap_name: str = "jet",
         invert: bool = False,
     ):
         """
