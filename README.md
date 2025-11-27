@@ -1,34 +1,17 @@
 # WSI Toolbox
 
+> **Note**: This package is currently unstable. API may change without notice.
+
 A comprehensive toolkit for Whole Slide Image (WSI) processing, feature extraction, and clustering analysis.
 
 ## Installation
 
-### From PyPI
-
 ```bash
+# From PyPI
 pip install wsi-toolbox
-```
 
-### For development
-
-```bash
-# Clone repository
-git clone https://github.com/endaaman/WSI-toolbox.git
-cd WSI-toolbox
-
-# Install dependencies
-uv sync
-```
-
-**Note**: For gigapath slide-level encoder (CLI only):
-```bash
-# For flash-attn (requires CUDA, takes time to build)
-uv sync --extra build
-uv sync --extra build --extra compile
-
-# Then install gigapath (uv-only dependency group, not available via PyPI)
-uv sync --group gigapath
+# From GitHub (latest)
+pip install git+https://github.com/technoplasm/wsi-toolbox.git
 ```
 
 ## Quick Start
@@ -38,13 +21,12 @@ uv sync --group gigapath
 ```python
 import wsi_toolbox as wt
 
-# Basic workflow
 wt.set_default_model_preset('uni')
 cmd = wt.Wsi2HDF5Command(patch_size=256)
 result = cmd('input.ndpi', 'output.h5')
 ```
 
-**See [README_API.md](README_API.md) for comprehensive API documentation** (detailed examples, command patterns, utilities, etc.)
+See [README_API.md](README_API.md) for API documentation.
 
 ### As a CLI Tool
 
@@ -93,149 +75,102 @@ uv run task app
 
 ## HDF5 File Structure
 
-WSI-toolbox stores all data in a single HDF5 file:
+WSI-toolbox stores all data in a single HDF5 file.
+
+### Core Data
+
+```
+patches                    # Patch images: [N, H, W, 3]
+coordinates                # Patch pixel coordinates: [N, 2]
+```
+
+### Metadata
+
+Metadata is stored in **file attrs** (recommended):
 
 ```python
-# Core data
-'patches'                      # Patch images: [N, H, W, 3], e.g., [3237, 256, 256, 3]
-'coordinates'                  # Patch pixel coordinates: [N, 2]
-
-# Metadata
-'metadata/original_mpp'        # Original microns per pixel
-'metadata/original_width'      # Original image width (level=0)
-'metadata/original_height'     # Original image height (level=0)
-'metadata/image_level'         # Image level used (typically 0)
-'metadata/mpp'                 # Output patch MPP
-'metadata/scale'               # Scale factor
-'metadata/patch_size'          # Patch size (e.g., 256)
-'metadata/patch_count'         # Total patch count
-'metadata/cols'                # Grid columns
-'metadata/rows'                # Grid rows
-
-# Model features (per model: uni, gigapath, virchow2)
-'{model}/features'             # Patch features: [N, D]
-                               #   uni: [N, 1024]
-                               #   gigapath: [N, 1536]
-                               #   virchow2: [N, 2560]
-'{model}/latent_features'      # Latent features (optional): [N, K, K, D]
-'{model}/clusters'             # Cluster labels: [N]
-
-# Gigapath slide-level (CLI only)
-'gigapath/slide_feature'       # Slide-level features: [768]
+with h5py.File('output.h5', 'r') as f:
+    mpp = f.attrs['mpp']
+    patch_size = f.attrs['patch_size']
+    patch_count = f.attrs['patch_count']
+    # ...
 ```
+
+Available attrs: `original_mpp`, `original_width`, `original_height`, `image_level`, `mpp`, `scale`, `patch_size`, `patch_count`, `cols`, `rows`
+
+> Legacy `metadata/*` datasets are kept for backward compatibility but attrs are preferred.
+
+### Model Features
+
+```
+{model}/features           # Patch features: [N, D]
+                           #   uni: [N, 1024]
+                           #   gigapath: [N, 1536]
+                           #   virchow2: [N, 2560]
+{model}/latent_features    # Latent features (optional): [N, L, D]
+```
+
+### Clustering & Analysis (Hierarchical)
+
+Results are stored in a hierarchical namespace structure:
+
+```
+{model}/{namespace}/clusters     # Cluster labels: [N]
+{model}/{namespace}/umap         # UMAP coordinates: [N, 2]
+{model}/{namespace}/pca1         # PCA scores: [N] or [N, k]
+```
+
+**Namespace**:
+- Single file: `default`
+- Multiple files: `file1+file2+...` (auto-generated from filenames)
+
+**Filter hierarchy**: Sub-clustering creates nested paths:
+
+```
+# Base clustering
+uni/default/clusters
+
+# Sub-cluster patches in clusters 1, 2, 3
+uni/default/filter/1+2+3/clusters
+
+# Further sub-cluster within that
+uni/default/filter/1+2+3/filter/0+1/clusters
+```
+
+Each level stores its own clusters, umap, pca results independently.
 
 ## Features
 
 - WSI processing (.ndpi, .svs, .tiff → HDF5)
 - Feature extraction (UNI, Gigapath, Virchow2)
 - Leiden clustering with UMAP visualization
-- Preview generation (cluster overlays, latent PCA)
+- Preview generation (cluster overlays, PCA heatmaps)
 - Type-safe command pattern with Pydantic results
 - CLI, Python API, and Streamlit GUI
 
 ## Documentation
 
 - [API Guide](README_API.md) - Python API documentation
-- [CLAUDE.md](CLAUDE.md) - Development guidelines
 
 ## Development
 
-### Setup Development Environment
-
 ```bash
-# Clone repository
-git clone https://github.com/endaaman/wsi-toolbox.git
+# Clone and install
+git clone https://github.com/technoplasm/wsi-toolbox.git
 cd wsi-toolbox
-
-# Install all dependencies
 uv sync
 
-# Install with optional gigapath support (uv-only dependency group)
-uv sync --group gigapath
-
-# Install build tools
-uv sync --group build
-```
-
-### Run Tests and Development Tools
-
-```bash
 # Run CLI
-uv run wsi-toolbox --help
+uv run wt --help
 
 # Run Streamlit app
 uv run task app
-
-# Run watcher
-uv run task watcher
 ```
 
-### Code Quality (Linting)
-
-This project uses [Ruff](https://docs.astral.sh/ruff/) for linting and code formatting.
+### Optional: Gigapath support
 
 ```bash
-# Install dev dependencies (includes ruff)
-uv sync --group dev
-
-# Check code quality
-uv run ruff check wsi_toolbox/
-
-# Auto-fix issues where possible
-uv run ruff check wsi_toolbox/ --fix
-
-# Format code
-uv run ruff format wsi_toolbox/
-
-# Check formatting without modifying files
-uv run ruff format --check wsi_toolbox/
-```
-
-**Note**: Linting runs automatically on every push/PR via GitHub Actions.
-
-### Build and Deploy
-
-#### Build Package
-
-```bash
-# Clean previous builds
-uv run task clean
-
-# Build package
-uv run task build
-# or
-python -m build
-
-# Check package integrity
-uv run task check
-# or
-python -m twine check dist/*
-```
-
-#### Deploy to PyPI
-
-**Prerequisites**: Install build tools first
-```bash
-uv sync --group build
-```
-
-**Deploy**:
-```bash
-# Using deploy script (recommended)
-./deploy.sh
-
-# Or manually
-python -m build
-python -m twine check dist/*
-python -m twine upload dist/*
-```
-
-**Note**: Configure your PyPI credentials before deploying:
-```bash
-# Create ~/.pypirc with your API token
-# Or use environment variables
-export TWINE_USERNAME=__token__
-export TWINE_PASSWORD=<your-pypi-token>
+uv sync --group gigapath
 ```
 
 ## License
