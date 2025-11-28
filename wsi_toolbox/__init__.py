@@ -13,7 +13,7 @@ Basic Usage:
     >>> # Extract features with preset model
     >>> wt.set_default_model_preset('uni')
     >>> wt.set_default_device('cuda')
-    >>> emb_cmd = wt.PatchEmbeddingCommand(batch_size=256)
+    >>> emb_cmd = wt.FeatureExtractionCommand(batch_size=256)
     >>> emb_result = emb_cmd('output.h5')
     >>>
     >>> # Clustering
@@ -33,7 +33,7 @@ __version__ = "0.1.0"
 from .commands import (
     ClusteringCommand,
     DziCommand,
-    PatchEmbeddingCommand,
+    FeatureExtractionCommand,
     PreviewClustersCommand,
     PreviewLatentClusterCommand,
     PreviewLatentPCACommand,
@@ -42,7 +42,7 @@ from .commands import (
     Wsi2HDF5Command,
 )
 from .commands.clustering import ClusteringResult
-from .commands.patch_embedding import PatchEmbeddingResult
+from .commands.feature_extraction import FeatureExtractResult
 from .commands.pca import PCACommand
 from .commands.umap_embedding import UmapCommand
 
@@ -93,7 +93,7 @@ __all__ = [
     "set_verbose",
     # Commands
     "Wsi2HDF5Command",
-    "PatchEmbeddingCommand",
+    "FeatureExtractionCommand",
     "ClusteringCommand",
     "UmapCommand",
     "PCACommand",
@@ -105,7 +105,7 @@ __all__ = [
     "DziCommand",
     # Result types
     "Wsi2HDF5Result",
-    "PatchEmbeddingResult",
+    "FeatureExtractResult",
     "ClusteringResult",
     # WSI files
     "WSIFile",

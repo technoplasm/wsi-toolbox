@@ -92,7 +92,7 @@ class Task:
                     self.append_log("Extracting features...")
                     # Use new command pattern
                     commands.set_default_device("cuda")
-                    emb_cmd = commands.PatchEmbeddingCommand()
+                    emb_cmd = commands.FeatureExtractionCommand()
                     _ = emb_cmd(str(hdf5_file))
                     self.append_log("Feature extraction completed.")
 

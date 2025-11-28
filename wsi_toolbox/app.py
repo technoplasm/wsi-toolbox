@@ -511,7 +511,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                         # Use new command pattern
                         commands.set_default_model_preset(st.session_state.model)
-                        cmd = commands.PatchEmbeddingCommand(batch_size=BATCH_SIZE, overwrite=True)
+                        cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
                         _ = cmd(hdf5_path)
                     st.write(f"{model_label}特徴量の抽出完了。")
                 hdf5_paths.append(hdf5_path)
@@ -713,7 +713,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
                 # Use new command pattern
                 commands.set_default_model_preset(st.session_state.model)
                 with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
-                    cmd = commands.PatchEmbeddingCommand(batch_size=BATCH_SIZE, overwrite=True)
+                    cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
                     _ = cmd(f.path)
                 st.write(f"{model_label}特徴量の抽出完了。")
 
