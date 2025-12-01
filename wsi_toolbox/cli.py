@@ -10,7 +10,6 @@ from matplotlib import pyplot as plt
 from PIL import Image
 from pydantic import BaseModel, Field
 from pydantic_autocli import AutoCLI, param
-
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 

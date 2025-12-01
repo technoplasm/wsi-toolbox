@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 from pydantic import BaseModel
 
+from ..utils import writing_dataset
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
 from . import _get, _progress
 from .data_loader import MultipleContext
@@ -201,7 +202,7 @@ class PCACommand:
                     full_scores = np.full((len(file_slice.mask), self.n_components), np.nan)
                     full_scores[file_slice.mask] = file_scores
 
-                ds = f.create_dataset(target_path, data=full_scores)
-                ds.attrs["n_components"] = self.n_components
-                ds.attrs["scaler"] = self.scaler
-                ds.attrs["model"] = self.model_name
+                with writing_dataset(f, target_path, data=full_scores) as ds:
+                    ds.attrs["n_components"] = self.n_components
+                    ds.attrs["scaler"] = self.scaler
+                    ds.attrs["model"] = self.model_name

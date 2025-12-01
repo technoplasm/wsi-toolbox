@@ -153,11 +153,13 @@ class RichProgress(BaseProgress):
         from rich.progress import (  # noqa: PLC0415
             BarColumn,
             MofNCompleteColumn,
-            Progress as RichProgressBar,
             SpinnerColumn,
             TextColumn,
             TimeElapsedColumn,
             TimeRemainingColumn,
+        )
+        from rich.progress import (
+            Progress as RichProgressBar,
         )
 
         self.iterable = iterable

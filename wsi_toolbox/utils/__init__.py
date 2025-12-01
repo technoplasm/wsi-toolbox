@@ -1,4 +1,6 @@
+import logging
 import sys
+from contextlib import contextmanager
 
 import numpy as np
 from matplotlib import colors as mcolors
@@ -6,6 +8,8 @@ from matplotlib import pyplot as plt
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from PIL import Image, ImageDraw
 from PIL.Image import Image as ImageType
+
+_logger = logging.getLogger(__name__)
 
 
 def yes_no_prompt(question):
@@ -84,6 +88,38 @@ def safe_del(hdf_file, key_path):
     """
     if key_path in hdf_file:
         del hdf_file[key_path]
+
+
+@contextmanager
+def writing_dataset(f, path, **create_kwargs):
+    """
+    書き込み状態を管理するコンテキストマネージャー
+
+    開始時: writing=True
+    正常完了: writing=False
+    異常終了: writing=False → データセット削除
+
+    読み出し側での判定:
+        if ds.attrs.get("writing", False):
+            raise RuntimeError("Dataset is incomplete")
+
+    Usage:
+        with h5py.File(path, "a") as f:
+            with writing_dataset(f, "uni/features", shape=(n, dim), dtype=np.float32) as ds:
+                for i0, i1 in batches:
+                    ds[i0:i1] = data[i0:i1]
+    """
+    ds = f.create_dataset(path, **create_kwargs)
+    ds.attrs["writing"] = True
+    done = False
+    try:
+        yield ds
+        done = True
+    finally:
+        ds.attrs["writing"] = False
+        if not done:
+            safe_del(f, path)
+            _logger.warning(f"Aborted: deleted incomplete dataset '{path}'")
 
 
 def hover_images_on_scatters(scatters, imagess, ax=None, offset=(150, 30)):

@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 from pydantic import BaseModel
 
+from ..utils import writing_dataset
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
 from . import _get, _progress
 from .data_loader import MultipleContext
@@ -163,12 +164,12 @@ class UmapCommand:
                 full_umap = np.full((len(file_slice.mask), self.n_components), np.nan, dtype=umap_coords.dtype)
                 full_umap[file_slice.mask] = umap_coords
 
-                ds = f.create_dataset(target_path, data=full_umap)
-                ds.attrs["n_components"] = self.n_components
-                ds.attrs["n_neighbors"] = self.n_neighbors
-                ds.attrs["min_dist"] = self.min_dist
-                ds.attrs["metric"] = self.metric
-                ds.attrs["model"] = self.model_name
+                with writing_dataset(f, target_path, data=full_umap) as ds:
+                    ds.attrs["n_components"] = self.n_components
+                    ds.attrs["n_neighbors"] = self.n_neighbors
+                    ds.attrs["min_dist"] = self.min_dist
+                    ds.attrs["metric"] = self.metric
+                    ds.attrs["model"] = self.model_name
 
     def get_embeddings(self):
         """Get computed UMAP embeddings"""

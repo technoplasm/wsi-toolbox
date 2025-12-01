@@ -108,90 +108,100 @@ class FeatureExtractionCommand:
         batch_idx = [(i, min(i + self.batch_size, patch_count)) for i in range(0, patch_count, self.batch_size)]
         progress = _progress(total=len(batch_idx) + 1, desc="Initializing model")
 
-        # Load model (uses globally registered model generator)
-        model = create_default_model()
-        model = model.eval().to(self.device)
-        latent_size = model.patch_embed.proj.kernel_size[0]
-
-        # Normalization parameters
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(self.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(self.device)
-
-        progress.update(1)
-        progress.set_description("Processing batches")
-
+        model = None
+        mean = None
+        std = None
         done = False
-
         try:
+            # Load model (uses globally registered model generator)
+            model = create_default_model()
+            model = model.eval().to(self.device)
+            latent_size = model.patch_embed.proj.kernel_size[0]
+
+            # Normalization parameters
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(self.device)
+            std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(self.device)
+
+            progress.update(1)
+            progress.set_description("Processing batches")
             with h5py.File(hdf5_path, "r+") as f:
                 # Delete if overwrite
                 if self.overwrite:
                     safe_del(f, self.feature_name)
                     safe_del(f, self.latent_feature_name)
 
-                # Create datasets
-                f.create_dataset(self.feature_name, shape=(patch_count, model.num_features), dtype=np.float32)
+                # Create datasets with writing flag
+                ds_features = f.create_dataset(
+                    self.feature_name, shape=(patch_count, model.num_features), dtype=np.float32
+                )
+                ds_features.attrs["writing"] = True
+
+                ds_latent = None
                 if self.with_latent:
-                    f.create_dataset(
+                    ds_latent = f.create_dataset(
                         self.latent_feature_name,
                         shape=(patch_count, latent_size**2, model.num_features),
                         dtype=np.float16,
                     )
+                    ds_latent.attrs["writing"] = True
 
-                # Process batches
-                for i0, i1 in batch_idx:
-                    # Load batch
-                    x = f["patches"][i0:i1]
-                    x = (torch.from_numpy(x) / 255).permute(0, 3, 1, 2)  # BHWC->BCHW
-                    x = x.to(self.device)
-                    x = (x - mean) / std
+                try:
+                    # Process batches
+                    for i0, i1 in batch_idx:
+                        # Load batch
+                        x = f["patches"][i0:i1]
+                        x = (torch.from_numpy(x) / 255).permute(0, 3, 1, 2)  # BHWC->BCHW
+                        x = x.to(self.device)
+                        x = (x - mean) / std
 
-                    # Forward pass
-                    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
-                        h_tensor = model.forward_features(x)
+                        # Forward pass
+                        with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
+                            h_tensor = model.forward_features(x)
 
-                    # Extract features
-                    h = h_tensor.cpu().detach().numpy()  # [B, T+L, H]
-                    latent_index = h.shape[1] - latent_size**2
-                    cls_feature = h[:, 0, ...]
-                    latent_feature = h[:, latent_index:, ...]
+                        # Extract features
+                        h = h_tensor.cpu().detach().numpy()  # [B, T+L, H]
+                        latent_index = h.shape[1] - latent_size**2
+                        cls_feature = h[:, 0, ...]
+                        latent_feature = h[:, latent_index:, ...]
 
-                    # Save features
-                    f[self.feature_name][i0:i1] = cls_feature
-                    if self.with_latent:
-                        f[self.latent_feature_name][i0:i1] = latent_feature.astype(np.float16)
+                        # Save features
+                        ds_features[i0:i1] = cls_feature
+                        if ds_latent is not None:
+                            ds_latent[i0:i1] = latent_feature.astype(np.float16)
 
-                    # Cleanup
-                    del x, h_tensor
-                    torch.cuda.empty_cache()
+                        # Cleanup
+                        del x, h_tensor
+                        torch.cuda.empty_cache()
 
-                    progress.set_description(f"Processing {i0}-{i1} (total={patch_count})")
-                    progress.update(1)
+                        progress.set_description(f"Processing {i0}-{i1} (total={patch_count})")
+                        progress.update(1)
 
-                progress.close()
+                    done = True
+                    return FeatureExtractResult(
+                        feature_dim=model.num_features,
+                        patch_count=patch_count,
+                        model=self.model_name,
+                        with_latent=self.with_latent,
+                    )
 
-                logger.debug(f"Embeddings dimension: {f[self.feature_name].shape}")
+                finally:
+                    # Always mark writing=False before cleanup
+                    ds_features.attrs["writing"] = False
+                    if ds_latent is not None:
+                        ds_latent.attrs["writing"] = False
 
-                done = True
-                return FeatureExtractResult(
-                    feature_dim=model.num_features,
-                    patch_count=patch_count,
-                    model=self.model_name,
-                    with_latent=self.with_latent,
-                )
+                    if done:
+                        progress.close()
+                        logger.debug(f"Embeddings dimension: {ds_features.shape}")
+                        logger.info(f"Wrote {self.feature_name}")
+                    else:
+                        safe_del(f, self.feature_name)
+                        if self.with_latent:
+                            safe_del(f, self.latent_feature_name)
+                        logger.warning(f"Aborted: deleted incomplete dataset '{self.feature_name}'")
 
         finally:
-            if done:
-                logger.info(f"Wrote {self.feature_name}")
-            else:
-                # Cleanup on error
-                with h5py.File(hdf5_path, "a") as f:
-                    safe_del(f, self.feature_name)
-                    if self.with_latent:
-                        safe_del(f, self.latent_feature_name)
-                logger.warning(f"ABORTED! Deleted {self.feature_name}")
-
-            # Cleanup
+            # Cleanup model
             del model, mean, std
             torch.cuda.empty_cache()
             gc.collect()
