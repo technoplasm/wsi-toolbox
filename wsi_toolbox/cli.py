@@ -742,6 +742,72 @@ class CLI(AutoCLI):
                 console.print(f"[red]✗[/red] {P(hdf5_path).name}: {e}")
                 return False
 
+    class MigrateArgs(CommonArgs):
+        input_paths: list[str] = Field(..., l="--in", s="-i", description="HDF5 file path(s) to migrate")
+
+    def run_migrate(self, a: MigrateArgs):
+        """Migrate old HDF5 format to new format"""
+        for path in a.input_paths:
+            migrate_h5(path)
+
+
+def migrate_h5(input_path: str) -> bool:
+    """
+    Migrate old HDF5 format to new format.
+
+    Old format:
+        patches, coordinates at root
+        metadata/ group with datasets
+
+    New format:
+        cache/{patch_size}/patches, coordinates
+        attrs on cache group and root
+    """
+    with h5py.File(input_path, "a") as f:
+        # Check if already migrated
+        if "cache" in f:
+            print(f"Already migrated: {input_path}")
+            return False
+
+        # Check if old format
+        if "patches" not in f or "metadata" not in f:
+            print(f"Not old format: {input_path}")
+            return False
+
+        # Get patch_size from metadata
+        patch_size = int(f["metadata/patch_size"][()])
+        cache_group = f"cache/{patch_size}"
+
+        # Create cache group
+        grp = f.create_group(cache_group)
+
+        # Move patches and coordinates
+        f.move("patches", f"{cache_group}/patches")
+        f.move("coordinates", f"{cache_group}/coordinates")
+
+        # Copy metadata to attrs
+        metadata_keys = ["mpp", "patch_size", "cols", "rows", "patch_count",
+                        "original_mpp", "original_width", "original_height"]
+        for key in metadata_keys:
+            meta_path = f"metadata/{key}"
+            if meta_path in f:
+                val = f[meta_path][()]
+                grp.attrs[key] = val
+                if key not in f.attrs:
+                    f.attrs[key] = val
+
+        # Add target_mpp and level_used if missing
+        if "target_mpp" not in grp.attrs:
+            grp.attrs["target_mpp"] = grp.attrs.get("mpp", 0.5)
+        if "level_used" not in grp.attrs:
+            grp.attrs["level_used"] = int(f["metadata/image_level"][()] if "metadata/image_level" in f else 0)
+
+        # Delete metadata group
+        del f["metadata"]
+
+        print(f"Migrated: {input_path}")
+        return True
+
 
 def main():
     cli = CLI()
