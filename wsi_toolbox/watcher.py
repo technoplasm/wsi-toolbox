@@ -7,7 +7,8 @@ from typing import Callable, Dict, Optional
 from rich.console import Console
 
 from . import commands
-from .utils import plot_umap
+from .common import set_default_device, set_default_model_preset, set_default_progress
+from .utils.plot import plot_scatter_2d
 
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
 
@@ -44,8 +45,8 @@ class Task:
         self.wsi_files = list(folder.glob("**/*.ndpi")) + list(folder.glob("**/*.svs"))
         self.wsi_files.sort()
 
-        commands.set_default_progress("tqdm")
-        commands.set_default_model_preset(self.model_name)
+        set_default_progress("tqdm")
+        set_default_model_preset(self.model_name)
 
     def write_banner(self):
         """処理開始時のバナーをログに書き込み"""
@@ -82,7 +83,7 @@ class Task:
                     if not hdf5_file.exists():
                         self.append_log("Converting to HDF5...")
                         # Use new command pattern
-                        commands.set_default_progress("tqdm")
+                        set_default_progress("tqdm")
                         cmd = commands.CacheCommand()
                         _ = cmd(str(wsi_file), str(hdf5_file))
                         self.append_log("HDF5 conversion completed.")
@@ -90,26 +91,37 @@ class Task:
                     # 特徴量抽出（既存の場合はスキップ）
                     self.append_log("Extracting features...")
                     # Use new command pattern
-                    commands.set_default_device("cuda")
+                    set_default_device("cuda")
                     emb_cmd = commands.FeatureExtractionCommand()
                     _ = emb_cmd(str(hdf5_file))
                     self.append_log("Feature extraction completed.")
 
-                    # クラスタリングとUMAP生成
+                    # クラスタリング
                     self.append_log("Starting clustering ...")
-                    # Use new command pattern
-                    cluster_cmd = commands.ClusteringCommand(resolution=1.0, use_umap=True)
+                    cluster_cmd = commands.ClusteringCommand(resolution=1.0)
                     _ = cluster_cmd([hdf5_file])
                     self.append_log("Clustering completed.")
+
+                    # UMAP計算
+                    self.append_log("Computing UMAP...")
+                    umap_cmd = commands.UmapCommand()
+                    _ = umap_cmd(str(hdf5_file))
+                    self.append_log("UMAP computation completed.")
 
                     base = str(wsi_file.with_suffix(""))
 
                     # UMAPプロット生成
-                    self.append_log("Starting UMAP generation...")
+                    self.append_log("Starting UMAP plot generation...")
                     umap_path = Path(f"{base}_umap.png")
                     if not umap_path.exists():
-                        umap_embs = cluster_cmd.get_umap_embeddings()
-                        fig = plot_umap(umap_embs, cluster_cmd.total_clusters)
+                        import h5py  # noqa: PLC0415
+                        with h5py.File(hdf5_file, "r") as f:
+                            umap_embs = f[f"{self.model_name}/default/umap"][:]
+                            clusters = f[f"{self.model_name}/default/clusters"][:]
+                        fig = plot_scatter_2d(
+                            [umap_embs], [clusters], [wsi_file.stem],
+                            title="UMAP", xlabel="UMAP 1", ylabel="UMAP 2"
+                        )
                         fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
                         self.append_log(f"UMAP plot completed. Saved to {os.path.basename(umap_path)}")
                     else:
@@ -119,9 +131,8 @@ class Task:
                     self.append_log("Starting thumbnail generation...")
                     thumb_path = Path(f"{base}_thumb.jpg")
                     if not thumb_path.exists():
-                        # Use new command pattern
                         preview_cmd = commands.PreviewClustersCommand(size=64)
-                        img = preview_cmd(str(hdf5_file), cluster_name="")
+                        img = preview_cmd(str(hdf5_file), namespace="default")
                         img.save(thumb_path)
                         self.append_log(f"Thumbnail generation completed. Saved to {thumb_path.name}")
                     else:

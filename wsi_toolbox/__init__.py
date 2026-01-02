@@ -69,7 +69,6 @@ from .models import (
 
 # Patch readers
 from .patch_reader import (
-    BatchStats,
     CachePatchReader,
     PatchReader,
     PrefetchReader,

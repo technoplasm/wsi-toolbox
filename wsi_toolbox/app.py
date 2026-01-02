@@ -21,6 +21,7 @@ sys.path.append(str(P(__file__).parent))
 __package__ = "wsi_toolbox"
 
 from . import commands
+from .common import set_default_device, set_default_progress
 from .utils.plot import plot_scatter_2d
 from .utils.st import st_horizontal
 
@@ -32,8 +33,8 @@ warnings.filterwarnings(
     "ignore", category=FutureWarning, message="You are using `torch.load` with `weights_only=False`"
 )
 
-commands.set_default_progress("streamlit")
-commands.set_default_device("cuda")
+set_default_progress("streamlit")
+set_default_device("cuda")
 
 Image.MAX_IMAGE_PIXELS = 3_500_000_000
 
@@ -261,7 +262,8 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
 
     try:
         with h5py.File(hdf_path, "r") as f:
-            if "metadata/patch_count" not in f:
+            # Check for patch_count in file attrs (new format)
+            if "patch_count" not in f.attrs:
                 return HDF5Detail(
                     status=STATUS_UNSUPPORTED,
                     has_features=False,
@@ -272,7 +274,7 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
                     rows=0,
                     cluster_ids_by_name={},
                 )
-            patch_count = f["metadata/patch_count"][()]
+            patch_count = int(f.attrs["patch_count"])
             has_features = (f"{model_name}/features" in f) and (len(f[f"{model_name}/features"]) == patch_count)
             cluster_names = ["未施行"]
             if model_name in f:
@@ -300,9 +302,9 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
                 has_features=has_features,
                 cluster_names=cluster_names,
                 patch_count=patch_count,
-                mpp=f["metadata/mpp"][()],
-                cols=f["metadata/cols"][()],
-                rows=f["metadata/rows"][()],
+                mpp=float(f.attrs.get("mpp", 0)),
+                cols=int(f.attrs.get("cols", 0)),
+                rows=int(f.attrs.get("rows", 0)),
                 cluster_ids_by_name=cluster_ids_by_name,
             )
     except BlockingIOError:
