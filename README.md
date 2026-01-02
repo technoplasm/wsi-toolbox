@@ -21,9 +21,16 @@ pip install git+https://github.com/technoplasm/wsi-toolbox.git
 ```python
 import wsi_toolbox as wt
 
+# Extract features directly from WSI (no cache needed)
 wt.set_default_model_preset('uni')
-cmd = wt.Wsi2HDF5Command(patch_size=256)
-result = cmd('input.ndpi', 'output.h5')
+wt.set_default_device('cuda')
+cmd = wt.FeatureExtractionCommand(batch_size=256)
+result = cmd('output.h5', wsi_path='input.ndpi')
+
+# Or cache patches first for faster repeated access
+cache_cmd = wt.CacheCommand(patch_size=256)
+cache_cmd('input.ndpi', 'output.h5')
+result = cmd('output.h5')  # Uses cache automatically
 ```
 
 See [README_API.md](README_API.md) for API documentation.
@@ -34,10 +41,11 @@ After `pip install wsi-toolbox`, the CLI is available as `wsi-toolbox` or `wt`.
 For development, use `uv run wt`.
 
 ```bash
-# Extract tile patches from WSI into HDF5
-wt wsi2h5 -i input.ndpi -o output.h5
+# Extract features directly from WSI (creates HDF5 with features)
+wt extract -i input.ndpi -o output.h5
 
-# Extract features using foundation model
+# Or cache patches first (optional, for repeated access)
+wt cache -i input.ndpi -o output.h5
 wt extract -i output.h5
 
 # Run Leiden clustering on embeddings
@@ -77,28 +85,28 @@ uv run task app
 
 WSI-toolbox stores all data in a single HDF5 file.
 
-### Core Data
+### Patch Cache (optional)
 
 ```
-patches                    # Patch images: [N, H, W, 3]
-coordinates                # Patch pixel coordinates: [N, 2]
+cache/{patch_size}/patches       # Patch images: [N, H, W, 3]
+cache/{patch_size}/coordinates   # Patch pixel coordinates: [N, 2]
 ```
+
+Cache is optional - `extract` command can read directly from WSI.
 
 ### Metadata
 
-Metadata is stored in **file attrs** (recommended):
+Metadata is stored in **file attrs** and group attrs:
 
 ```python
 with h5py.File('output.h5', 'r') as f:
     mpp = f.attrs['mpp']
     patch_size = f.attrs['patch_size']
     patch_count = f.attrs['patch_count']
-    # ...
+    # Also available on cache group: f['cache/256'].attrs['mpp']
 ```
 
-Available attrs: `original_mpp`, `original_width`, `original_height`, `image_level`, `mpp`, `scale`, `patch_size`, `patch_count`, `cols`, `rows`
-
-> Legacy `metadata/*` datasets are kept for backward compatibility but attrs are preferred.
+Available attrs: `original_mpp`, `original_width`, `original_height`, `mpp`, `patch_size`, `patch_count`, `cols`, `rows`
 
 ### Model Features
 

@@ -22,33 +22,10 @@ wt.set_default_device('cuda')         # Device: 'cuda' or 'cpu'
 All commands follow the pattern: `__init__` for configuration, `__call__` for execution.
 Each command returns a Pydantic BaseModel result with type-safe attributes.
 
-### Wsi2HDF5Command
-
-Extract tile patches from WSI and save to HDF5.
-
-**CLI equivalent:** `wt wsi2h5`
-
-```python
-import wsi_toolbox as wt
-
-cmd = wt.Wsi2HDF5Command(
-    patch_size=256,      # Patch size in pixels
-    engine='auto',       # 'auto', 'openslide', 'tifffile'
-    mpp=0.5,             # Microns per pixel (for standard images)
-    rotate=False,        # Rotate patches 180 degrees
-)
-result = cmd('input.ndpi', 'output.h5')
-
-# Result attributes
-print(f"Patches: {result.patch_count}")
-print(f"MPP: {result.mpp}")
-print(f"Scale: {result.scale}")
-print(f"Grid: {result.cols} x {result.rows}")
-```
-
 ### FeatureExtractionCommand
 
 Extract features from patches using foundation models.
+Can read directly from WSI or from cached patches.
 
 **CLI equivalent:** `wt extract`
 
@@ -65,12 +42,41 @@ cmd = wt.FeatureExtractionCommand(
     model_name=None,     # None = use global default
     device=None,         # None = use global default
 )
+
+# Direct from WSI (no cache needed)
+result = cmd('output.h5', wsi_path='input.ndpi')
+
+# Or from cache (if available)
 result = cmd('output.h5')
 
 if not result.skipped:
     print(f"Feature dim: {result.feature_dim}")
     print(f"Patch count: {result.patch_count}")
     print(f"Model: {result.model}")
+```
+
+### CacheCommand
+
+Cache tile patches from WSI to HDF5 for faster repeated access.
+This is optional - FeatureExtractionCommand can read directly from WSI.
+
+**CLI equivalent:** `wt cache`
+
+```python
+import wsi_toolbox as wt
+
+cmd = wt.CacheCommand(
+    patch_size=256,      # Patch size in pixels
+    target_mpp=0.5,      # Target microns per pixel
+    rows_per_read=4,     # Rows to read at once
+    engine='auto',       # 'auto', 'openslide', 'tifffile'
+)
+result = cmd('input.ndpi', 'output.h5')
+
+# Result attributes
+print(f"Patches: {result.patch_count}")
+print(f"MPP: {result.mpp}")
+print(f"Grid: {result.cols} x {result.rows}")
 ```
 
 ### ClusteringCommand
@@ -293,22 +299,22 @@ import wsi_toolbox as wt
 wt.set_default_model_preset('uni')
 wt.set_default_device('cuda')
 
-# 1. WSI → HDF5
-wsi_cmd = wt.Wsi2HDF5Command(patch_size=256)
-wsi_result = wsi_cmd('input.ndpi', 'output.h5')
-print(f"Patches: {wsi_result.patch_count}")
-
-# 2. Feature extraction
+# Option A: Direct extraction from WSI (simplest)
 extract_cmd = wt.FeatureExtractionCommand(batch_size=256)
-extract_result = extract_cmd('output.h5')
+extract_result = extract_cmd('output.h5', wsi_path='input.ndpi')
 print(f"Features: {extract_result.feature_dim}D")
 
-# 3. Clustering
+# Option B: Cache first, then extract (faster for repeated access)
+# cache_cmd = wt.CacheCommand(patch_size=256)
+# cache_cmd('input.ndpi', 'output.h5')
+# extract_result = extract_cmd('output.h5')
+
+# 2. Clustering
 cluster_cmd = wt.ClusteringCommand(resolution=1.0)
 cluster_result = cluster_cmd(['output.h5'])
 print(f"Clusters: {cluster_result.cluster_count}")
 
-# 4. UMAP
+# 3. UMAP
 umap_cmd = wt.UmapCommand()
 umap_result = umap_cmd('output.h5')
 print(f"UMAP: {umap_result.n_samples} samples")

@@ -6,15 +6,16 @@ A comprehensive toolkit for WSI processing, feature extraction, and clustering.
 Basic Usage:
     >>> import wsi_toolbox as wt
     >>>
-    >>> # Convert WSI to HDF5
-    >>> cmd = wt.Wsi2HDF5Command(patch_size=256)
-    >>> result = cmd('input.ndpi', 'output.h5')
-    >>>
-    >>> # Extract features with preset model
+    >>> # Extract features directly from WSI (no cache needed)
     >>> wt.set_default_model_preset('uni')
     >>> wt.set_default_device('cuda')
-    >>> emb_cmd = wt.FeatureExtractionCommand(batch_size=256)
-    >>> emb_result = emb_cmd('output.h5')
+    >>> cmd = wt.FeatureExtractionCommand(batch_size=256)
+    >>> result = cmd('output.h5', wsi_path='input.ndpi')
+    >>>
+    >>> # Or create cache first for faster repeated access
+    >>> cache_cmd = wt.CacheCommand(patch_size=256)
+    >>> cache_cmd('input.ndpi', 'output.h5')
+    >>> result = cmd('output.h5')  # Uses cache automatically
     >>>
     >>> # Clustering
     >>> cluster_cmd = wt.ClusteringCommand(resolution=1.0)
@@ -44,7 +45,8 @@ from .commands import (
 )
 
 # Command result types
-from .commands.cache import Wsi2HDF5Result
+from .commands.cache import CacheResult
+from .commands.cache import Wsi2HDF5Result  # Deprecated alias
 from .commands.clustering import ClusteringResult
 from .commands.feature_extraction import FeatureExtractResult
 from .commands.pca import PCACommand
@@ -105,7 +107,7 @@ __all__ = [
     "set_verbose",
     # Commands
     "CacheCommand",
-    "Wsi2HDF5Command",
+    "Wsi2HDF5Command",  # Deprecated alias
     "FeatureExtractionCommand",
     "ClusteringCommand",
     "UmapCommand",
@@ -117,7 +119,8 @@ __all__ = [
     "ShowCommand",
     "DziCommand",
     # Result types
-    "Wsi2HDF5Result",
+    "CacheResult",
+    "Wsi2HDF5Result",  # Deprecated alias
     "FeatureExtractResult",
     "ClusteringResult",
     # WSI files

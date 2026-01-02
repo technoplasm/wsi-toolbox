@@ -500,9 +500,8 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                 else:
                     with st.spinner("WSIを分割しHDF5ファイルを構成しています...", show_time=True):
                         # Use new command pattern
-                        cmd = commands.Wsi2HDF5Command(patch_size=PATCH_SIZE)
-                        _ = cmd(wsi_path, hdf5_tmp_path)
-                    os.rename(hdf5_tmp_path, hdf5_path)
+                        cmd = commands.CacheCommand(patch_size=PATCH_SIZE)
+                        _ = cmd(wsi_path, hdf5_path)
                     st.write("HDF5ファイルに変換完了。")
 
                 if matched_h5_entry is not None and matched_h5_entry.detail and matched_h5_entry.detail.has_features:

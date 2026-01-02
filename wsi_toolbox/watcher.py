@@ -83,9 +83,8 @@ class Task:
                         self.append_log("Converting to HDF5...")
                         # Use new command pattern
                         commands.set_default_progress("tqdm")
-                        cmd = commands.Wsi2HDF5Command(rotate=self.should_rotate)
-                        _ = cmd(str(wsi_file), str(hdf5_tmp_path))
-                        os.rename(hdf5_tmp_path, hdf5_file)
+                        cmd = commands.CacheCommand()
+                        _ = cmd(str(wsi_file), str(hdf5_file))
                         self.append_log("HDF5 conversion completed.")
 
                     # 特徴量抽出（既存の場合はスキップ）
