@@ -89,7 +89,11 @@ class MultipleContext:
 
         for hdf5_path in self.hdf5_paths:
             with h5py.File(hdf5_path, "r") as f:
-                patch_count = f["metadata/patch_count"][()]
+                # Get patch count from features length
+                feature_path = f"{self.model_name}/features"
+                if feature_path not in f:
+                    raise RuntimeError(f"Features not found at {feature_path} in {hdf5_path}")
+                patch_count = len(f[feature_path])
 
                 # Build cumulative mask from filters
                 mask = self._build_mask(f, patch_count)
@@ -202,7 +206,8 @@ class MultipleContext:
             (clusters, mask): Parent cluster values and boolean mask
         """
         with h5py.File(hdf5_path, "r") as f:
-            patch_count = f["metadata/patch_count"][()]
+            feature_path = f"{self.model_name}/features"
+            patch_count = len(f[feature_path])
             mask = self._build_mask(f, patch_count)
 
             if self.parent_filters:

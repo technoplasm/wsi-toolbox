@@ -1,4 +1,11 @@
+import logging
+
+
 MODEL_NAMES = ["uni", "gigapath", "virchow2"]
+
+# Suppress noisy logs from huggingface_hub and timm
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("timm").setLevel(logging.WARNING)
 
 
 def create_foundation_model(model_name: str):

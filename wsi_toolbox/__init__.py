@@ -31,6 +31,7 @@ __version__ = "0.1.0"
 # Configuration
 # Commands
 from .commands import (
+    CacheCommand,
     ClusteringCommand,
     DziCommand,
     FeatureExtractionCommand,
@@ -41,13 +42,13 @@ from .commands import (
     ShowCommand,
     Wsi2HDF5Command,
 )
+
+# Command result types
+from .commands.cache import Wsi2HDF5Result
 from .commands.clustering import ClusteringResult
 from .commands.feature_extraction import FeatureExtractResult
 from .commands.pca import PCACommand
 from .commands.umap_embedding import UmapCommand
-
-# Command result types
-from .commands.wsi import Wsi2HDF5Result
 from .common import (
     create_default_model,
     get_config,
@@ -64,6 +65,16 @@ from .models import (
     create_foundation_model,
 )
 
+# Patch readers
+from .patch_reader import (
+    BatchStats,
+    CachePatchReader,
+    PatchReader,
+    PrefetchReader,
+    WSIPatchReader,
+    get_patch_reader,
+)
+
 # Utility functions
 from .utils.analysis import leiden_cluster, reorder_clusters_by_pca
 from .utils.hdf5_paths import remove_namespace, rename_namespace
@@ -78,6 +89,7 @@ from .wsi_files import (
     StandardImage,
     WSIFile,
     create_wsi_file,
+    find_wsi_for_h5,
 )
 
 __all__ = [
@@ -92,6 +104,7 @@ __all__ = [
     "set_default_device",
     "set_verbose",
     # Commands
+    "CacheCommand",
     "Wsi2HDF5Command",
     "FeatureExtractionCommand",
     "ClusteringCommand",
@@ -115,6 +128,13 @@ __all__ = [
     "PyramidalTiffFile",
     "StandardImage",
     "create_wsi_file",
+    "find_wsi_for_h5",
+    # Patch readers
+    "PatchReader",
+    "WSIPatchReader",
+    "CachePatchReader",
+    "PrefetchReader",
+    "get_patch_reader",
     # Models
     "MODEL_NAMES",
     "create_foundation_model",

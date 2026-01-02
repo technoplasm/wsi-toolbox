@@ -1,66 +1,20 @@
-"""
-Command-based processors for WSI analysis pipeline.
+"""Command-based processors for WSI analysis pipeline."""
 
-Design pattern: __init__ for configuration, __call__ for execution
-"""
-
-# Import configuration from common module
-from ..common import (
-    Config,
-    _get,
-    _get_cluster_color,
-    _progress,
-    get_config,
-    set_default_cluster_cmap,
-    set_default_device,
-    set_default_model,
-    set_default_model_preset,
-    set_default_progress,
-    set_verbose,
-)
-from .clustering import ClusteringCommand
-from .dzi import DziCommand
-from .feature_extraction import FeatureExtractionCommand
-from .pca import PCACommand
-from .preview import (
-    BasePreviewCommand,
-    PreviewClustersCommand,
-    PreviewLatentClusterCommand,
-    PreviewLatentPCACommand,
-    PreviewScoresCommand,
-)
-from .show import ShowCommand
-from .umap_embedding import UmapCommand
-
-# Import and export all commands
-from .wsi import Wsi2HDF5Command
-
-__all__ = [
-    # Config
-    "Config",
-    "get_config",
-    # Config setters
-    "set_default_progress",
-    "set_default_model",
-    "set_default_model_preset",
-    "set_default_device",
-    "set_verbose",
-    "set_default_cluster_cmap",
-    # Helper functions
-    "_get",
-    "_get_cluster_color",
-    "_progress",
-    # Commands
-    "Wsi2HDF5Command",
-    "FeatureExtractionCommand",
-    "UmapCommand",
-    "ClusteringCommand",
-    "PCACommand",
-    "BasePreviewCommand",
-    "PreviewClustersCommand",
-    "PreviewScoresCommand",
-    "PreviewLatentPCACommand",
-    "PreviewLatentClusterCommand",
-    "DziCommand",
-    "ShowCommand",
-]
+from ..common import _get as _get
+from ..common import _get_cluster_color as _get_cluster_color
+from ..common import _progress as _progress
+from .cache import CacheCommand as CacheCommand
+from .cache import CacheResult as CacheResult
+from .cache import Wsi2HDF5Command as Wsi2HDF5Command
+from .cache import Wsi2HDF5Result as Wsi2HDF5Result
+from .clustering import ClusteringCommand as ClusteringCommand
+from .dzi import DziCommand as DziCommand
+from .feature_extraction import FeatureExtractionCommand as FeatureExtractionCommand
+from .pca import PCACommand as PCACommand
+from .preview import BasePreviewCommand as BasePreviewCommand
+from .preview import PreviewClustersCommand as PreviewClustersCommand
+from .preview import PreviewLatentClusterCommand as PreviewLatentClusterCommand
+from .preview import PreviewLatentPCACommand as PreviewLatentPCACommand
+from .preview import PreviewScoresCommand as PreviewScoresCommand
+from .show import ShowCommand as ShowCommand
+from .umap_embedding import UmapCommand as UmapCommand

@@ -19,6 +19,7 @@ import math
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -620,3 +621,70 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
         return StandardImage(image_path, mpp=mpp)
     else:
         raise ValueError(f"Invalid engine: {engine}")
+
+
+# OpenSlide supported formats
+WSI_EXTENSIONS = [
+    ".ndpi",  # Hamamatsu
+    ".vms",  # Hamamatsu
+    ".vmu",  # Hamamatsu
+    ".scn",  # Leica
+    ".mrxs",  # 3DHISTECH
+    ".bif",  # Ventana
+    ".svs",  # Aperio
+    ".svslide",  # Aperio
+    ".tif",
+    ".tiff",
+    ".ome.tiff",
+    ".ome.tif",
+]
+
+
+def find_wsi_for_h5(h5_path: str) -> str | None:
+    """
+    Find corresponding WSI file for an HDF5 file.
+
+    Given xxx.h5, searches for xxx.ndpi, xxx.svs, xxx.ome.tiff, etc.
+    in the same directory.
+
+    Args:
+        h5_path: Path to HDF5 file
+
+    Returns:
+        Path to WSI file if found, None otherwise
+    """
+    h5_path = Path(h5_path)
+    stem = h5_path.stem
+    parent = h5_path.parent
+
+    # Try each extension
+    for ext in WSI_EXTENSIONS:
+        wsi_path = parent / f"{stem}{ext}"
+        if wsi_path.exists():
+            logger.debug(f"Found WSI: {wsi_path}")
+            return str(wsi_path)
+
+    return None
+
+
+def find_best_level_for_mpp(wsi: "PyramidalWSIFile", target_mpp: float = 0.5) -> NativeLevel:
+    """
+    Find the native level closest to target mpp.
+
+    Args:
+        wsi: PyramidalWSIFile instance
+        target_mpp: Target microns per pixel (default: 0.5)
+
+    Returns:
+        NativeLevel closest to target mpp
+    """
+    base_mpp = wsi.get_mpp()  # level 0 mpp
+    levels = wsi._get_native_levels()
+
+    best = min(levels, key=lambda lv: abs(base_mpp * lv.downsample - target_mpp))
+    actual_mpp = base_mpp * best.downsample
+    logger.debug(f"Selected level {best.index} (mpp={actual_mpp:.4f}) for target mpp={target_mpp}")
+
+    return best
+
+

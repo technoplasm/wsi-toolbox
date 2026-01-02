@@ -3,6 +3,7 @@ Preview generation commands using Template Method Pattern
 """
 
 import logging
+from dataclasses import dataclass
 
 import h5py
 import numpy as np
@@ -10,11 +11,93 @@ from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from PIL import Image, ImageFont
 
+from ..patch_reader import get_patch_reader
 from ..utils import create_frame, get_platform_font
 from ..utils.hdf5_paths import build_cluster_path
 from . import _get, _get_cluster_color, _progress
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PreviewPatchInfo:
+    """
+    Patch source info for preview rendering.
+
+    Supports:
+    1. cache/{patch_size}/ structure (new)
+    2. Legacy /patches, /coordinates structure
+    3. WSI on-demand (via PatchSource)
+    """
+
+    # H5 paths (None if using WSI)
+    patches_path: str | None
+    coords_path: str | None
+    # Metadata
+    cols: int
+    rows: int
+    patch_count: int
+    patch_size: int
+    # For WSI on-demand
+    use_wsi: bool = False
+
+    @classmethod
+    def from_h5(
+        cls, f: h5py.File, h5_path: str, model_name: str, patch_size: int = 256
+    ) -> "PreviewPatchInfo":
+        """
+        Detect and create patch source info from H5 file.
+
+        Args:
+            f: Open HDF5 file
+            h5_path: Path to H5 file (for WSI discovery)
+            model_name: Model name (e.g., 'uni')
+            patch_size: Patch size for cache lookup (default: 256)
+
+        Returns:
+            PreviewPatchInfo with correct paths or WSI flag
+        """
+        cache_group = f"cache/{patch_size}"
+
+        # Try cache structure first
+        if cache_group in f:
+            grp = f[cache_group]
+            if "patches" in grp and "coordinates" in grp:
+                return cls(
+                    patches_path=f"{cache_group}/patches",
+                    coords_path=f"{cache_group}/coordinates",
+                    cols=int(grp.attrs.get("cols", 0)),
+                    rows=int(grp.attrs.get("rows", 0)),
+                    patch_count=int(grp.attrs.get("patch_count", len(f[f"{cache_group}/coordinates"]))),
+                    patch_size=int(grp.attrs.get("patch_size", patch_size)),
+                )
+
+        # Fall back to legacy structure
+        if "patches" in f and "coordinates" in f:
+            return cls(
+                patches_path="patches",
+                coords_path="coordinates",
+                cols=int(f["metadata/cols"][()]),
+                rows=int(f["metadata/rows"][()]),
+                patch_count=int(f["metadata/patch_count"][()]),
+                patch_size=int(f["metadata/patch_size"][()]),
+            )
+
+        # Try model coordinates + WSI on-demand
+        model_coords = f"{model_name}/coordinates"
+        if model_coords in f:
+            grp = f[model_name]
+            return cls(
+                patches_path=None,
+                coords_path=model_coords,
+                cols=int(grp.attrs.get("cols", 0)),
+                rows=int(grp.attrs.get("rows", 0)),
+                patch_count=int(grp.attrs.get("patch_count", len(f[model_coords]))),
+                patch_size=int(grp.attrs.get("patch_size", patch_size)),
+                use_wsi=True,
+            )
+
+        raise ValueError("No patch source found (no cache, legacy, or model coordinates)")
 
 
 class BasePreviewCommand:
@@ -26,20 +109,29 @@ class BasePreviewCommand:
     - _get_frame(index, data, f): Get frame for specific patch
     """
 
-    def __init__(self, size: int = 64, font_size: int = 16, model_name: str | None = None, rotate: bool = False):
+    def __init__(
+        self,
+        size: int = 64,
+        font_size: int = 16,
+        model_name: str | None = None,
+        rotate: bool = False,
+        patch_size: int = 256,
+    ):
         """
         Initialize preview command
 
         Args:
-            size: Thumbnail patch size
+            size: Thumbnail patch size (output)
             font_size: Font size for labels
             model_name: Model name (None to use global default)
             rotate: Whether to rotate patches 180 degrees
+            patch_size: Source patch size for cache lookup (default: 256)
         """
         self.size = size
         self.font_size = font_size
         self.model_name = _get("model_name", model_name)
         self.rotate = rotate
+        self.patch_size = patch_size
 
     def __call__(self, hdf5_path: str, **kwargs) -> Image.Image:
         """
@@ -55,8 +147,14 @@ class BasePreviewCommand:
         S = self.size
 
         with h5py.File(hdf5_path, "r") as f:
-            # Load metadata
-            cols, rows, patch_count, patch_size = self._load_metadata(f)
+            # Get patch source info
+            info = PreviewPatchInfo.from_h5(
+                f, h5_path=hdf5_path, model_name=self.model_name, patch_size=self.patch_size
+            )
+            cols = info.cols
+            rows = info.rows
+            patch_count = info.patch_count
+            src_patch_size = info.patch_size
 
             # Subclass-specific preparation
             data = self._prepare(f, **kwargs)
@@ -64,40 +162,60 @@ class BasePreviewCommand:
             # Create canvas
             canvas = Image.new("RGB", (cols * S, rows * S), (0, 0, 0))
 
-            # Render all patches (common loop)
-            tq = _progress(range(patch_count), desc="Rendering patches")
-            for i in tq:
-                coord = f["coordinates"][i]
-                patch_array = f["patches"][i]
+            if info.use_wsi:
+                # WSI on-demand: read each patch by coordinate
+                source = get_patch_reader(
+                    h5_path=hdf5_path, patch_size=self.patch_size, target_mpp=0.5
+                )
+                coords = f[info.coords_path][:]
 
-                # Get subclass-specific frame
-                frame = self._get_frame(i, data, f)
-
-                # Render patch with optional rotation
-                if self.rotate:
-                    # Transform coordinates for 180-degree rotation
-                    orig_x, orig_y = coord // patch_size * S
-                    x = (cols - 1) * S - orig_x
-                    y = (rows - 1) * S - orig_y
-                    # Rotate patch 180 degrees
-                    patch = Image.fromarray(patch_array).resize((S, S)).rotate(180)
-                else:
-                    x, y = coord // patch_size * S
-                    patch = Image.fromarray(patch_array).resize((S, S))
-
-                if frame:
-                    patch.paste(frame, (0, 0), frame)
-                canvas.paste(patch, (x, y, x + S, y + S))
+                tq = _progress(range(patch_count), desc="Rendering patches")
+                for i in tq:
+                    coord = tuple(coords[i])
+                    patch_array = source.get_patch_by_coord(coord)
+                    frame = self._get_frame(i, data, f)
+                    self._render_patch(
+                        canvas, patch_array, coord, frame, S, src_patch_size, cols, rows
+                    )
+            else:
+                # H5 cached: iterate by index
+                coords = f[info.coords_path][:]
+                tq = _progress(range(patch_count), desc="Rendering patches")
+                for i in tq:
+                    coord = coords[i]
+                    patch_array = f[info.patches_path][i]
+                    frame = self._get_frame(i, data, f)
+                    self._render_patch(
+                        canvas, patch_array, coord, frame, S, src_patch_size, cols, rows
+                    )
 
         return canvas
 
-    def _load_metadata(self, f: h5py.File):
-        """Load common metadata"""
-        cols = f["metadata/cols"][()]
-        rows = f["metadata/rows"][()]
-        patch_count = f["metadata/patch_count"][()]
-        patch_size = f["metadata/patch_size"][()]
-        return cols, rows, patch_count, patch_size
+    def _render_patch(
+        self,
+        canvas: Image.Image,
+        patch_array: np.ndarray,
+        coord: tuple,
+        frame,
+        S: int,
+        src_patch_size: int,
+        cols: int,
+        rows: int,
+    ):
+        """Render a single patch to canvas."""
+        if self.rotate:
+            orig_x, orig_y = coord[0] // src_patch_size * S, coord[1] // src_patch_size * S
+            x = (cols - 1) * S - orig_x
+            y = (rows - 1) * S - orig_y
+            patch = Image.fromarray(patch_array).resize((S, S)).rotate(180)
+        else:
+            x = coord[0] // src_patch_size * S
+            y = coord[1] // src_patch_size * S
+            patch = Image.fromarray(patch_array).resize((S, S))
+
+        if frame:
+            patch.paste(frame, (0, 0), frame)
+        canvas.paste(patch, (x, y, x + S, y + S))
 
     def _prepare(self, f: h5py.File, **kwargs):
         """

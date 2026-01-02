@@ -18,7 +18,7 @@ from .utils.hdf5_paths import build_cluster_path, list_namespaces, remove_namesp
 from .utils.plot import plot_scatter_2d, plot_violin_1d
 from .utils.seed import fix_global_seed, get_global_seed
 from .utils.white import create_white_detector
-from .wsi_files import create_wsi_file
+from .wsi_files import WSI_EXTENSIONS, create_wsi_file
 
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 warnings.filterwarnings(
@@ -171,35 +171,24 @@ class CLI(AutoCLI):
 
         return (method, threshold)
 
-    class Wsi2h5Args(CommonArgs):
-        device: str = "cuda"
+    class CacheArgs(CommonArgs):
         input_path: str = param(..., l="--in", s="-i")
         output_path: str = param("", l="--out", s="-o")
         patch_size: int = param(256, s="-S")
+        target_mpp: float = Field(0.5, l="--mpp", description="Target mpp")
+        rows_per_read: int = Field(4, l="--rows", description="Rows per read")
         overwrite: bool = param(False, s="-O")
         engine: str = param("auto", choices=["auto", "openslide", "tifffile"])
-        mpp: float = 0.5
-        rotate: bool = False
-        no_temp: bool = Field(False, description="Don't use temporary file (less safe)")
         detect_white: list[str] = Field(
             [], l="--detect-white", s="-w", description="White detection: method threshold (e.g., 'ptp 0.9')"
         )
 
-    def run_wsi2h5(self, a: Wsi2h5Args):
-        commands.set_default_device(a.device)
+    def run_cache(self, a: CacheArgs):
         output_path = a.output_path
 
         if not output_path:
             base, ext = os.path.splitext(a.input_path)
             output_path = base + ".h5"
-
-        tmp_path = output_path + ".tmp"
-
-        if os.path.exists(output_path):
-            if not a.overwrite:
-                print(f"⊘ {output_path} exists. Skipping.")
-                return
-            print(f"{output_path} exists but overwriting it.")
 
         d = os.path.dirname(output_path)
         if d:
@@ -209,41 +198,62 @@ class CLI(AutoCLI):
         white_method, white_threshold = self._parse_white_detect(a.detect_white)
         white_detector = create_white_detector(white_method, white_threshold)
 
-        print("Output path:", output_path)
-        print("Temporary path:", tmp_path)
+        print(f"Input: {a.input_path}")
+        print(f"Output: {output_path}")
+        print(f"Target mpp: {a.target_mpp}")
         print(
             f"White detection: {white_method} (threshold: {white_threshold if white_threshold is not None else 'default'})"
         )
 
-        # Use new command pattern (progress is auto-set from global config)
-        cmd = commands.Wsi2HDF5Command(
+        cmd = commands.CacheCommand(
             patch_size=a.patch_size,
+            target_mpp=a.target_mpp,
+            rows_per_read=a.rows_per_read,
             engine=a.engine,
-            mpp=a.mpp,
-            rotate=a.rotate,
+            overwrite=a.overwrite,
             white_detector=white_detector,
         )
-        result = cmd(a.input_path, tmp_path)
 
-        os.rename(tmp_path, output_path)
-        print("Renamed ", tmp_path, " -> ", output_path)
-        print(f"done: {result.patch_count} patches extracted")
+        result = cmd(a.input_path, output_path)
+
+        if not result.skipped:
+            print(f"done: {result.patch_count} patches (mpp={result.mpp:.4f}, level={result.level_used})")
 
     class ExtractArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i")
+        input_path: str = Field(..., l="--in", s="-i", description="WSI file or HDF5 file")
+        output_path: str = Field("", l="--out", s="-o", description="Output HDF5 path (for WSI input)")
         batch_size: int = Field(512, s="-B")
         overwrite: bool = Field(False, s="-O")
         with_latent_features: bool = Field(False, s="-L")
+        # On-demand options
+        target_mpp: float = Field(0.5, l="--mpp", description="Target mpp")
+        prefetch: int = Field(1, l="--prefetch", description="Batches to prefetch (0 to disable)")
 
     def run_extract(self, a: ExtractArgs):
-        # Use new command pattern
+        input_path = Path(a.input_path)
+        ext = input_path.suffix.lower()
+
+        # Determine paths based on input type
+        is_wsi = ext in WSI_EXTENSIONS
+
+        if is_wsi:
+            wsi_path = a.input_path
+            h5_path = a.output_path if a.output_path else str(input_path.with_suffix(".h5"))
+        else:
+            wsi_path = None
+            h5_path = a.input_path
+
         cmd = commands.FeatureExtractionCommand(
-            batch_size=a.batch_size, with_latent=a.with_latent_features, overwrite=a.overwrite
+            batch_size=a.batch_size,
+            with_latent=a.with_latent_features,
+            overwrite=a.overwrite,
+            target_mpp=a.target_mpp,
+            prefetch=a.prefetch,
         )
-        result = cmd(a.input_path)
+        result = cmd(h5_path, wsi_path=wsi_path)
 
         if not result.skipped:
-            print(f"done: {result.feature_dim}D features extracted")
+            print(f"done: {result.feature_dim}D features extracted ({result.patch_count} patches)")
 
     class ClusterArgs(CommonArgs):
         input_paths: list[str] = Field(..., l="--in", s="-i")
