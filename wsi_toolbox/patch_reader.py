@@ -21,17 +21,6 @@ from .wsi_files import PyramidalWSIFile, create_wsi_file, find_best_level_for_mp
 logger = logging.getLogger(__name__)
 
 
-class BatchStats:
-    """Statistics for a batch of patches."""
-
-    __slots__ = ("row", "total_patches", "adopted")
-
-    def __init__(self, row: int, total_patches: int, adopted: int):
-        self.row = row  # Current row number (end of this batch)
-        self.total_patches = total_patches  # Patches before white filtering
-        self.adopted = adopted  # Patches after white filtering
-
-
 @runtime_checkable
 class PatchReader(Protocol):
     """
@@ -54,7 +43,7 @@ class PatchReader(Protocol):
         """Calculate total number of batches for given batch_size."""
         ...
 
-    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], BatchStats]]:
+    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], str]]:
         """
         Iterate over patches in batches.
 
@@ -62,7 +51,7 @@ class PatchReader(Protocol):
             batch_size: Number of patches per batch
 
         Yields:
-            (batch, coords, stats) - batch is np.ndarray (B, H, W, 3), coords is list of (x, y), stats is BatchStats
+            (batch, coords, desc) - batch is np.ndarray (B, H, W, 3), coords is list of (x, y), desc is progress string
         """
         ...
 
@@ -87,8 +76,7 @@ class WSIPatchReader:
         reader = WSIPatchReader(wsi, patch_size=256, target_mpp=0.5)
 
         # Iterate batches (rows_per_batch auto-calculated from batch_size)
-        for batch, coords, stats in reader.iter_batches(batch_size=256):
-            # stats: {"row": current_row, "total_patches": N, "adopted": M}
+        for batch, coords in reader.iter_batches(batch_size=256):
             ...
 
         # Get single patch by coordinate
@@ -201,7 +189,7 @@ class WSIPatchReader:
         rows_per_batch = max(1, batch_size // self.cols)
         return (self.rows + rows_per_batch - 1) // rows_per_batch
 
-    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], BatchStats]]:
+    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], str]]:
         """
         Iterate over patches in batches.
 
@@ -211,25 +199,24 @@ class WSIPatchReader:
             batch_size: Target number of patches per batch
 
         Yields:
-            (batch, coords, stats)
+            (batch, coords, desc)
         """
         rows_per_batch = max(1, batch_size // self.cols)
+        patches_per_batch = self.cols * rows_per_batch
 
         row = 0
         while row < self.rows:
             num_rows = min(rows_per_batch, self.rows - row)
             strip = self._read_row_strip(row, num_rows)
             patches, coords = self._strip_to_patches(strip, row)
-
-            total_patches = num_rows * self.cols
-            adopted = len(patches)
             row += num_rows
 
             # Always yield (empty batch has shape (0, H, W, 3))
             batch = np.array(patches) if patches else np.empty((0, self.patch_size, self.patch_size, 3), dtype=np.uint8)
-            yield batch, coords, BatchStats(row, total_patches, adopted)
+            desc = f"{len(patches)}/{patches_per_batch}"
+            yield batch, coords, desc
 
-    def iter_rows(self, rows_per_read: int = 1) -> Iterator[tuple[list[np.ndarray], list[tuple[int, int]], BatchStats]]:
+    def iter_rows(self, rows_per_read: int = 1) -> Iterator[tuple[list[np.ndarray], list[tuple[int, int]], str]]:
         """
         Iterate over rows, yielding patches for each chunk.
 
@@ -237,19 +224,19 @@ class WSIPatchReader:
             rows_per_read: Number of rows to read at once (default: 1)
 
         Yields:
-            (patches, coords, stats) - patches is list[np.ndarray], coords is list of (x, y), stats is BatchStats
+            (patches, coords, desc)
         """
+        patches_per_iter = self.cols * rows_per_read
+
         row = 0
         while row < self.rows:
             num_rows = min(rows_per_read, self.rows - row)
             strip = self._read_row_strip(row, num_rows)
             patches, coords = self._strip_to_patches(strip, row)
-
-            total_patches = num_rows * self.cols
-            adopted = len(patches)
             row += num_rows
 
-            yield patches, coords, BatchStats(row, total_patches, adopted)
+            desc = f"{len(patches)}/{patches_per_iter}"
+            yield patches, coords, desc
 
     def get_patch_at(self, col: int, row: int) -> np.ndarray:
         """
@@ -378,7 +365,7 @@ class CachePatchReader:
         """Calculate total number of batches for given batch_size."""
         return (self._patch_count + batch_size - 1) // batch_size
 
-    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], BatchStats]]:
+    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], str]]:
         """Iterate over patches in batches."""
         with h5py.File(self.h5_path, "r") as f:
             patches_ds = f[self.cache_patches]
@@ -390,12 +377,8 @@ class CachePatchReader:
                 batch = patches_ds[i0:i1]
                 batch_coords = [tuple(c) for c in coords[i0:i1]]
 
-                # For cache, patches are already white-filtered
-                # Calculate row from max y coordinate
-                max_row = max(c[1] for c in batch_coords) // self.patch_size + 1
-                adopted = len(batch_coords)
-
-                yield batch, batch_coords, BatchStats(max_row, adopted, adopted)
+                desc = f"{i0}-{i1}/{total}"
+                yield batch, batch_coords, desc
 
     def get_patch_by_coord(self, coord: tuple[int, int]) -> np.ndarray:
         """Get a single patch by pixel coordinate."""
@@ -452,7 +435,7 @@ class PrefetchReader:
         """Calculate total number of batches for given batch_size."""
         return self.reader.get_num_batches(batch_size)
 
-    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], BatchStats]]:
+    def iter_batches(self, batch_size: int) -> Iterator[tuple[np.ndarray, list[tuple[int, int]], str]]:
         """
         Iterate over patches in batches with prefetching.
 
@@ -460,7 +443,7 @@ class PrefetchReader:
             batch_size: Number of patches per batch
 
         Yields:
-            (batch, coords, stats) - batch is np.ndarray (B, H, W, 3), coords is list of (x, y), stats is BatchStats
+            (batch, coords, desc)
         """
         queue: Queue = Queue(maxsize=self.prefetch)
         sentinel = object()

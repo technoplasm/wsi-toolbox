@@ -72,17 +72,6 @@ class PreviewPatchInfo:
                     patch_size=int(grp.attrs.get("patch_size", patch_size)),
                 )
 
-        # Fall back to legacy structure
-        if "patches" in f and "coordinates" in f:
-            return cls(
-                patches_path="patches",
-                coords_path="coordinates",
-                cols=int(f["metadata/cols"][()]),
-                rows=int(f["metadata/rows"][()]),
-                patch_count=int(f["metadata/patch_count"][()]),
-                patch_size=int(f["metadata/patch_size"][()]),
-            )
-
         # Try model coordinates + WSI on-demand
         model_coords = f"{model_name}/coordinates"
         if model_coords in f:

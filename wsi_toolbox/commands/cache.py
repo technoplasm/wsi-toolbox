@@ -183,8 +183,8 @@ class CacheCommand:
 
                 progress = _progress(total=total_iters, desc="Reading patches")
 
-                for patches, coords, stats in reader.iter_rows(self.rows_per_read):
-                    progress.set_description(f"{stats.adopted}/{stats.total_patches}")
+                for patches, coords, desc in reader.iter_rows(self.rows_per_read):
+                    progress.set_description(f"Caching: {desc}")
                     progress.update(1)
 
                     if not patches:

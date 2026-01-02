@@ -60,16 +60,16 @@ class ShowCommand:
         print(f"{'=' * 60}\n")
 
     def _print_basic_info(self, f: h5py.File, result: ShowResult):
-        if "metadata/patch_count" in f:
-            result.patch_count = int(f["metadata/patch_count"][()])
-            result.patch_size = int(f["metadata/patch_size"][()])
+        if "patch_count" in f.attrs:
+            result.patch_count = int(f.attrs["patch_count"])
+            result.patch_size = int(f.attrs.get("patch_size", 0))
 
             print("Basic Info:")
             print(f"  Patch Count:  {result.patch_count}")
             print(f"  Patch Size:   {result.patch_size}px")
-            print(f"  Grid:         {f['metadata/cols'][()]} x {f['metadata/rows'][()]} (cols x rows)")
-            if "metadata/mpp" in f:
-                mpp = f["metadata/mpp"][()]
+            print(f"  Grid:         {f.attrs.get('cols', 0)} x {f.attrs.get('rows', 0)} (cols x rows)")
+            if "mpp" in f.attrs:
+                mpp = f.attrs["mpp"]
                 print(f"  MPP:          {mpp:.4f}" + (" (estimated)" if mpp > 0 else ""))
             print()
 

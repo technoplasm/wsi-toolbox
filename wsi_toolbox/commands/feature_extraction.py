@@ -150,9 +150,8 @@ class FeatureExtractionCommand:
             all_latent = [] if self.with_latent else None
             all_coords = []
 
-            for batch, coords, stats in reader.iter_batches(self.batch_size):
-                # Update progress first
-                progress.set_description(f"Processing patches:{stats.adopted}/{stats.total_patches}")
+            for batch, coords, desc in reader.iter_batches(self.batch_size):
+                progress.set_description(f"Processing patches: {desc}")
 
                 # Skip empty batches
                 if len(batch) == 0:
