@@ -484,7 +484,19 @@ class PyramidalTiffFile(PyramidalWSIFile):
         return self._normalize_color(region)
 
     def _normalize_color(self, region: np.ndarray) -> np.ndarray:
-        """Normalize color to RGB (H, W, 3)."""
+        """Normalize color to RGB (H, W, 3) with uint8 dtype."""
+        # Handle different dtypes - convert to uint8
+        if region.dtype == np.float32 or region.dtype == np.float64:
+            # Float data: assume 0-1 range, scale to 0-255
+            region = (region * 255).clip(0, 255).astype(np.uint8)
+        elif region.dtype == np.uint16:
+            # 16-bit data: scale to 0-255
+            region = (region / 256).clip(0, 255).astype(np.uint8)
+        elif region.dtype != np.uint8:
+            # Other types: try to convert
+            region = region.astype(np.uint8)
+
+        # Handle channel dimension
         if region.ndim == 2:  # Grayscale
             region = np.stack([region, region, region], axis=-1)
         elif region.shape[2] == 4:  # RGBA
