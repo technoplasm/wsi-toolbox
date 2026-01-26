@@ -76,7 +76,6 @@ class Task:
                 try:
                     self.append_log(f"Processing [{i + 1}/{len(self.wsi_files)}]: {wsi_file.name}")
 
-                    hdf5_tmp_path = wsi_file.with_suffix(".h5.tmp")
                     hdf5_file = wsi_file.with_suffix(".h5")
 
                     # HDF5変換（既存の場合はスキップ）
@@ -115,12 +114,12 @@ class Task:
                     umap_path = Path(f"{base}_umap.png")
                     if not umap_path.exists():
                         import h5py  # noqa: PLC0415
+
                         with h5py.File(hdf5_file, "r") as f:
                             umap_embs = f[f"{self.model_name}/default/umap"][:]
                             clusters = f[f"{self.model_name}/default/clusters"][:]
                         fig = plot_scatter_2d(
-                            [umap_embs], [clusters], [wsi_file.stem],
-                            title="UMAP", xlabel="UMAP 1", ylabel="UMAP 2"
+                            [umap_embs], [clusters], [wsi_file.stem], title="UMAP", xlabel="UMAP 1", ylabel="UMAP 2"
                         )
                         fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
                         self.append_log(f"UMAP plot completed. Saved to {os.path.basename(umap_path)}")

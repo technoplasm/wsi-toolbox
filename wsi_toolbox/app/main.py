@@ -337,7 +337,7 @@ def render_file_actions(selected_files: List[FileEntry]):
                 f = selected_files[0]
                 # 100MB以上は警告
                 if f.size > 100 * 1024 * 1024:
-                    st.warning(f"ファイルサイズが大きいです ({f.size // (1024*1024)}MB)")
+                    st.warning(f"ファイルサイズが大きいです ({f.size // (1024 * 1024)}MB)")
                 try:
                     with open(f.path, "rb") as fp:
                         file_data = fp.read()

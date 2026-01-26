@@ -111,9 +111,7 @@ class DziCommand:
         total_tiles = 0
         level_infos = {}
         for level in range(max_level, -1, -1):
-            level_width, level_height, cols, rows = wsi_file.get_dzi_level_info(
-                level, self.tile_size
-            )
+            level_width, level_height, cols, rows = wsi_file.get_dzi_level_info(level, self.tile_size)
             level_infos[level] = (level_width, level_height, cols, rows)
             total_tiles += cols * rows
 

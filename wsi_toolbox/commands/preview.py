@@ -42,9 +42,7 @@ class PreviewPatchInfo:
     use_wsi: bool = False
 
     @classmethod
-    def from_h5(
-        cls, f: h5py.File, h5_path: str, model_name: str, patch_size: int = 256
-    ) -> "PreviewPatchInfo":
+    def from_h5(cls, f: h5py.File, h5_path: str, model_name: str, patch_size: int = 256) -> "PreviewPatchInfo":
         """
         Detect and create patch source info from H5 file.
 
@@ -153,9 +151,7 @@ class BasePreviewCommand:
 
             if info.use_wsi:
                 # WSI on-demand: read each patch by coordinate
-                source = get_patch_reader(
-                    h5_path=hdf5_path, patch_size=self.patch_size, target_mpp=0.5
-                )
+                source = get_patch_reader(h5_path=hdf5_path, patch_size=self.patch_size, target_mpp=0.5)
                 coords = f[info.coords_path][:]
 
                 tq = _progress(range(patch_count), desc="Rendering patches")
@@ -163,9 +159,7 @@ class BasePreviewCommand:
                     coord = tuple(coords[i])
                     patch_array = source.get_patch_by_coord(coord)
                     frame = self._get_frame(i, data, f)
-                    self._render_patch(
-                        canvas, patch_array, coord, frame, S, src_patch_size, cols, rows
-                    )
+                    self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
             else:
                 # H5 cached: iterate by index
                 coords = f[info.coords_path][:]
@@ -174,9 +168,7 @@ class BasePreviewCommand:
                     coord = coords[i]
                     patch_array = f[info.patches_path][i]
                     frame = self._get_frame(i, data, f)
-                    self._render_patch(
-                        canvas, patch_array, coord, frame, S, src_patch_size, cols, rows
-                    )
+                    self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
 
         return canvas
 

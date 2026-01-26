@@ -45,8 +45,10 @@ from .commands import (
 )
 
 # Command result types
-from .commands.cache import CacheResult
-from .commands.cache import Wsi2HDF5Result  # Deprecated alias
+from .commands.cache import (
+    CacheResult,
+    Wsi2HDF5Result,  # Deprecated alias
+)
 from .commands.clustering import ClusteringResult
 from .commands.feature_extraction import FeatureExtractResult
 from .commands.pca import PCACommand

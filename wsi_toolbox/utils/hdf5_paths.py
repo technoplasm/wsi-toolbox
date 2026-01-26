@@ -263,8 +263,7 @@ def rename_namespace(
     """
     if not validate_namespace(new_namespace):
         raise ValueError(
-            f"Invalid new namespace '{new_namespace}'. "
-            f"Reserved names: {', '.join(sorted(RESERVED_NAMESPACES))}"
+            f"Invalid new namespace '{new_namespace}'. Reserved names: {', '.join(sorted(RESERVED_NAMESPACES))}"
         )
 
     renamed = []

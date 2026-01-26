@@ -11,6 +11,16 @@ WSIデータを様々な形で活用する
 
 - つねに　`uv` を使い、直接 `python` `pip` を使わない
 - `cli` は下記のように `pydantic-autocli` を使ってサブコマンドベースのコマンドラインツールとしている
+- **importは必ずファイル先頭に書く**。関数内でのimportは禁止
+- 未使用の変数・importは削除する
+
+### Lint
+
+
+```bash
+uv run ruff check wsi_toolbox/ --fix
+uv run ruff format wsi_toolbox/
+```
 
 ### AutoCLI の使い方
 

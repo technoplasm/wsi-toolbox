@@ -707,5 +707,3 @@ def find_best_level_for_mpp(wsi: "PyramidalWSIFile", target_mpp: float = 0.5) ->
     logger.debug(f"Selected level {best.index} (mpp={actual_mpp:.4f}) for target mpp={target_mpp}")
 
     return best
-
-

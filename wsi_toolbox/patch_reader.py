@@ -515,8 +515,7 @@ def get_patch_reader(
 
         if wsi_path is None:
             raise FileNotFoundError(
-                f"No cache found and could not find WSI for {h5_path}. "
-                "Either run 'cache' command or provide WSI path."
+                f"No cache found and could not find WSI for {h5_path}. Either run 'cache' command or provide WSI path."
             )
 
         logger.info(f"Using WSI: {wsi_path}")

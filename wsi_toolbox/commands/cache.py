@@ -5,6 +5,7 @@ Creates cache/{patch_size}/ structure with patches and coordinates.
 """
 
 import logging
+import os
 from typing import Callable
 
 import h5py
@@ -99,8 +100,6 @@ class CacheCommand:
         Returns:
             CacheResult: Metadata including mpp, patch_count, etc.
         """
-        import os
-
         # Check if file existed before (for cleanup decision)
         file_existed = os.path.exists(output_path)
 

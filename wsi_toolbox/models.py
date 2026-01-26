@@ -1,6 +1,5 @@
 import logging
 
-
 MODEL_NAMES = ["uni", "gigapath", "virchow2"]
 
 # Suppress noisy logs from huggingface_hub and timm

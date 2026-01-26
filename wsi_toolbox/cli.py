@@ -11,10 +11,10 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from pydantic_autocli import AutoCLI, param
 from rich.console import Console
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Prompt
 
 from . import commands, common
-from .utils.hdf5_paths import build_cluster_path, list_namespaces, remove_namespace, rename_namespace
+from .utils.hdf5_paths import build_cluster_path, list_namespaces
 from .utils.plot import plot_scatter_2d, plot_violin_1d
 from .utils.seed import fix_global_seed, get_global_seed
 from .utils.white import create_white_detector
@@ -135,7 +135,6 @@ class CLI(AutoCLI):
             format="[wsi-toolbox] %(levelname)s - %(message)s",
             level=logging.DEBUG if a.verbose else logging.INFO,
         )
-
 
     def _parse_white_detect(self, detect_white: list[str]) -> tuple[str, float | None]:
         """
@@ -715,8 +714,16 @@ def migrate_h5(input_path: str) -> bool:
         f.move("coordinates", f"{cache_group}/coordinates")
 
         # Copy metadata to attrs
-        metadata_keys = ["mpp", "patch_size", "cols", "rows", "patch_count",
-                        "original_mpp", "original_width", "original_height"]
+        metadata_keys = [
+            "mpp",
+            "patch_size",
+            "cols",
+            "rows",
+            "patch_count",
+            "original_mpp",
+            "original_width",
+            "original_height",
+        ]
         for key in metadata_keys:
             meta_path = f"metadata/{key}"
             if meta_path in f:
