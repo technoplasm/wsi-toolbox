@@ -319,6 +319,97 @@ def render_file_list(files: List[FileEntry]) -> List[FileEntry]:
     return selected_files
 
 
+def render_file_actions(selected_files: List[FileEntry]):
+    """選択されたファイルの操作ボタンを表示"""
+    import shutil
+    import zipfile
+    from io import BytesIO
+
+    with st.expander("ファイル操作", expanded=False):
+        col1, col2 = st.columns(2)
+
+        # ダウンロードボタン
+        with col1:
+            has_directory = any(f.type == FileType.DIRECTORY for f in selected_files)
+
+            if len(selected_files) == 1 and not has_directory:
+                # 単一ファイル: 直接ダウンロード
+                f = selected_files[0]
+                # 100MB以上は警告
+                if f.size > 100 * 1024 * 1024:
+                    st.warning(f"ファイルサイズが大きいです ({f.size // (1024*1024)}MB)")
+                try:
+                    with open(f.path, "rb") as fp:
+                        file_data = fp.read()
+                    st.download_button(
+                        label="ダウンロード",
+                        data=file_data,
+                        file_name=os.path.basename(f.path),
+                        mime="application/octet-stream",
+                        disabled=st.session_state.locked,
+                    )
+                except Exception as e:
+                    st.error(f"ファイル読み込みエラー: {e}")
+            elif len(selected_files) > 1 or has_directory:
+                # 複数ファイルまたはディレクトリ: ZIP化してダウンロード
+                if st.button("ZIPでダウンロード", disabled=st.session_state.locked):
+                    buffer = BytesIO()
+                    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                        for f in selected_files:
+                            if f.type == FileType.DIRECTORY:
+                                # ディレクトリは再帰的に追加
+                                for root, dirs, files in os.walk(f.path):
+                                    for file in files:
+                                        file_path = os.path.join(root, file)
+                                        arcname = os.path.relpath(file_path, os.path.dirname(f.path))
+                                        zf.write(file_path, arcname)
+                            else:
+                                zf.write(f.path, os.path.basename(f.path))
+                    buffer.seek(0)
+                    st.download_button(
+                        label="ZIPをダウンロード",
+                        data=buffer,
+                        file_name="download.zip",
+                        mime="application/zip",
+                        disabled=st.session_state.locked,
+                    )
+
+        # 削除ボタン
+        with col2:
+            file_names = ", ".join([os.path.basename(f.path) for f in selected_files[:3]])
+            if len(selected_files) > 3:
+                file_names += f" 他{len(selected_files) - 3}件"
+
+            delete_key = f"delete_confirm_{hash(tuple(f.path for f in selected_files))}"
+            if delete_key not in st.session_state:
+                st.session_state[delete_key] = False
+
+            if not st.session_state[delete_key]:
+                if st.button("削除", disabled=st.session_state.locked, type="secondary"):
+                    st.session_state[delete_key] = True
+                    st.rerun()
+            else:
+                st.warning(f"本当に削除しますか？\n{file_names}")
+                col_yes, col_no = st.columns(2)
+                with col_yes:
+                    if st.button("はい、削除する", type="primary", disabled=st.session_state.locked):
+                        for f in selected_files:
+                            try:
+                                if f.type == FileType.DIRECTORY:
+                                    shutil.rmtree(f.path)
+                                else:
+                                    os.remove(f.path)
+                            except Exception as e:
+                                st.error(f"削除エラー: {f.name} - {e}")
+                        st.session_state[delete_key] = False
+                        st.cache_data.clear()
+                        st.rerun()
+                with col_no:
+                    if st.button("キャンセル"):
+                        st.session_state[delete_key] = False
+                        st.rerun()
+
+
 def recognize_file_type(selected_files: List[FileEntry]) -> FileType:
     if len(selected_files) == 0:
         return FileType.EMPTY
@@ -357,6 +448,10 @@ def main():
     multi = len(selected_files) > 1
     file_type = recognize_file_type(selected_files)
 
+    # ファイル操作ボタン（選択時に表示）
+    if selected_files and file_type != FileType.EMPTY:
+        render_file_actions(selected_files)
+
     if file_type == FileType.WSI:
         render_mode_wsi(files, selected_files)
     elif file_type == FileType.HDF5:
@@ -367,6 +462,24 @@ def main():
             st.image(img)
     elif file_type == FileType.EMPTY:
         st.write("ファイル一覧の左の列のチェックボックスからファイルを選択してください。")
+
+        st.subheader("ファイルをアップロード", divider=True)
+        uploaded_files = st.file_uploader(
+            "ファイルを選択またはドラッグ＆ドロップ",
+            accept_multiple_files=True,
+            disabled=st.session_state.locked,
+        )
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                save_path = os.path.join(current_dir_abs, uploaded_file.name)
+                # 同名ファイルが存在する場合は上書き確認
+                if os.path.exists(save_path):
+                    st.warning(f"{uploaded_file.name} は既に存在します。上書きされます。")
+                with open(save_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                st.success(f"{uploaded_file.name} をアップロードしました。")
+            st.cache_data.clear()
+            st.rerun()
     elif file_type == FileType.DIRECTORY:
         if multi:
             st.warning("複数フォルダが選択されました。")
