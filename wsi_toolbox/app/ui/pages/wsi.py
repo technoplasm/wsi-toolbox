@@ -100,20 +100,20 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     base, ext = os.path.splitext(f.path)
                     umap_path = f"{base}_umap.png"
                     thumb_path = f"{base}_thumb.jpg"
-                    with st.spinner("UMAP計算中...", show_time=True):
-                        set_default_model_preset(st.session_state.model)
-                        umap_cmd = commands.UmapCommand()
-                        umap_result = umap_cmd([hdf5_path])
 
-                    with st.spinner("クラスタリング中...", show_time=True):
-                        cluster_cmd = commands.ClusteringCommand(
-                            resolution=DEFAULT_CLUSTER_RESOLUTION, namespace="default", source="features"
+                    with st.spinner("UMAP + クラスタリング中...", show_time=True):
+                        set_default_model_preset(st.session_state.model)
+                        combined_cmd = commands.ClusterWithUmapCommand(
+                            umap_cmd=commands.UmapCommand(),
+                            cluster_cmd=commands.ClusteringCommand(
+                                resolution=DEFAULT_CLUSTER_RESOLUTION, namespace="default"
+                            ),
                         )
-                        cluster_result = cluster_cmd([hdf5_path])
+                        result = combined_cmd([hdf5_path])
 
                         with h5py.File(hdf5_path, "r") as hf:
-                            umap_embs = hf[umap_result.target_path][:]
-                            clusters = hf[cluster_result.target_path][:]
+                            umap_embs = hf[result.umap_target_path][:]
+                            clusters = hf[result.cluster_target_path][:]
                             valid_mask = ~np.isnan(umap_embs[:, 0]) & (clusters >= 0)
                             umap_embs = umap_embs[valid_mask]
                             clusters = clusters[valid_mask]

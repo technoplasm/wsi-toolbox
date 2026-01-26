@@ -98,13 +98,6 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
     overwrite = form.checkbox(
         "計算済みクラスタ結果を再利用しない（再計算を行う）", value=False, disabled=st.session_state.locked
     )
-    source = form.radio(
-        "クラスタリングのデータソース",
-        options=["features", "umap"],
-        index=0,
-        disabled=st.session_state.locked,
-        help="features: 特徴量ベース（推奨）, umap: UMAP座標ベース（事前にUMAP計算が必要）",
-    )
     rotate_preview = form.checkbox(
         "プレビュー時に回転させる（顕微鏡視野にあわせる）",
         value=True,
@@ -188,36 +181,36 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
 
         set_default_model_preset(st.session_state.model)
 
-        # Compute UMAP if needed
+        # UMAP + Clustering with unified progress
         cmd_namespace = None if namespace == default_namespace else namespace
         t = "と".join([f.name for f in selected_files])
-        with st.spinner(f"{t}のUMAP計算中...", show_time=True):
-            umap_cmd = commands.UmapCommand(
-                namespace=cmd_namespace,
-                parent_filters=[subcluster_filter] if subcluster_filter else [],
-                overwrite=overwrite,
-            )
-            umap_result = umap_cmd([f.path for f in selected_files])
 
-        # Clustering
+        umap_cmd = commands.UmapCommand(
+            namespace=cmd_namespace,
+            parent_filters=[subcluster_filter] if subcluster_filter else [],
+            overwrite=overwrite,
+        )
         cluster_cmd = commands.ClusteringCommand(
             resolution=resolution,
             namespace=cmd_namespace,
             parent_filters=[subcluster_filter] if subcluster_filter else [],
-            source=source,
             overwrite=overwrite,
         )
+        combined_cmd = commands.ClusterWithUmapCommand(
+            umap_cmd=umap_cmd,
+            cluster_cmd=cluster_cmd,
+        )
 
-        with st.spinner(f"{t}をクラスタリング中...", show_time=True):
+        with st.spinner(f"{t}のUMAP + クラスタリング中...", show_time=True):
             base = P(selected_files[0].path).stem if namespace == "default" else ""
             suffix = f"_{subcluster_label}" if subcluster_filter else ""
             umap_path = build_output_path(selected_files[0].path, namespace, f"{base}{suffix}_umap.png")
 
-            cluster_result = cluster_cmd([f.path for f in selected_files])
+            result = combined_cmd([f.path for f in selected_files])
 
             with h5py.File(selected_files[0].path, "r") as hf:
-                umap_embs = hf[umap_result.target_path][:]
-                clusters = hf[cluster_result.target_path][:]
+                umap_embs = hf[result.umap_target_path][:]
+                clusters = hf[result.cluster_target_path][:]
                 valid_mask = ~np.isnan(umap_embs[:, 0]) & (clusters >= 0)
                 umap_embs = umap_embs[valid_mask]
                 clusters = clusters[valid_mask]

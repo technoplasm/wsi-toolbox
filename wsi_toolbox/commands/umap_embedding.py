@@ -9,6 +9,7 @@ import numpy as np
 from pydantic import BaseModel
 
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
+from ..utils.progress import BaseProgress
 from . import _get, _progress
 from .data_loader import MultipleContext
 
@@ -84,8 +85,14 @@ class UmapCommand:
         self.hdf5_paths = []
         self.umap_embeddings = None
 
-    def __call__(self, hdf5_paths: str | list[str]) -> UmapResult:
-        """Execute UMAP embedding"""
+    def __call__(self, hdf5_paths: str | list[str], progress: BaseProgress | None = None) -> UmapResult:
+        """
+        Execute UMAP embedding
+
+        Args:
+            hdf5_paths: Single HDF5 path or list of paths
+            progress: Optional external progress bar. If None, creates own progress bar.
+        """
         import umap  # noqa: PLC0415 - lazy load, umap is slow to import
 
         # Normalize to list
@@ -117,8 +124,15 @@ class UmapCommand:
                         skipped=True,
                     )
 
-        # Execute with progress tracking
-        with _progress(total=3, desc="UMAP") as pbar:
+        # Progress bar handling: use external if provided, otherwise create own
+        own_progress = progress is None
+        if own_progress:
+            pbar = _progress(total=3, desc="UMAP")
+            pbar.__enter__()
+        else:
+            pbar = progress
+
+        try:
             # Load features
             pbar.set_description("Loading features")
             ctx = MultipleContext(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
@@ -137,9 +151,12 @@ class UmapCommand:
             pbar.update(1)
 
             # Write results
-            pbar.set_description("Writing results")
+            pbar.set_description("Writing UMAP results")
             self._write_results(ctx, target_path)
             pbar.update(1)
+        finally:
+            if own_progress:
+                pbar.__exit__(None, None, None)
 
         logger.debug(f"Computing UMAP: {len(features)} samples → {self.n_components}D")
         logger.info(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")

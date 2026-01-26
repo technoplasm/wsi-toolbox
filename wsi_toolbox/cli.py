@@ -259,7 +259,6 @@ class CLI(AutoCLI):
         namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
         filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
         resolution: float = Field(1.0, description="Clustering resolution")
-        source: str = Field("features", choices=["features", "umap"], description="Data source")
         no_sort: bool = Field(False, l="--no-sort", description="Disable cluster ID reordering by PCA")
         overwrite: bool = Field(False, s="-O")
 
@@ -272,7 +271,6 @@ class CLI(AutoCLI):
             resolution=a.resolution,
             namespace=a.namespace if a.namespace else None,
             parent_filters=parent_filters,
-            source=a.source,
             sort_clusters=not a.no_sort,
             overwrite=a.overwrite,
         )

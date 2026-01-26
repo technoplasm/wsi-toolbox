@@ -8,6 +8,8 @@ from .cache import CacheResult as CacheResult
 from .cache import Wsi2HDF5Command as Wsi2HDF5Command
 from .cache import Wsi2HDF5Result as Wsi2HDF5Result
 from .clustering import ClusteringCommand as ClusteringCommand
+from .clustering import ClusterWithUmapCommand as ClusterWithUmapCommand
+from .clustering import ClusterWithUmapResult as ClusterWithUmapResult
 from .dzi import DziCommand as DziCommand
 from .feature_extraction import FeatureExtractionCommand as FeatureExtractionCommand
 from .pca import PCACommand as PCACommand
