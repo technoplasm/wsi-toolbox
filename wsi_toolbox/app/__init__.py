@@ -1,0 +1,3 @@
+"""
+WSI Toolbox Streamlit Application
+"""

@@ -2,28 +2,37 @@ import os
 import re
 import sys
 import warnings
-from datetime import datetime
 from pathlib import Path as P
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import h5py
 import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from pydantic import BaseModel
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
 torch.classes.__path__ = []
 import streamlit as st
 
-sys.path.append(str(P(__file__).parent))
-__package__ = "wsi_toolbox"
+sys.path.append(str(P(__file__).parent.parent))
+__package__ = "wsi_toolbox.app"
 
-from . import commands
-from .common import set_default_device, set_default_model_preset, set_default_progress
-from .utils.plot import plot_scatter_2d
-from .utils.st import st_horizontal
+from .. import commands
+from ..common import set_default_device, set_default_model_preset, set_default_progress
+from ..utils.hdf5_paths import list_namespaces
+from ..utils.plot import plot_scatter_2d
+from ..utils.st import st_horizontal
+from .ui.models import (
+    FILE_TYPE_CONFIG,
+    STATUS_BLOCKED,
+    STATUS_READY,
+    STATUS_UNSUPPORTED,
+    FileEntry,
+    FileType,
+    HDF5Detail,
+    get_file_type,
+)
 
 # Suppress warnings
 # sklearn 1.6+ internal deprecation warning
@@ -59,67 +68,6 @@ DEFAULT_CLUSTER_RESOLUTION = 1.0
 MAX_CLUSTER_RESOLUTION = 3.0
 MIN_CLUSTER_RESOLUTION = 0.0
 CLUSTER_RESOLUTION_STEP = 0.1
-
-
-# File type definitions
-class FileType:
-    EMPTY = "empty"
-    MIX = "mix"
-    DIRECTORY = "directory"
-    WSI = "wsi"
-    HDF5 = "hdf5"
-    IMAGE = "image"
-    OTHER = "other"
-
-
-FILE_TYPE_CONFIG = {
-    # FileType.EMPTY: {
-    #     'label': '空',
-    #     'icon': '🔳',
-    # },
-    FileType.DIRECTORY: {
-        "label": "フォルダ",
-        "icon": "📁",
-    },
-    FileType.WSI: {
-        "label": "WSI",
-        "icon": "🔬",
-        "extensions": {".ndpi", ".svs"},
-    },
-    FileType.HDF5: {
-        "label": "HDF5",
-        "icon": "📊",
-        "extensions": {".h5"},
-    },
-    FileType.IMAGE: {
-        "label": "画像",
-        "icon": "🖼️",
-        "extensions": {".bmp", ".gif", ".icns", ".ico", ".jpg", ".jpeg", ".png", ".tif", ".tiff"},
-    },
-    FileType.OTHER: {
-        "label": "その他",
-        "icon": "📄",
-    },
-}
-
-
-def get_file_type(path: P) -> str:
-    """ファイルパスからファイルタイプを判定する"""
-    if path.is_dir():
-        return FileType.DIRECTORY
-
-    ext = path.suffix.lower()
-    for type_key, config in FILE_TYPE_CONFIG.items():
-        if "extensions" in config and ext in config["extensions"]:
-            return type_key
-
-    return FileType.OTHER
-
-
-def get_file_type_display(type_key: str) -> str:
-    """ファイルタイプの表示用ラベルとアイコンを取得する"""
-    config = FILE_TYPE_CONFIG.get(type_key, FILE_TYPE_CONFIG[FileType.OTHER])
-    return f"{config['icon']} {config['label']}"
 
 
 def add_beforeunload_js():
@@ -159,10 +107,6 @@ def unlock():
 
 
 st.set_page_config(page_title="WSI Analysis System", page_icon="🔬", layout="wide")
-
-STATUS_READY = 0
-STATUS_BLOCKED = 1
-STATUS_UNSUPPORTED = 2
 
 
 def render_reset_button():
@@ -216,38 +160,6 @@ def render_navigation(current_dir_abs, default_root_abs):
             st.rerun()
 
 
-class HDF5Detail(BaseModel):
-    status: int
-    has_features: bool
-    cluster_names: List[str]
-    patch_count: int
-    mpp: float
-    cols: int
-    rows: int
-    desc: Optional[str] = None
-    cluster_ids_by_name: Dict[str, List[int]]
-
-
-class FileEntry(BaseModel):
-    name: str
-    path: str
-    type: str
-    size: int
-    modified: datetime
-    detail: Optional[HDF5Detail] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """AG Grid用の辞書に変換"""
-        return {
-            "name": self.name,
-            "path": self.path,
-            "type": self.type,
-            "size": self.size,
-            "modified": self.modified,
-            "detail": self.detail.model_dump() if self.detail else None,
-        }
-
-
 @st.cache_data(ttl=60)
 def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[HDF5Detail]:
     """
@@ -258,8 +170,6 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
         model_name: モデル名
         _mtime: ファイル更新時刻（キャッシュ無効化用）
     """
-    from .utils.hdf5_paths import list_namespaces
-
     try:
         with h5py.File(hdf_path, "r") as f:
             # Check for patch_count in file attrs (new format)
@@ -457,7 +367,6 @@ def render_file_list(files: List[FileEntry]) -> List[FileEntry]:
 
     # 内部カラムを非表示
     gb.configure_column("path", hide=True)
-    gb.configure_column("detail", hide=True)
 
     # 選択設定
     gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True, pre_selected_rows=[])
@@ -672,7 +581,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
     )
 
     # 名前空間（単一ファイル: default, 複数ファイル: xx+yy+... がデフォルト）
-    from .utils.hdf5_paths import build_namespace
+    from ..utils.hdf5_paths import build_namespace
 
     default_namespace = build_namespace([f.path for f in selected_files])
     namespace = default_namespace

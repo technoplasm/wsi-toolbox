@@ -89,7 +89,7 @@ requires-dist = ["torch", "einops"]
 
 [tool.taskipy.tasks]
 cli = "python -m wsi_toolbox.cli"
-app = "streamlit run wsi_toolbox/app.py --server.address 0.0.0.0 --server.port ${PORT:-8501}"
+app = "streamlit run wsi_toolbox/app/main.py --server.address 0.0.0.0 --server.port ${PORT:-8501}"
 watcher = "python -m wsi_toolbox.watcher"
 clean = "rm -rf build/ dist/ *.egg-info/ __pycache__/ && find . -name '*.pyc' -delete && find . -name '__pycache__' -delete"
 build = "python -m build"
@@ -165,7 +165,7 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 # Optional/heavy imports that need lazy loading
-"wsi_toolbox/app.py" = ["E402", "PLC0415"]  # Streamlit app with special import patterns
+"wsi_toolbox/app/main.py" = ["E402", "PLC0415"]  # Streamlit app with special import patterns
 "wsi_toolbox/utils/progress.py" = ["PLC0415"]  # Optional dependency (streamlit) lazy loading
 "wsi_toolbox/commands/umap_embedding.py" = ["PLC0415"]  # Heavy import (umap) lazy loading
 
