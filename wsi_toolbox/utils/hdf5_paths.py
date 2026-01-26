@@ -3,6 +3,7 @@ HDF5 path utilities for consistent namespace and filter handling
 """
 
 from pathlib import Path
+from typing import Any
 
 import h5py
 
@@ -345,3 +346,26 @@ def remove_namespace(
         raise ValueError(f"Namespace '{namespace}' not found in {hdf5_path}")
 
     return removed
+
+
+def write_root_metadata(
+    f: h5py.File,
+    metadata: dict[str, Any],
+    patch_count: int,
+    overwrite: bool = False,
+) -> None:
+    """
+    Write WSI/patch extraction metadata to root level.
+
+    Args:
+        f: HDF5 file handle
+        metadata: PatchReader metadata (mpp, target_mpp, level_used, patch_size, cols, rows)
+        patch_count: Number of valid patches
+        overwrite: Whether to overwrite existing values (default: False)
+    """
+    if overwrite or "patch_count" not in f.attrs:
+        f.attrs["mpp"] = metadata.get("mpp", 0)
+        f.attrs["patch_size"] = metadata.get("patch_size", 256)
+        f.attrs["cols"] = metadata.get("cols", 0)
+        f.attrs["rows"] = metadata.get("rows", 0)
+        f.attrs["patch_count"] = patch_count

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from ..patch_reader import WSIPatchReader
 from ..utils import safe_del
+from ..utils.hdf5_paths import write_root_metadata
 from ..utils.white import create_white_detector
 from ..wsi_files import create_wsi_file
 from . import _progress
@@ -215,11 +216,7 @@ class CacheCommand:
                 cache_grp.attrs["patch_count"] = patch_count
 
                 # Legacy compatibility: also write to root attrs
-                f.attrs["mpp"] = reader.actual_mpp
-                f.attrs["patch_size"] = self.patch_size
-                f.attrs["cols"] = reader.cols
-                f.attrs["rows"] = reader.rows
-                f.attrs["patch_count"] = patch_count
+                write_root_metadata(f, reader.metadata, patch_count, overwrite=True)
 
                 # Mark writing complete
                 ds_patches.attrs["writing"] = False

@@ -21,7 +21,7 @@ sys.path.append(str(P(__file__).parent))
 __package__ = "wsi_toolbox"
 
 from . import commands
-from .common import set_default_device, set_default_progress
+from .common import set_default_device, set_default_model_preset, set_default_progress
 from .utils.plot import plot_scatter_2d
 from .utils.st import st_horizontal
 
@@ -263,7 +263,30 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
     try:
         with h5py.File(hdf_path, "r") as f:
             # Check for patch_count in file attrs (new format)
-            if "patch_count" not in f.attrs:
+            # Fallback to model group if root attrs don't have patch_count
+            patch_count = 0
+            mpp = 0.0
+            cols = 0
+            rows = 0
+
+            if "patch_count" in f.attrs:
+                patch_count = int(f.attrs["patch_count"])
+                mpp = float(f.attrs.get("mpp", 0))
+                cols = int(f.attrs.get("cols", 0))
+                rows = int(f.attrs.get("rows", 0))
+            else:
+                # Fallback: try to get metadata from model group
+                for model_key in ["uni", "gigapath", "virchow2"]:
+                    if f"{model_key}/features" in f:
+                        model_grp = f[model_key]
+                        if "patch_count" in model_grp.attrs:
+                            patch_count = int(model_grp.attrs["patch_count"])
+                            mpp = float(model_grp.attrs.get("mpp", 0))
+                            cols = int(model_grp.attrs.get("cols", 0))
+                            rows = int(model_grp.attrs.get("rows", 0))
+                            break
+
+            if patch_count == 0:
                 return HDF5Detail(
                     status=STATUS_UNSUPPORTED,
                     has_features=False,
@@ -274,7 +297,6 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
                     rows=0,
                     cluster_ids_by_name={},
                 )
-            patch_count = int(f.attrs["patch_count"])
             has_features = (f"{model_name}/features" in f) and (len(f[f"{model_name}/features"]) == patch_count)
             cluster_names = ["未施行"]
             if model_name in f:
@@ -302,9 +324,9 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
                 has_features=has_features,
                 cluster_names=cluster_names,
                 patch_count=patch_count,
-                mpp=float(f.attrs.get("mpp", 0)),
-                cols=int(f.attrs.get("cols", 0)),
-                rows=int(f.attrs.get("rows", 0)),
+                mpp=mpp,
+                cols=cols,
+                rows=rows,
                 cluster_ids_by_name=cluster_ids_by_name,
             )
     except BlockingIOError:
@@ -476,6 +498,12 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
         value=True,
         disabled=st.session_state.locked,
     )
+    cache_patches = st.checkbox(
+        "パッチデータをHDF5ファイルにキャッシュする",
+        value=False,
+        disabled=st.session_state.locked,
+        help="オンにすると処理は速くなりますが、ファイルサイズが大きくなります",
+    )
 
     hdf5_paths = []
     if st.button("処理を実行", disabled=st.session_state.locked, on_click=lock):
@@ -491,29 +519,33 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
 
                 # 既存のHDF5ファイルを検索
                 matched_h5_entry = next((f for f in files if f.path == hdf5_path), None)
-                if (
-                    matched_h5_entry is not None
-                    and matched_h5_entry.detail
-                    and matched_h5_entry.detail.status == STATUS_READY
-                ):
-                    st.write(
-                        f"すでにHDF5ファイル（{os.path.basename(hdf5_path)}）が存在しているので分割処理をスキップしました。"
-                    )
-                else:
-                    with st.spinner("WSIを分割しHDF5ファイルを構成しています...", show_time=True):
-                        # Use new command pattern
-                        cmd = commands.CacheCommand(patch_size=PATCH_SIZE)
-                        _ = cmd(wsi_path, hdf5_path)
-                    st.write("HDF5ファイルに変換完了。")
+                if cache_patches:
+                    # キャッシュオプションがオンの場合のみCacheCommandを実行
+                    if (
+                        matched_h5_entry is not None
+                        and matched_h5_entry.detail
+                        and matched_h5_entry.detail.status == STATUS_READY
+                    ):
+                        st.write(
+                            f"すでにHDF5ファイル（{os.path.basename(hdf5_path)}）が存在しているので分割処理をスキップしました。"
+                        )
+                    else:
+                        with st.spinner("WSIを分割しHDF5ファイルを構成しています...", show_time=True):
+                            # Use new command pattern
+                            cmd = commands.CacheCommand(patch_size=PATCH_SIZE)
+                            _ = cmd(wsi_path, hdf5_path)
+                        st.write("HDF5ファイルにキャッシュ完了。")
+                # else: キャッシュしない場合はFeatureExtractionCommandがWSIから直接読む
 
                 if matched_h5_entry is not None and matched_h5_entry.detail and matched_h5_entry.detail.has_features:
                     st.write(f"すでに{model_label}特徴量を抽出済みなので処理をスキップしました。")
                 else:
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                         # Use new command pattern
-                        commands.set_default_model_preset(st.session_state.model)
+                        set_default_model_preset(st.session_state.model)
                         cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
-                        _ = cmd(hdf5_path)
+                        # wsi_pathを渡す（キャッシュがない場合にWSIから直接パッチを読むため）
+                        _ = cmd(hdf5_path, wsi_path=wsi_path)
                     st.write(f"{model_label}特徴量の抽出完了。")
                 hdf5_paths.append(hdf5_path)
                 if i < len(selected_files) - 1:
@@ -529,7 +561,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     thumb_path = f"{base}_thumb.jpg"
                     with st.spinner("UMAP計算中...", show_time=True):
                         # Compute UMAP first
-                        commands.set_default_model_preset(st.session_state.model)
+                        set_default_model_preset(st.session_state.model)
                         umap_cmd = commands.UmapCommand()
                         umap_result = umap_cmd([hdf5_path])
 
@@ -563,7 +595,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
 
                     with st.spinner("オーバービュー生成中", show_time=True):
                         # Use new command pattern
-                        commands.set_default_model_preset(st.session_state.model)
+                        set_default_model_preset(st.session_state.model)
                         preview_cmd = commands.PreviewClustersCommand(size=THUMBNAIL_SIZE, rotate=rotate_preview)
                         img = preview_cmd(hdf5_path, namespace="default")
                         img.save(thumb_path)
@@ -712,14 +744,14 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
             if not f.detail or not f.detail.has_features:
                 st.write(f"{f.name}の特徴量が未抽出なので、抽出を行います。")
                 # Use new command pattern
-                commands.set_default_model_preset(st.session_state.model)
+                set_default_model_preset(st.session_state.model)
                 with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                     cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
                     _ = cmd(f.path)
                 st.write(f"{model_label}特徴量の抽出完了。")
 
         # Use new command pattern
-        commands.set_default_model_preset(st.session_state.model)
+        set_default_model_preset(st.session_state.model)
 
         # Compute UMAP if needed
         # namespace=None lets the command auto-generate if it contains '+'
@@ -782,7 +814,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
         with st.spinner("オーバービュー生成中...", show_time=True):
             for f in selected_files:
                 # Use new command pattern
-                commands.set_default_model_preset(st.session_state.model)
+                set_default_model_preset(st.session_state.model)
                 preview_cmd = commands.PreviewClustersCommand(size=THUMBNAIL_SIZE, rotate=rotate_preview)
 
                 p = P(f.path)

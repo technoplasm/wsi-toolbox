@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from ..common import create_default_model
 from ..patch_reader import get_patch_reader
 from ..utils import safe_del
+from ..utils.hdf5_paths import write_root_metadata
 from ..utils.white import create_white_detector
 from . import _get, _progress
 
@@ -221,6 +222,9 @@ class FeatureExtractionCommand:
                 for key, value in reader.metadata.items():
                     grp.attrs[key] = value
                 grp.attrs["patch_count"] = patch_count
+
+                # Also write to root attrs (if not already present)
+                write_root_metadata(f, reader.metadata, patch_count)
 
             done = True
             logger.info(f"Wrote {self.feature_name}")
