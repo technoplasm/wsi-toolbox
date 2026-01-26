@@ -2,6 +2,7 @@
 headless = true
 fileWatcherType = "none"
 runOnSave = false
+maxUploadSize = 10240  # 10GB
 
 [browser]
 gatherUsageStats = false
