@@ -391,20 +391,29 @@ class PyramidalTiffFile(PyramidalWSIFile):
         """Build pyramid level information from TIFF pages."""
         levels = []
         base_width = None
+        base_aspect = None
+        prev_downsample = 1.0
 
         for i, page in enumerate(self.tif.pages):
-            # Skip non-image pages (thumbnails, etc.)
             if page.shape[0] < 100 or page.shape[1] < 100:
+                continue
+            if len(page.shape) < 3 or page.shape[2] != 3:
                 continue
 
             h, w = page.shape[0], page.shape[1]
+            aspect = w / h
 
             if base_width is None:
                 base_width = w
+                base_aspect = aspect
                 downsample = 1.0
             else:
                 downsample = base_width / w
+                # Stop if aspect ratio differs or downsample jumps too much
+                if abs(aspect - base_aspect) > 0.1 or downsample / prev_downsample > 3.0:
+                    break
 
+            prev_downsample = downsample
             levels.append(NativeLevel(index=i, width=w, height=h, downsample=downsample))
 
         return levels
