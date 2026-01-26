@@ -7,7 +7,7 @@ name = "wsi-toolbox"
 version = "0.3.0"
 description = "A comprehensive toolkit for Whole Slide Image processing, feature extraction, and clustering analysis"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.12.*"
 license = {file = "LICENSE"}
 authors = [
     {name = "Ken Enda", email = "ken@endaaman.com"},
