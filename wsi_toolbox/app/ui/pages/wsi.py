@@ -3,6 +3,7 @@ WSI processing page
 """
 
 import os
+import time
 from pathlib import Path as P
 from typing import List
 
@@ -30,7 +31,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
     model_label = MODEL_LABELS[st.session_state.model]
 
     st.subheader("WSIをパッチ分割し特徴量を抽出する", divider=True)
-    st.write(f"分割したパッチをHDF5に保存し、{model_label}特徴量抽出を実行します。それぞれ5分、20分程度かかります。")
+    st.write(f"WSIから{model_label}特徴量を抽出します。処理時間はファイルサイズ1GBあたり約1分です。")
 
     do_clustering = st.checkbox("クラスタリングも実行する", value=True, disabled=st.session_state.locked)
     rotate_preview = st.checkbox(
@@ -78,12 +79,15 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                 if matched_h5_entry is not None and matched_h5_entry.detail and matched_h5_entry.detail.has_features:
                     st.write(f"すでに{model_label}特徴量を抽出済みなので処理をスキップしました。")
                 else:
+                    start_time = time.time()
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                         set_default_model_preset(st.session_state.model)
                         cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
                         # wsi_pathを渡す（キャッシュがない場合にWSIから直接パッチを読むため）
                         _ = cmd(hdf5_path, wsi_path=wsi_path)
-                    st.write(f"{model_label}特徴量の抽出完了。")
+                    elapsed = time.time() - start_time
+                    minutes, seconds = divmod(int(elapsed), 60)
+                    st.write(f"{model_label}特徴量の抽出完了（{minutes}分{seconds}秒）")
                 hdf5_paths.append(hdf5_path)
                 if i < len(selected_files) - 1:
                     st.divider()
