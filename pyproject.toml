@@ -75,8 +75,13 @@ no-build-isolation-package = ["flash-attn"]
 preview = true
 
 [tool.uv.sources]
-torch = { index = "pytorch" }
-torchvision = { index = "pytorch" }
+# x86_64 Linux: use CUDA 12.1 wheels, otherwise: use default PyPI (CPU)
+torch = [
+    { index = "pytorch", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+torchvision = [
+    { index = "pytorch", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["setuptools", "wheel", "packaging", "ninja", "torch"]
