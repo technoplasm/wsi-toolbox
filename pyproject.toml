@@ -22,7 +22,6 @@ classifiers = [
 ]
 dependencies = [
     "h5py>=3.13.0",
-    "hdbscan>=0.8.40",
     "imagecodecs>=2024.12.30",
     "joblib>=1.4.2",
     "leidenalg>=0.10.2",
@@ -147,7 +146,9 @@ build = [
     "build>=1.0.0",
     "twine>=5.0.0",
 ]
+
 # Slide-level encoding (CLI only) - uv-only feature, not uploaded to PyPI
+# $ uv sync --group gigapath
 gigapath = [
     "gigapath @ git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0",
     "flash-attn>=2.7.4",
