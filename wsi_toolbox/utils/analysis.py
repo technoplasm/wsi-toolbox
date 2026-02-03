@@ -53,16 +53,27 @@ def reorder_clusters_by_pca(clusters: np.ndarray, pca_values: np.ndarray) -> np.
 
 
 def find_optimal_components(features, threshold=0.95):
+    """
+    PCAをfitして最適成分数とPCAオブジェクトを返す。
+
+    Returns:
+        tuple: (optimal_n, pca) - 最適成分数とffit済みPCAオブジェクト
+    """
     # Lazy import: sklearn is slow to load (~600ms), defer until needed
     from sklearn.decomposition import PCA  # noqa: PLC0415
 
-    pca = PCA()
+    pca = PCA(svd_solver="randomized", random_state=42)
     pca.fit(features)
-    explained_variance = pca.explained_variance_ratio_
-    # 累積寄与率が95%を超える次元数を選択する例
-    cumulative_variance = np.cumsum(explained_variance)
+
+    # 累積寄与率がthresholdを超える次元数を選択
+    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
     optimal_n = np.argmax(cumulative_variance >= threshold) + 1
-    return min(optimal_n, len(features) - 1)
+
+    # thresholdに達しなければ全成分を使う
+    if cumulative_variance[optimal_n - 1] < threshold:
+        optimal_n = len(cumulative_variance)
+
+    return optimal_n, pca
 
 
 def process_edges_batch(batch_indices, all_indices, h, use_umap_embs, pca=None):
@@ -113,7 +124,6 @@ def leiden_cluster(
     import leidenalg as la  # noqa: PLC0415
     import networkx as nx  # noqa: PLC0415
     from joblib import Parallel, delayed  # noqa: PLC0415
-    from sklearn.decomposition import PCA  # noqa: PLC0415
     from sklearn.neighbors import NearestNeighbors  # noqa: PLC0415
 
     if n_jobs < 0:
@@ -126,9 +136,8 @@ def leiden_cluster(
 
     # 1. PCA
     _progress("Processing PCA")
-    n_components = find_optimal_components(features)
-    pca = PCA(n_components)
-    target_features = pca.fit_transform(features)
+    n_components, pca = find_optimal_components(features)
+    target_features = pca.transform(features)[:, :n_components]
 
     # 2. KNN
     _progress("Processing KNN")
