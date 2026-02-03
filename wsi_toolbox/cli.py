@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_autocli import AutoCLI, param
 from rich.console import Console
 from rich.prompt import Prompt
@@ -175,11 +175,11 @@ class CLI(AutoCLI):
         input_path: str = param(..., l="--in", s="-i")
         output_path: str = param("", l="--out", s="-o")
         patch_size: int = param(256, s="-S")
-        target_mpp: float = Field(0.5, l="--mpp", description="Target mpp")
-        rows_per_read: int = Field(4, l="--rows", description="Rows per read")
+        target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
+        rows_per_read: int = param(4, l="--rows", description="Rows per read")
         overwrite: bool = param(False, s="-O")
         engine: str = param("auto", choices=["auto", "openslide", "tifffile"])
-        detect_white: list[str] = Field(
+        detect_white: list[str] = param(
             [], l="--detect-white", s="-w", description="White detection: method threshold (e.g., 'ptp 0.9')"
         )
 
@@ -220,14 +220,14 @@ class CLI(AutoCLI):
             print(f"done: {result.patch_count} patches (mpp={result.mpp:.4f}, level={result.level_used})")
 
     class ExtractArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i", description="WSI file or HDF5 file")
-        output_path: str = Field("", l="--out", s="-o", description="Output HDF5 path (for WSI input)")
-        batch_size: int = Field(512, s="-B")
-        overwrite: bool = Field(False, s="-O")
-        with_latent_features: bool = Field(False, s="-L")
+        input_path: str = param(..., l="--in", s="-i", description="WSI file or HDF5 file")
+        output_path: str = param("", l="--out", s="-o", description="Output HDF5 path (for WSI input)")
+        batch_size: int = param(512, s="-B")
+        overwrite: bool = param(False, s="-O")
+        with_latent_features: bool = param(False, s="-L")
         # On-demand options
-        target_mpp: float = Field(0.5, l="--mpp", description="Target mpp")
-        prefetch: int = Field(1, l="--prefetch", description="Batches to prefetch (0 to disable)")
+        target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
+        prefetch: int = param(1, l="--prefetch", description="Batches to prefetch (0 to disable)")
 
     def run_extract(self, a: ExtractArgs):
         input_path = Path(a.input_path)
@@ -256,12 +256,12 @@ class CLI(AutoCLI):
             print(f"done: {result.feature_dim}D features extracted ({result.patch_count} patches)")
 
     class ClusterArgs(CommonArgs):
-        input_paths: list[str] = Field(..., l="--in", s="-i")
-        namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        resolution: float = Field(1.0, description="Clustering resolution")
-        no_sort: bool = Field(False, l="--no-sort", description="Disable cluster ID reordering by PCA")
-        overwrite: bool = Field(False, s="-O")
+        input_paths: list[str] = param(..., l="--in", s="-i")
+        namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        resolution: float = param(1.0, description="Clustering resolution")
+        no_sort: bool = param(False, l="--no-sort", description="Disable cluster ID reordering by PCA")
+        overwrite: bool = param(False, s="-O")
 
     def run_cluster(self, a: ClusterArgs):
         # Build parent_filters
@@ -286,15 +286,15 @@ class CLI(AutoCLI):
         print(f"  Path:     {result.target_path}")
 
     class UmapArgs(CommonArgs):
-        input_paths: list[str] = Field(..., l="--in", s="-i")
-        namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        n_neighbors: int = Field(15, description="UMAP n_neighbors")
-        min_dist: float = Field(0.1, description="UMAP min_dist")
-        use_parent_clusters: bool = Field(False, l="--parent", s="-P", description="Use parent clusters for plotting")
+        input_paths: list[str] = param(..., l="--in", s="-i")
+        namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        n_neighbors: int = param(15, description="UMAP n_neighbors")
+        min_dist: float = param(0.1, description="UMAP min_dist")
+        use_parent_clusters: bool = param(False, l="--parent", s="-P", description="Use parent clusters for plotting")
         overwrite: bool = param(False, s="-O")
-        save: bool = Field(False, description="Save plot to file")
-        show: bool = Field(False, description="Show UMAP plot")
+        save: bool = param(False, description="Save plot to file")
+        show: bool = param(False, description="Show UMAP plot")
 
     def run_umap(self, a: UmapArgs):
         # Build parent_filters if filter_ids specified
@@ -405,15 +405,15 @@ class CLI(AutoCLI):
             plt.show()
 
     class PcaArgs(CommonArgs):
-        input_paths: list[str] = Field(..., l="--in", s="-i")
-        namespace: str = Field("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        n_components: int = Field(1, s="-n", description="Number of PCA components (1, 2, or 3)")
-        scaler: str = Field("minmax", s="-s", choices=["std", "minmax"], description="Scaling method")
-        overwrite: bool = Field(False, s="-O")
-        show: bool = Field(False, description="Show PCA plot")
-        save: bool = Field(False, description="Save plot to file")
-        use_sub_clusters: bool = Field(False, l="--sub", s="-S", description="Use sub-clusters for plotting")
+        input_paths: list[str] = param(..., l="--in", s="-i")
+        namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        n_components: int = param(1, s="-n", description="Number of PCA components (1, 2, or 3)")
+        scaler: str = param("minmax", s="-s", choices=["std", "minmax"], description="Scaling method")
+        overwrite: bool = param(False, s="-O")
+        show: bool = param(False, description="Show PCA plot")
+        save: bool = param(False, description="Save plot to file")
+        use_sub_clusters: bool = param(False, l="--sub", s="-S", description="Use sub-clusters for plotting")
 
     def run_pca(self, a: PcaArgs):
         # Build parent_filters
@@ -540,10 +540,10 @@ class CLI(AutoCLI):
             plt.show()
 
     class PreviewArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i")
-        output_path: str = Field("", l="--out", s="-o")
-        namespace: str = Field("default", l="--namespace", s="-N")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
+        input_path: str = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o")
+        namespace: str = param("default", l="--namespace", s="-N")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
         size: int = 64
         rotate: bool = False
         open: bool = False
@@ -569,13 +569,13 @@ class CLI(AutoCLI):
             os.system(f"xdg-open {output_path}")
 
     class PreviewScoreArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i")
-        output_path: str = Field("", l="--out", s="-o")
-        score_name: str = Field(..., l="--name", s="-n", description="Score name (e.g., 'pca1', 'pca2')")
-        namespace: str = Field("default", l="--namespace", s="-N", description="Namespace")
-        filter_ids: list[int] = Field([], l="--filter", s="-f", description="Filter cluster IDs")
-        cmap: str = Field("jet", l="--cmap", s="-c", description="Colormap name")
-        invert: bool = Field(False, l="--invert", s="-I", description="Invert scores (1 - score)")
+        input_path: str = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o")
+        score_name: str = param(..., l="--name", s="-n", description="Score name (e.g., 'pca1', 'pca2')")
+        namespace: str = param("default", l="--namespace", s="-N", description="Namespace")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        cmap: str = param("jet", l="--cmap", s="-c", description="Colormap name")
+        invert: bool = param(False, l="--invert", s="-I", description="Invert scores (1 - score)")
         size: int = 64
         rotate: bool = False
         open: bool = False
@@ -608,8 +608,8 @@ class CLI(AutoCLI):
             os.system(f"xdg-open {output_path}")
 
     class ShowArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i", description="HDF5 file path")
-        verbose: bool = Field(False, s="-v", description="Show detailed info")
+        input_path: str = param(..., l="--in", s="-i", description="HDF5 file path")
+        verbose: bool = param(False, s="-v", description="Show detailed info")
 
     def run_show(self, a: ShowArgs):
         """Show HDF5 file structure and contents"""
@@ -617,11 +617,11 @@ class CLI(AutoCLI):
         cmd(a.input_path)
 
     class DziArgs(CommonArgs):
-        input_wsi: str = Field(..., l="--input", s="-i", description="Input WSI file path")
-        output_dir: str = Field(..., l="--output", s="-o", description="Output directory")
-        tile_size: int = Field(256, l="--tile-size", s="-t", description="Tile size in pixels")
-        overlap: int = Field(0, l="--overlap", description="Tile overlap in pixels")
-        jpeg_quality: int = Field(90, s="-q", description="JPEG quality (1-100)")
+        input_wsi: str = param(..., l="--input", s="-i", description="Input WSI file path")
+        output_dir: str = param(..., l="--output", s="-o", description="Output directory")
+        tile_size: int = param(256, l="--tile-size", s="-t", description="Tile size in pixels")
+        overlap: int = param(0, l="--overlap", description="Tile overlap in pixels")
+        jpeg_quality: int = param(90, s="-q", description="JPEG quality (1-100)")
 
     def run_dzi(self, a: DziArgs):
         """Export WSI to Deep Zoom Image (DZI) format for OpenSeadragon"""
@@ -643,11 +643,11 @@ class CLI(AutoCLI):
         print(f"Export completed: {result.dzi_path}")
 
     class ThumbArgs(CommonArgs):
-        input_path: str = Field(..., l="--in", s="-i", description="Input WSI file path")
-        output_path: str = Field("", l="--out", s="-o", description="Output path")
-        width: int = Field(-1, s="-w", description="Width (-1 for auto)")
-        height: int = Field(-1, s="-h", description="Height (-1 for auto)")
-        quality: int = Field(90, s="-q", description="JPEG quality (1-100)")
+        input_path: str = param(..., l="--in", s="-i", description="Input WSI file path")
+        output_path: str = param("", l="--out", s="-o", description="Output path")
+        width: int = param(-1, s="-w", description="Width (-1 for auto)")
+        height: int = param(-1, s="-h", description="Height (-1 for auto)")
+        quality: int = param(90, s="-q", description="JPEG quality (1-100)")
         open: bool = False
 
     def run_thumb(self, a: ThumbArgs):
@@ -670,7 +670,7 @@ class CLI(AutoCLI):
             os.system(f"xdg-open {output_path}")
 
     class MigrateArgs(CommonArgs):
-        input_paths: list[str] = Field(..., l="--in", s="-i", description="HDF5 file path(s) to migrate")
+        input_paths: list[str] = param(..., l="--in", s="-i", description="HDF5 file path(s) to migrate")
 
     def run_migrate(self, a: MigrateArgs):
         """Migrate old HDF5 format to new format"""
