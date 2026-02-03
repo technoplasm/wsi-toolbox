@@ -24,6 +24,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_f
 warnings.filterwarnings(
     "ignore", category=FutureWarning, message="You are using `torch.load` with `weights_only=False`"
 )
+warnings.filterwarnings("ignore", category=UserWarning, message=".*cuda capability.*")
 
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
 
