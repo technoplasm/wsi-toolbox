@@ -11,6 +11,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import streamlit as st
+from matplotlib import pyplot as plt
 from PIL import Image
 
 from wsi_toolbox import commands
@@ -226,6 +227,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
                 ylabel="UMAP 2",
             )
             fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
+            plt.close(fig)
 
         st.subheader("UMAP投射 + クラスタリング")
         umap_filename = os.path.basename(umap_path)

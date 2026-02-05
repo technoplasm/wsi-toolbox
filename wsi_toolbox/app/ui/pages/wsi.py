@@ -10,6 +10,7 @@ from typing import List
 import h5py
 import numpy as np
 import streamlit as st
+from matplotlib import pyplot as plt
 
 from wsi_toolbox import commands
 from wsi_toolbox.common import set_default_model_preset
@@ -127,6 +128,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                             ylabel="UMAP 2",
                         )
                         fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
+                        plt.close(fig)
                     st.write(f"クラスタリング結果を{os.path.basename(umap_path)}に出力しました。")
 
                     with st.spinner("オーバービュー生成中", show_time=True):
