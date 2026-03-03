@@ -41,29 +41,35 @@ def create_foundation_model(model_name: str):
         return timm.create_model(
             "hf-hub:MahmoodLab/UNI2-h",
             pretrained=True,
-            **{
-                "img_size": 224,
-                "patch_size": 14,
-                "depth": 24,
-                "num_heads": 24,
-                "init_values": 1e-5,
-                "embed_dim": 1536,
-                "mlp_ratio": 2.66667 * 2,
-                "num_classes": 0,
-                "no_embed_class": True,
-                "mlp_layer": timm.layers.SwiGLUPacked,
-                "act_layer": torch.nn.SiLU,
-                "reg_tokens": 8,
-                "dynamic_img_size": True,
-            },
+            img_size=224,
+            patch_size=14,
+            depth=24,
+            num_heads=24,
+            init_values=1e-5,
+            embed_dim=1536,
+            mlp_ratio=2.66667 * 2,
+            num_classes=0,
+            no_embed_class=True,
+            mlp_layer=SwiGLUPacked,
+            act_layer=torch.nn.SiLU,
+            reg_tokens=8,
+            dynamic_img_size=True,
+            dynamic_img_pad=True,
         )
 
+    if model_name == "conch15":
+        model = timm.create_model("hf_hub:MahmoodLab/conchv1_5", pretrained=True)
+
     if model_name == "gigapath":
-        return timm.create_model("hf_hub:prov-gigapath/prov-gigapath", pretrained=True, dynamic_img_size=True)
+        return timm.create_model("hf_hub:prov-gigapath/prov-gigapath", pretrained=True, dynamic_img_size=True, dynamic_img_pad=True)
 
     if model_name == "h-optimus-0":
         return timm.create_model(
-            "hf-hub:bioptimus/H-optimus-0", pretrained=True, init_values=1e-5, dynamic_img_size=True
+            "hf-hub:bioptimus/H-optimus-0",
+            pretrained=True,
+            init_values=1e-5,
+            dynamic_img_size=True,
+            dynamic_img_pad=True,
         )
 
     if model_name == "virchow2":
