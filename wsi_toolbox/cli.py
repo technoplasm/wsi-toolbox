@@ -287,6 +287,7 @@ class CLI(AutoCLI):
 
     class UmapArgs(CommonArgs):
         input_paths: list[str] = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o", description="Output UMAP path")
         namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
         filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
         n_neighbors: int = param(15, description="UMAP n_neighbors")
@@ -389,17 +390,19 @@ class CLI(AutoCLI):
             ylabel="UMAP 2",
         )
 
-        if a.save:
+        if a.save or a.output_path:
             # Build filename
             base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else ""
-            if a.filter_ids:
-                filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_umap.png"
+            if a.output_path:
+                output_path = a.output_path
             else:
-                filename = f"{base_name}_umap.png"
-
-            fig_path = build_output_path(a.input_paths[0], namespace, filename)
-            plt.savefig(fig_path)
-            print(f"wrote {fig_path}")
+                if a.filter_ids:
+                    filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_umap.png"
+                else:
+                    filename = f"{base_name}_umap.png"
+                output_path = build_output_path(a.input_paths[0], namespace, filename)
+            plt.savefig(output_path)
+            print(f"wrote {output_path}")
 
         if a.show:
             plt.show()
