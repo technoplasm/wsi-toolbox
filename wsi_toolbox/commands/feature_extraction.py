@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..common import create_default_model
+from ..common import create_default_model, get_config
 from ..patch_reader import get_patch_reader
 from ..utils import safe_del
 from ..utils.hdf5_paths import write_root_metadata
@@ -80,10 +80,6 @@ class FeatureExtractionCommand:
         self.target_mpp = target_mpp
         self.prefetch = prefetch
 
-        # Validate model
-        if self.model_name not in ["uni", "gigapath", "virchow2"]:
-            raise ValueError(f"Invalid model: {self.model_name}")
-
         # White detector
         if white_detector is None:
             self.white_detector = create_white_detector("ptp")
@@ -141,8 +137,9 @@ class FeatureExtractionCommand:
             model = model.eval().to(self.device)
             latent_size = model.patch_embed.proj.kernel_size[0]
 
-            mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(self.device)
-            std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(self.device)
+            cfg = get_config()
+            mean = torch.tensor(cfg.norm_mean).view(1, 3, 1, 1).to(self.device)
+            std = torch.tensor(cfg.norm_std).view(1, 3, 1, 1).to(self.device)
 
             progress.set_description("Preparing")
 

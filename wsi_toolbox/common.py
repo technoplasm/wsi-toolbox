@@ -8,7 +8,7 @@ from typing import Callable
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, Field
 
-from .models import MODEL_NAMES, create_foundation_model
+from .models import MODEL_NAMES, MODEL_NORMALIZATION, create_foundation_model
 from .utils.progress import Progress
 
 
@@ -19,6 +19,8 @@ class Config(BaseModel):
     progress: str = Field(default="tqdm", description="Progress bar backend")
     model_name: str = Field(default="uni", description="Default model name")
     model_generator: Callable | None = Field(default=None, description="Model generator function")
+    norm_mean: tuple[float, ...] = Field(default=(0.485, 0.456, 0.406), description="Normalization mean")
+    norm_std: tuple[float, ...] = Field(default=(0.229, 0.224, 0.225), description="Normalization std")
     verbose: bool = Field(default=True, description="Verbose output")
     device: str = Field(default="cuda", description="Device for computation")
     cluster_cmap: str = Field(default="tab20", description="Cluster colormap name")
@@ -68,6 +70,9 @@ def set_default_model_preset(preset_name: str):
 
     _config.model_name = preset_name
     _config.model_generator = partial(create_foundation_model, preset_name)
+    norm = MODEL_NORMALIZATION[preset_name]
+    _config.norm_mean = norm[0]
+    _config.norm_std = norm[1]
 
 
 def create_default_model():
