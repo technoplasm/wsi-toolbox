@@ -1,6 +1,6 @@
 import logging
 
-MODEL_NAMES = ["uni", "uni2", "gigapath", "virchow2", "h-optimus-0", "conch15"]
+MODEL_NAMES = ["uni", "uni2", "gigapath", "virchow2", "h-optimus-0", "conch15", "midnight"]
 
 # ImageNet defaults
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -13,6 +13,7 @@ MODEL_NORMALIZATION: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "virchow2": (_IMAGENET_MEAN, _IMAGENET_STD),
     "h-optimus-0": ((0.707223, 0.578729, 0.703617), (0.211883, 0.230117, 0.177517)),
     "conch15": (_IMAGENET_MEAN, _IMAGENET_STD),
+    "midnight": ((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
 }
 
 # Suppress noisy logs from huggingface_hub and timm
@@ -63,6 +64,11 @@ def create_foundation_model(model_name: str):
 
         return create_conch_model()
 
+    if model_name == "midnight":
+        from .midnight import create_midnight_model  # noqa: PLC0415
+
+        return create_midnight_model()
+
     if model_name == "gigapath":
         return timm.create_model(
             "hf_hub:prov-gigapath/prov-gigapath", pretrained=True, dynamic_img_size=True, dynamic_img_pad=True
@@ -79,7 +85,12 @@ def create_foundation_model(model_name: str):
 
     if model_name == "virchow2":
         return timm.create_model(
-            "hf-hub:paige-ai/Virchow2", pretrained=True, mlp_layer=SwiGLUPacked, act_layer=torch.nn.SiLU
+            "hf-hub:paige-ai/Virchow2",
+            pretrained=True,
+            mlp_layer=SwiGLUPacked,
+            act_layer=torch.nn.SiLU,
+            dynamic_img_size=True,
+            dynamic_img_pad=True,
         )
 
     raise ValueError(f"Invalid model_name: {model_name}. Must be one of {MODEL_NAMES}")
