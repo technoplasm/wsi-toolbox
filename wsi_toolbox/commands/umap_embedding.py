@@ -77,10 +77,6 @@ class UmapCommand:
         self.overwrite = overwrite
         self.model_name = _get("model_name", model_name)
 
-        # Validate model
-        if self.model_name not in ["uni", "gigapath", "virchow2"]:
-            raise ValueError(f"Invalid model: {self.model_name}")
-
         # Internal state
         self.hdf5_paths = []
         self.umap_embeddings = None

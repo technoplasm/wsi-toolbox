@@ -155,20 +155,26 @@ class BasePreviewCommand:
                 coords = f[info.coords_path][:]
 
                 tq = _progress(range(patch_count), desc="Rendering patches")
-                for i in tq:
-                    coord = tuple(coords[i])
-                    patch_array = source.get_patch_by_coord(coord)
-                    frame = self._get_frame(i, data, f)
-                    self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
+                try:
+                    for i in tq:
+                        coord = tuple(coords[i])
+                        patch_array = source.get_patch_by_coord(coord)
+                        frame = self._get_frame(i, data, f)
+                        self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
+                finally:
+                    tq.close()
             else:
                 # H5 cached: iterate by index
                 coords = f[info.coords_path][:]
                 tq = _progress(range(patch_count), desc="Rendering patches")
-                for i in tq:
-                    coord = coords[i]
-                    patch_array = f[info.patches_path][i]
-                    frame = self._get_frame(i, data, f)
-                    self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
+                try:
+                    for i in tq:
+                        coord = coords[i]
+                        patch_array = f[info.patches_path][i]
+                        frame = self._get_frame(i, data, f)
+                        self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
+                finally:
+                    tq.close()
 
         return canvas
 

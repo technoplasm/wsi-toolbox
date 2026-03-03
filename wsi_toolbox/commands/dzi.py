@@ -117,9 +117,11 @@ class DziCommand:
 
         # Generate all levels with single progress bar
         progress = _progress(total=total_tiles, desc="Generating tiles")
-        for level in range(max_level, -1, -1):
-            self._generate_level(wsi_file, files_dir, level, level_infos[level], progress)
-        progress.close()
+        try:
+            for level in range(max_level, -1, -1):
+                self._generate_level(wsi_file, files_dir, level, level_infos[level], progress)
+        finally:
+            progress.close()
 
         # Write DZI XML
         dzi_xml = wsi_file.get_dzi_xml(self.tile_size, self.overlap, self.format)

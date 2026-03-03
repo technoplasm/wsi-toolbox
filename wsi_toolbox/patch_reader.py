@@ -468,7 +468,7 @@ class PrefetchReader:
                     break
                 yield item
         finally:
-            thread.join()
+            thread.join(timeout=1)
 
         # Re-raise any error from producer thread
         if error_holder:

@@ -234,6 +234,7 @@ class FeatureExtractionCommand:
             )
 
         finally:
+            progress.close()
             del model, mean, std
             torch.cuda.empty_cache()
             gc.collect()

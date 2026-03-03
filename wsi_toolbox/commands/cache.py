@@ -182,28 +182,28 @@ class CacheCommand:
                 ds_coords.attrs["writing"] = True
 
                 progress = _progress(total=total_iters, desc="Reading patches")
+                try:
+                    for patches, coords, desc in reader.iter_rows(self.rows_per_read):
+                        progress.set_description(f"Caching: {desc}")
+                        progress.update(1)
 
-                for patches, coords, desc in reader.iter_rows(self.rows_per_read):
-                    progress.set_description(f"Caching: {desc}")
-                    progress.update(1)
+                        if not patches:
+                            continue
 
-                    if not patches:
-                        continue
+                        batch_len = len(patches)
+                        old_size = patch_count
+                        new_size = patch_count + batch_len
 
-                    batch_len = len(patches)
-                    old_size = patch_count
-                    new_size = patch_count + batch_len
+                        # Resize and append
+                        ds_patches.resize(new_size, axis=0)
+                        ds_coords.resize(new_size, axis=0)
 
-                    # Resize and append
-                    ds_patches.resize(new_size, axis=0)
-                    ds_coords.resize(new_size, axis=0)
+                        ds_patches[old_size:new_size] = np.array(patches, dtype=np.uint8)
+                        ds_coords[old_size:new_size] = np.array(coords, dtype=np.int32)
 
-                    ds_patches[old_size:new_size] = np.array(patches, dtype=np.uint8)
-                    ds_coords[old_size:new_size] = np.array(coords, dtype=np.int32)
-
-                    patch_count = new_size
-
-                progress.close()
+                        patch_count = new_size
+                finally:
+                    progress.close()
 
                 # Save metadata as attrs on cache group
                 cache_grp.attrs["mpp"] = reader.actual_mpp
