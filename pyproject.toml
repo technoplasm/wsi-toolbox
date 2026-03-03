@@ -49,6 +49,7 @@ dependencies = [
     "umap-learn>=0.5.7",
     "zarr>=3",
     "pydantic-autocli>=0.2.0",
+    "einops>=0.8.1",
 ]
 
 [project.scripts]
