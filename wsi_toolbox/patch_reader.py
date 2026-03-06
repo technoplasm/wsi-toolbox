@@ -9,6 +9,7 @@ Provides unified interface for reading patches regardless of source:
 """
 
 import logging
+import time
 from queue import Queue
 from threading import Thread
 from typing import Iterator, Protocol, runtime_checkable
@@ -449,10 +450,19 @@ class PrefetchReader:
         sentinel = object()
         error_holder: list[Exception] = []
 
+        logger.debug(f"PrefetchReader: queue_size={self.prefetch}, batch_size={batch_size}")
+
         def producer():
             try:
-                for item in self.reader.iter_batches(batch_size):
+                for batch_idx, item in enumerate(self.reader.iter_batches(batch_size)):
+                    t0 = time.perf_counter()
                     queue.put(item)
+                    wait_ms = (time.perf_counter() - t0) * 1000
+                    patches = len(item[1])
+                    logger.debug(
+                        f"prefetch: put batch {batch_idx} ({patches} patches), "
+                        f"queue={queue.qsize()}/{self.prefetch}, wait={wait_ms:.1f}ms"
+                    )
             except Exception as e:
                 error_holder.append(e)
             finally:
@@ -461,11 +471,19 @@ class PrefetchReader:
         thread = Thread(target=producer, daemon=True)
         thread.start()
 
+        batch_idx = 0
         try:
             while True:
+                t0 = time.perf_counter()
                 item = queue.get()
+                wait_ms = (time.perf_counter() - t0) * 1000
                 if item is sentinel:
+                    logger.debug("prefetch: all batches consumed")
                     break
+                logger.debug(
+                    f"prefetch: get batch {batch_idx}, queue={queue.qsize()}/{self.prefetch}, wait={wait_ms:.1f}ms"
+                )
+                batch_idx += 1
                 yield item
         finally:
             thread.join(timeout=1)
