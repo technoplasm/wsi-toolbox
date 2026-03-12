@@ -67,6 +67,7 @@ from .common import (
 
 # Models
 from .models import (
+    MODEL_EXTRACT_FN,
     MODEL_NAMES,
     create_foundation_model,
 )
@@ -142,6 +143,7 @@ __all__ = [
     "PrefetchReader",
     "get_patch_reader",
     # Models
+    "MODEL_EXTRACT_FN",
     "MODEL_NAMES",
     "create_foundation_model",
     # Utilities

@@ -21,8 +21,13 @@ The following foundation models are available:
 | Model | Dim | HuggingFace |
 |-------|-----|-------------|
 | `uni` (default) | 1024 | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/UNI) |
+| `uni2` | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
 | `gigapath` | 1536 | [prov-gigapath/prov-gigapath](https://huggingface.co/prov-gigapath/prov-gigapath) |
 | `virchow2` | 2560 | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
+| `h-optimus-0` | 1536 | [bioptimus/H-optimus-0](https://huggingface.co/bioptimus/H-optimus-0) |
+| `conch15` | 1024 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
+| `conch15_768` | 768 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
+| `midnight` | 1536 | [SophontAI/OpenMidnight](https://huggingface.co/SophontAI/OpenMidnight) |
 
 **Setup**: These models require HuggingFace authentication. Accept the license on each model page, then:
 
@@ -83,6 +88,8 @@ Extract patch embeddings from WSI using foundation models.
 wt extract -i sample.ndpi -o sample.h5
 wt extract -i sample.ndpi -M gigapath      # Use Gigapath model
 wt extract -i sample.ndpi -M virchow2      # Use Virchow2 model
+wt extract -i sample.ndpi -M conch15_768   # CONCH v1.5 (768D via AttentionalPooler)
+wt extract -i sample.ndpi -M midnight      # OpenMidnight model
 wt extract -i sample.ndpi -L               # Include latent features
 ```
 
@@ -269,6 +276,17 @@ cache/{patch_size}/
 
 ---
 
+### migrate
+
+Migrate old HDF5 format to new format.
+
+```bash
+wt migrate -i sample.h5
+wt migrate -i sample1.h5 sample2.h5      # Multiple files
+```
+
+---
+
 ## HDF5 File Structure
 
 All data is stored in a single HDF5 file. Use `wt show -i sample.h5` to inspect.
@@ -292,14 +310,19 @@ with h5py.File('sample.h5', 'r') as f:
 
 ### Model Features
 
-Features are stored under `{model}/`. Supported models: `uni`, `gigapath`, `virchow2`.
+Features are stored under `{model}/`. Supported models: `uni`, `uni2`, `gigapath`, `virchow2`, `h-optimus-0`, `conch15`, `conch15_768`, `midnight`.
 
 ```
 {model}/
 ├── features        # [N, D] patch embeddings
 │                   #   uni: D=1024
+│                   #   uni2: D=1536
 │                   #   gigapath: D=1536
 │                   #   virchow2: D=2560
+│                   #   h-optimus-0: D=1536
+│                   #   conch15: D=1024
+│                   #   conch15_768: D=768
+│                   #   midnight: D=1536
 ├── coordinates     # [N, 2] patch coordinates (x, y pixels)
 └── latent_features # [N, L, D] optional (with -L flag)
 ```

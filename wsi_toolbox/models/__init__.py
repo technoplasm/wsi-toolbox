@@ -1,6 +1,7 @@
 import logging
+from collections.abc import Callable
 
-MODEL_NAMES = ["uni", "uni2", "gigapath", "virchow2", "h-optimus-0", "conch15", "midnight"]
+MODEL_NAMES = ["uni", "uni2", "gigapath", "virchow2", "h-optimus-0", "conch15", "conch15_768", "midnight"]
 
 # ImageNet defaults
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -13,7 +14,12 @@ MODEL_NORMALIZATION: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "virchow2": (_IMAGENET_MEAN, _IMAGENET_STD),
     "h-optimus-0": ((0.707223, 0.578729, 0.703617), (0.211883, 0.230117, 0.177517)),
     "conch15": (_IMAGENET_MEAN, _IMAGENET_STD),
+    "conch15_768": (_IMAGENET_MEAN, _IMAGENET_STD),
     "midnight": ((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+}
+
+MODEL_EXTRACT_FN: dict[str, Callable] = {
+    "conch15_768": lambda model, x: model(x),
 }
 
 # Suppress noisy logs from huggingface_hub and timm
@@ -26,7 +32,8 @@ def create_foundation_model(model_name: str):
     Create a foundation model instance by preset name.
 
     Args:
-        model_name: One of 'uni', 'gigapath', 'virchow2'
+        model_name: One of 'uni', 'uni2', 'gigapath', 'virchow2',
+                    'h-optimus-0', 'conch15', 'conch15_768', 'midnight'
 
     Returns:
         torch.nn.Module: Model instance (not moved to device, not in eval mode)
@@ -59,7 +66,7 @@ def create_foundation_model(model_name: str):
             dynamic_img_pad=True,
         )
 
-    if model_name == "conch15":
+    if model_name in ("conch15", "conch15_768"):
         from .conch import create_conch_model  # noqa: PLC0415
 
         return create_conch_model()

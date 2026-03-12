@@ -135,17 +135,23 @@ class FeatureExtractionCommand:
         try:
             model = create_default_model()
             model = model.eval().to(self.device)
-            latent_size = model.patch_embed.proj.kernel_size[0]
 
             cfg = get_config()
+            extract_fn = cfg.extract_fn
             mean = torch.tensor(cfg.norm_mean).view(1, 3, 1, 1).to(self.device)
             std = torch.tensor(cfg.norm_std).view(1, 3, 1, 1).to(self.device)
+
+            if extract_fn is None:
+                latent_size = model.patch_embed.proj.kernel_size[0]
+
+            if self.with_latent and extract_fn is not None:
+                logger.warning("with_latent is not supported with custom extract_fn, skipping latent extraction")
 
             progress.set_description("Preparing")
 
             # Collect all features and coordinates
             all_features = []
-            all_latent = [] if self.with_latent else None
+            all_latent = [] if self.with_latent and extract_fn is None else None
             all_coords = []
 
             for batch, coords, desc in reader.iter_batches(self.batch_size):
@@ -161,23 +167,27 @@ class FeatureExtractionCommand:
                 x = x.to(self.device)
                 x = (x - mean) / std
 
-                # Forward pass
                 with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
-                    h_tensor = model.forward_features(x)
+                    if extract_fn is not None:
+                        features = extract_fn(model, x)  # [B, D]
+                        all_features.append(features.cpu().numpy())
+                    else:
+                        h_tensor = model.forward_features(x)
+                        h = h_tensor.cpu().detach().numpy()
+                        latent_index = h.shape[1] - latent_size**2
+                        cls_feature = h[:, 0, ...]
+                        all_features.append(cls_feature)
 
-                # Extract features
-                h = h_tensor.cpu().detach().numpy()
-                latent_index = h.shape[1] - latent_size**2
-                cls_feature = h[:, 0, ...]
-                all_features.append(cls_feature)
+                        if self.with_latent:
+                            latent_feature = h[:, latent_index:, ...]
+                            all_latent.append(latent_feature.astype(np.float16))
+
+                        del h_tensor
+
                 all_coords.extend(coords)
 
-                if self.with_latent:
-                    latent_feature = h[:, latent_index:, ...]
-                    all_latent.append(latent_feature.astype(np.float16))
-
                 # Cleanup
-                del x, h_tensor
+                del x
                 torch.cuda.empty_cache()
                 progress.update(1)
 
@@ -227,10 +237,10 @@ class FeatureExtractionCommand:
             logger.info(f"Wrote {self.feature_name}")
 
             return FeatureExtractResult(
-                feature_dim=model.num_features,
+                feature_dim=all_features.shape[-1],
                 patch_count=patch_count,
                 model=self.model_name,
-                with_latent=self.with_latent,
+                with_latent=self.with_latent and extract_fn is None,
             )
 
         finally:

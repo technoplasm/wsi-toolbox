@@ -8,7 +8,7 @@ from typing import Callable
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, Field
 
-from .models import MODEL_NAMES, MODEL_NORMALIZATION, create_foundation_model
+from .models import MODEL_EXTRACT_FN, MODEL_NAMES, MODEL_NORMALIZATION, create_foundation_model
 from .utils.progress import Progress
 
 
@@ -21,6 +21,7 @@ class Config(BaseModel):
     model_generator: Callable | None = Field(default=None, description="Model generator function")
     norm_mean: tuple[float, ...] = Field(default=(0.485, 0.456, 0.406), description="Normalization mean")
     norm_std: tuple[float, ...] = Field(default=(0.229, 0.224, 0.225), description="Normalization std")
+    extract_fn: Callable | None = Field(default=None, description="Custom feature extraction function")
     verbose: bool = Field(default=True, description="Verbose output")
     device: str = Field(default="cuda", description="Device for computation")
     cluster_cmap: str = Field(default="tab20", description="Cluster colormap name")
@@ -60,10 +61,11 @@ def set_default_model(name: str, generator: Callable, label: str | None = None):
 
 
 def set_default_model_preset(preset_name: str):
-    """Set default model from preset ('uni', 'gigapath', 'virchow2')
+    """Set default model from preset.
 
     Args:
-        preset_name: One of 'uni', 'gigapath', 'virchow2'
+        preset_name: One of 'uni', 'uni2', 'gigapath', 'virchow2',
+                     'h-optimus-0', 'conch15', 'conch15_768', 'midnight'
     """
     if preset_name not in MODEL_NAMES:
         raise ValueError(f"Invalid preset: {preset_name}. Must be one of {MODEL_NAMES}")
@@ -73,6 +75,7 @@ def set_default_model_preset(preset_name: str):
     norm = MODEL_NORMALIZATION[preset_name]
     _config.norm_mean = norm[0]
     _config.norm_std = norm[1]
+    _config.extract_fn = MODEL_EXTRACT_FN.get(preset_name)
 
 
 def create_default_model():
