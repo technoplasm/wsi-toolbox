@@ -18,16 +18,20 @@ pip install git+https://github.com/technoplasm/wsi-toolbox.git
 
 The following foundation models are available:
 
-| Model | Dim | HuggingFace |
-|-------|-----|-------------|
-| `uni` (default) | 1024 | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/UNI) |
-| `uni2` | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
-| `gigapath` | 1536 | [prov-gigapath/prov-gigapath](https://huggingface.co/prov-gigapath/prov-gigapath) |
-| `virchow2` | 2560 | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
-| `h-optimus-0` | 1536 | [bioptimus/H-optimus-0](https://huggingface.co/bioptimus/H-optimus-0) |
-| `conch15` | 1024 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
-| `conch15_768` | 768 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
-| `midnight` | 1536 | [SophontAI/OpenMidnight](https://huggingface.co/SophontAI/OpenMidnight) |
+| Model | Arch | Params | Dim | HuggingFace |
+|-------|------|--------|-----|-------------|
+| `uni` (default) | ViT-L/16 | 300M | 1024 | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/UNI) |
+| `uni2` | ViT-H/14 | 681M | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
+| `gigapath` | ViT-g/14 | 1.1B | 1536 | [prov-gigapath/prov-gigapath](https://huggingface.co/prov-gigapath/prov-gigapath) |
+| `virchow` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow](https://huggingface.co/paige-ai/Virchow) |
+| `virchow2` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
+| `h-optimus-0` | ViT-g/14 | 1.1B | 1536 | [bioptimus/H-optimus-0](https://huggingface.co/bioptimus/H-optimus-0) |
+| `conch15` | ViT-L/16 | 300M | 1024 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
+| `conch15_768` | ViT-L/16 | 300M | 768 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
+| `midnight` | ViT-g/14 | 1.1B | 1536 | [SophontAI/OpenMidnight](https://huggingface.co/SophontAI/OpenMidnight) |
+| `phikon2` | ViT-L/16 | 300M | 1024 | [owkin/phikon-v2](https://huggingface.co/owkin/phikon-v2) |
+
+`conch15_768` outputs FC-projected features (not cls_token), intended for [TITAN](https://huggingface.co/MahmoodLab/TITAN) input.
 
 **Setup**: These models require HuggingFace authentication. Accept the license on each model page, then:
 
@@ -310,7 +314,7 @@ with h5py.File('sample.h5', 'r') as f:
 
 ### Model Features
 
-Features are stored under `{model}/`. Supported models: `uni`, `uni2`, `gigapath`, `virchow2`, `h-optimus-0`, `conch15`, `conch15_768`, `midnight`.
+Features are stored under `{model}/`. Supported models: `uni`, `uni2`, `gigapath`, `virchow`, `virchow2`, `h-optimus-0`, `conch15`, `conch15_768`, `midnight`, `phikon2`.
 
 ```
 {model}/
@@ -318,11 +322,13 @@ Features are stored under `{model}/`. Supported models: `uni`, `uni2`, `gigapath
 │                   #   uni: D=1024
 │                   #   uni2: D=1536
 │                   #   gigapath: D=1536
-│                   #   virchow2: D=2560
+│                   #   virchow: D=1280
+│                   #   virchow2: D=1280
 │                   #   h-optimus-0: D=1536
 │                   #   conch15: D=1024
 │                   #   conch15_768: D=768
 │                   #   midnight: D=1536
+│                   #   phikon2: D=1024
 ├── coordinates     # [N, 2] patch coordinates (x, y pixels)
 └── latent_features # [N, L, D] optional (with -L flag)
 ```

@@ -64,8 +64,9 @@ def set_default_model_preset(preset_name: str):
     """Set default model from preset.
 
     Args:
-        preset_name: One of 'uni', 'uni2', 'gigapath', 'virchow2',
-                     'h-optimus-0', 'conch15', 'conch15_768', 'midnight'
+        preset_name: One of 'uni', 'uni2', 'gigapath', 'virchow', 'virchow2',
+                     'h-optimus-0', 'conch15', 'conch15_768', 'midnight',
+                     'phikon2'
     """
     if preset_name not in MODEL_NAMES:
         raise ValueError(f"Invalid preset: {preset_name}. Must be one of {MODEL_NAMES}")
