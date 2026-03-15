@@ -68,15 +68,16 @@ class _GPUWorker:
             else:
                 h_tensor = self.model.forward_features(x)
                 h = h_tensor.cpu().detach().numpy()
+                del h_tensor
                 latent_index = h.shape[1] - self.latent_size**2
-                result_features = h[:, 0, ...]
+                result_features = h[:, 0, ...].copy()
 
                 if self.with_latent:
                     result_latent = h[:, latent_index:, ...].astype(np.float16)
                 else:
                     result_latent = None
 
-                del h_tensor
+                del h
 
         del x
         if device_type == "cuda":
@@ -202,6 +203,7 @@ class FeatureExtractionCommand:
         progress = _progress(total=total_batches, desc="Initializing model")
 
         workers: list[_GPUWorker] = []
+        executor: ThreadPoolExecutor | None = None
         done = False
 
         try:
@@ -261,9 +263,6 @@ class FeatureExtractionCommand:
                 all_coords.extend(coords)
                 progress.update(1)
 
-            if use_parallel:
-                executor.shutdown(wait=False)
-
             progress.close()
 
             # Concatenate results
@@ -317,9 +316,16 @@ class FeatureExtractionCommand:
             )
 
         finally:
+            import torch  # noqa: PLC0415
+
             progress.close()
+            if executor is not None:
+                executor.shutdown(wait=True)
             for worker in workers:
                 worker.cleanup()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
             gc.collect()
 
             if not done:

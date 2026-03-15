@@ -163,6 +163,8 @@ class BasePreviewCommand:
                         self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
                 finally:
                     tq.close()
+                    if hasattr(source, "close"):
+                        source.close()
             else:
                 # H5 cached: iterate by index
                 coords = f[info.coords_path][:]
@@ -203,6 +205,7 @@ class BasePreviewCommand:
         if frame:
             patch.paste(frame, (0, 0), frame)
         canvas.paste(patch, (x, y, x + S, y + S))
+        patch.close()
 
     def _prepare(self, f: h5py.File, **kwargs):
         """
@@ -351,17 +354,22 @@ class PreviewScoresCommand(BasePreviewCommand):
         font = ImageFont.truetype(font=get_platform_font(), size=self.font_size)
         cmap = plt.get_cmap(cmap_name)
 
-        return {"scores": scores, "cmap": cmap, "font": font}
+        return {"scores": scores, "cmap": cmap, "font": font, "frame_cache": {}}
 
     def _get_frame(self, index: int, data, f: h5py.File):
-        """Get frame for score at index"""
+        """Get frame for score at index (cached by quantized score)"""
         score = data["scores"][index]
 
         if np.isnan(score):
             return None
 
-        color = mcolors.rgb2hex(data["cmap"](score)[:3])
-        return create_frame(self.size, color, f"{score:.3f}", data["font"])
+        # Quantize to 3 decimal places for cache key
+        key = round(float(score), 3)
+        frame_cache = data["frame_cache"]
+        if key not in frame_cache:
+            color = mcolors.rgb2hex(data["cmap"](score)[:3])
+            frame_cache[key] = create_frame(self.size, color, f"{key:.3f}", data["font"])
+        return frame_cache[key]
 
 
 class PreviewLatentPCACommand(BasePreviewCommand):
