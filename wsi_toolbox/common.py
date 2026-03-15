@@ -2,6 +2,7 @@
 Global configuration and settings for WSI-toolbox
 """
 
+import logging
 from functools import partial
 from typing import Callable
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from .models import MODEL_EXTRACT_FN, MODEL_NAMES, MODEL_NORMALIZATION, create_foundation_model
 from .utils.progress import Progress
+
+logger = logging.getLogger(__name__)
 
 
 # === Global Configuration (Pydantic) ===
@@ -23,7 +26,7 @@ class Config(BaseModel):
     norm_std: tuple[float, ...] = Field(default=(0.229, 0.224, 0.225), description="Normalization std")
     extract_fn: Callable | None = Field(default=None, description="Custom feature extraction function")
     verbose: bool = Field(default=True, description="Verbose output")
-    device: str = Field(default="cuda", description="Device for computation")
+    device: str = Field(default="auto", description="Device for computation ('auto', 'cpu', 'cuda:0', 'cuda:0,1')")
     cluster_cmap: str = Field(default="tab20", description="Cluster colormap name")
 
     class Config:
@@ -100,8 +103,72 @@ def create_default_model():
 
 
 def set_default_device(device: str):
-    """Set global default device ('cuda', 'cpu')"""
+    """Set global default device ('auto', 'cpu', 'cuda', 'cuda:0', 'cuda:0,1', etc.)"""
     _config.device = device
+
+
+def resolve_devices(device: str | None = None) -> list[str]:
+    """Resolve device specification to a list of torch device strings.
+
+    Args:
+        device: Device specification. None uses global config.
+            - "auto": detect GPUs, use all available (fallback to cpu)
+            - "cpu": CPU only
+            - "cuda": same as "cuda:0"
+            - "cuda:0": specific GPU
+            - "cuda:0,1,3": specific multiple GPUs
+
+    Returns:
+        List of device strings, e.g. ["cuda:0", "cuda:1"] or ["cpu"]
+    """
+    import torch  # noqa: PLC0415
+
+    if device is None:
+        device = _config.device
+
+    if device == "cpu":
+        return ["cpu"]
+
+    if device == "auto":
+        if not torch.cuda.is_available():
+            logger.warning("CUDA is not available, falling back to cpu")
+            return ["cpu"]
+        gpu_count = torch.cuda.device_count()
+        if gpu_count == 0:
+            logger.warning("No GPU found, falling back to cpu")
+            return ["cpu"]
+        if gpu_count == 1:
+            return ["cuda:0"]
+        devices = [f"cuda:{i}" for i in range(gpu_count)]
+        logger.info(f"Auto-detected {gpu_count} GPUs: {devices}")
+        return devices
+
+    if device == "cuda":
+        if not torch.cuda.is_available():
+            logger.warning("CUDA is not available, falling back to cpu")
+            return ["cpu"]
+        return ["cuda:0"]
+
+    # "cuda:0", "cuda:0,1,3" etc.
+    if device.startswith("cuda:"):
+        suffix = device[len("cuda:") :]
+        indices = [int(idx.strip()) for idx in suffix.split(",")]
+        devices = []
+        for idx in indices:
+            dev = f"cuda:{idx}"
+            try:
+                torch.cuda.get_device_properties(idx)
+                devices.append(dev)
+            except (RuntimeError, AssertionError):
+                logger.warning(f"{dev} is not available, skipping")
+        if not devices:
+            logger.warning(f"None of the specified GPUs ({device}) are available, falling back to cpu")
+            return ["cpu"]
+        return devices
+
+    # Unknown format - try as-is with fallback
+    logger.warning(f"Unknown device format '{device}', falling back to cpu")
+    return ["cpu"]
 
 
 def set_verbose(verbose: bool):
@@ -149,6 +216,7 @@ __all__ = [
     "set_default_model_preset",
     "create_default_model",
     "set_default_device",
+    "resolve_devices",
     "set_verbose",
     "set_default_cluster_cmap",
     "_get_cluster_color",

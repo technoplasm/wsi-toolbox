@@ -26,7 +26,7 @@ warnings.filterwarnings(
 )
 warnings.filterwarnings("ignore", category=UserWarning, message=".*cuda capability.*")
 
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni2")
 
 
 def build_output_path(input_path: str, namespace: str, filename: str) -> str:
@@ -127,11 +127,13 @@ class CLI(AutoCLI):
     class CommonArgs(BaseModel):
         seed: int = get_global_seed()
         model: str = param(DEFAULT_MODEL, l="--model-name", s="-M")
+        device: str = param("auto", s="-D", description="Device: auto, cpu, cuda:0, cuda:0,1")
         verbose: bool = param(False, s="-v")
 
     def prepare(self, a: CommonArgs):
         fix_global_seed(a.seed)
         common.set_default_model_preset(a.model)
+        common.set_default_device(a.device)
         logging.basicConfig(
             format="[wsi-toolbox] %(levelname)s - %(message)s",
             level=logging.DEBUG if a.verbose else logging.INFO,

@@ -20,8 +20,8 @@ The following foundation models are available:
 
 | Model | Arch | Params | Dim | HuggingFace |
 |-------|------|--------|-----|-------------|
-| `uni` (default) | ViT-L/16 | 300M | 1024 | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/UNI) |
-| `uni2` | ViT-H/14 | 681M | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
+| `uni` | ViT-L/16 | 300M | 1024 | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/UNI) |
+| `uni2` (default) | ViT-H/14 | 681M | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
 | `gigapath` | ViT-g/14 | 1.1B | 1536 | [prov-gigapath/prov-gigapath](https://huggingface.co/prov-gigapath/prov-gigapath) |
 | `virchow` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow](https://huggingface.co/paige-ai/Virchow) |
 | `virchow2` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
@@ -37,6 +37,34 @@ The following foundation models are available:
 
 ```bash
 huggingface-cli login
+```
+
+## GPU Configuration
+
+Device selection is controlled by `--device` / `-D` (CLI) or `set_default_device()` (Python). Default is `auto`.
+
+| Value | Behavior |
+|-------|----------|
+| `auto` (default) | Detect all GPUs. Multiple GPUs → parallel inference. Single GPU → `cuda:0`. No GPU → `cpu` (with warning) |
+| `cuda:0` | Use GPU 0 only. Falls back to `cpu` if unavailable (with warning) |
+| `cuda:1` | Use GPU 1 only |
+| `cuda:0,1,3` | Use specified GPUs in parallel |
+| `cpu` | CPU only |
+
+```bash
+wt extract -i sample.ndpi -D auto           # Auto-detect (default)
+wt extract -i sample.ndpi -D cuda:0         # Single GPU
+wt extract -i sample.ndpi -D cuda:0,1       # 2 GPUs in parallel
+```
+
+```python
+wt.set_default_device('cuda:0,1')  # Use GPU 0 and 1
+```
+
+For the Streamlit app, set via environment variable:
+
+```bash
+DEFAULT_DEVICE=cuda:0 uv run task app
 ```
 
 ## Quick Start
@@ -55,8 +83,8 @@ wt preview -i sample.h5
 ```python
 import wsi_toolbox as wt
 
-wt.set_default_model_preset('uni')
-wt.set_default_device('cuda')
+wt.set_default_model_preset('uni2')
+wt.set_default_device('auto')
 
 # 1. Extract
 cmd = wt.FeatureExtractionCommand(batch_size=256)
@@ -95,6 +123,7 @@ wt extract -i sample.ndpi -M virchow2      # Use Virchow2 model
 wt extract -i sample.ndpi -M conch15_768   # CONCH v1.5 (768D via AttentionalPooler)
 wt extract -i sample.ndpi -M midnight      # OpenMidnight model
 wt extract -i sample.ndpi -L               # Include latent features
+wt extract -i sample.ndpi -D cuda:0,1      # Multi-GPU parallel
 ```
 
 ```python
@@ -436,6 +465,9 @@ cmd(['sample1.h5', 'sample2.h5'])
 
 ```bash
 uv run task app
+
+# Environment variables
+DEFAULT_MODEL=gigapath DEFAULT_DEVICE=cuda:1 uv run task app
 ```
 
 ## Development

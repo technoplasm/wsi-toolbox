@@ -2,17 +2,19 @@
 Feature extraction command using foundation models.
 
 Uses get_patch_reader() to read from cache or WSI.
+Supports multi-GPU parallel inference.
 """
 
 import gc
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..common import create_default_model, get_config
+from ..common import create_default_model, get_config, resolve_devices
 from ..patch_reader import get_patch_reader
 from ..utils import safe_del
 from ..utils.hdf5_paths import write_root_metadata
@@ -30,6 +32,65 @@ class FeatureExtractResult(BaseModel):
     model: str = ""
     with_latent: bool = False
     skipped: bool = False
+
+
+class _GPUWorker:
+    """Holds a model copy on a specific GPU for parallel inference."""
+
+    def __init__(self, model, device: str, mean, std, extract_fn, with_latent: bool):
+        self.device = device
+        self.extract_fn = extract_fn
+        self.with_latent = with_latent
+        self.model = model.to(device)
+        self.mean = mean.to(device)
+        self.std = std.to(device)
+
+        if extract_fn is None:
+            self.latent_size = model.patch_embed.proj.kernel_size[0]
+        else:
+            self.latent_size = 0
+
+    def infer(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        """Run inference on a batch. Returns (features, latent_or_None)."""
+        import torch  # noqa: PLC0415
+
+        x = (torch.from_numpy(batch) / 255).permute(0, 3, 1, 2)  # BHWC->BCHW
+        x = x.to(self.device)
+        x = (x - self.mean) / self.std
+
+        device_type = "cuda" if self.device.startswith("cuda") else "cpu"
+
+        with torch.inference_mode(), torch.autocast(device_type=device_type, dtype=torch.float16):
+            if self.extract_fn is not None:
+                features = self.extract_fn(self.model, x)
+                result_features = features.cpu().numpy()
+                result_latent = None
+            else:
+                h_tensor = self.model.forward_features(x)
+                h = h_tensor.cpu().detach().numpy()
+                latent_index = h.shape[1] - self.latent_size**2
+                result_features = h[:, 0, ...]
+
+                if self.with_latent:
+                    result_latent = h[:, latent_index:, ...].astype(np.float16)
+                else:
+                    result_latent = None
+
+                del h_tensor
+
+        del x
+        if device_type == "cuda":
+            torch.cuda.empty_cache()
+
+        return result_features, result_latent
+
+    def cleanup(self):
+        """Release GPU resources."""
+        import torch  # noqa: PLC0415
+
+        del self.model, self.mean, self.std
+        if self.device.startswith("cuda"):
+            torch.cuda.empty_cache()
 
 
 class FeatureExtractionCommand:
@@ -65,7 +126,8 @@ class FeatureExtractionCommand:
             with_latent: Whether to extract latent features
             overwrite: Whether to overwrite existing features
             model_name: Model name (None to use global default)
-            device: Device (None to use global default)
+            device: Device spec (None to use global default).
+                'auto', 'cpu', 'cuda:0', 'cuda:0,1', etc.
             patch_size: Patch size (default: 256)
             target_mpp: Target microns per pixel (default: 0.5)
             prefetch: Number of batches to prefetch (0 to disable, default: 1)
@@ -102,6 +164,8 @@ class FeatureExtractionCommand:
         Returns:
             FeatureExtractResult: Result metadata
         """
+        import copy  # noqa: PLC0415
+
         import torch  # noqa: PLC0415
 
         # Check if already exists
@@ -113,6 +177,16 @@ class FeatureExtractionCommand:
                         return FeatureExtractResult(skipped=True)
         except FileNotFoundError:
             pass  # File doesn't exist yet
+
+        # Resolve devices
+        devices = resolve_devices(self.device)
+        num_gpus = len(devices)
+        use_parallel = num_gpus > 1
+
+        if use_parallel:
+            logger.info(f"Using {num_gpus} GPUs for parallel inference: {devices}")
+        else:
+            logger.info(f"Using device: {devices[0]}")
 
         # Get patch reader (cache or WSI)
         reader = get_patch_reader(
@@ -127,25 +201,24 @@ class FeatureExtractionCommand:
         total_batches = reader.get_num_batches(self.batch_size)
         progress = _progress(total=total_batches, desc="Initializing model")
 
-        model = None
-        mean = None
-        std = None
+        workers: list[_GPUWorker] = []
         done = False
 
         try:
-            model = create_default_model()
-            model = model.eval().to(self.device)
-
             cfg = get_config()
             extract_fn = cfg.extract_fn
-            mean = torch.tensor(cfg.norm_mean).view(1, 3, 1, 1).to(self.device)
-            std = torch.tensor(cfg.norm_std).view(1, 3, 1, 1).to(self.device)
-
-            if extract_fn is None:
-                latent_size = model.patch_embed.proj.kernel_size[0]
+            mean = torch.tensor(cfg.norm_mean).view(1, 3, 1, 1)
+            std = torch.tensor(cfg.norm_std).view(1, 3, 1, 1)
 
             if self.with_latent and extract_fn is not None:
                 logger.warning("with_latent is not supported with custom extract_fn, skipping latent extraction")
+
+            # Create workers (one per device)
+            base_model = create_default_model().eval()
+            workers.append(_GPUWorker(base_model, devices[0], mean.clone(), std.clone(), extract_fn, self.with_latent))
+            for dev in devices[1:]:
+                model_copy = copy.deepcopy(base_model)
+                workers.append(_GPUWorker(model_copy, dev, mean.clone(), std.clone(), extract_fn, self.with_latent))
 
             progress.set_description("Preparing")
 
@@ -153,6 +226,9 @@ class FeatureExtractionCommand:
             all_features = []
             all_latent = [] if self.with_latent and extract_fn is None else None
             all_coords = []
+
+            if use_parallel:
+                executor = ThreadPoolExecutor(max_workers=num_gpus)
 
             for batch, coords, desc in reader.iter_batches(self.batch_size):
                 progress.set_description(f"Processing patches: {desc}")
@@ -162,34 +238,31 @@ class FeatureExtractionCommand:
                     progress.update(1)
                     continue
 
-                # Preprocess
-                x = (torch.from_numpy(batch) / 255).permute(0, 3, 1, 2)  # BHWC->BCHW
-                x = x.to(self.device)
-                x = (x - mean) / std
+                if use_parallel:
+                    # Split batch across GPUs
+                    chunks = np.array_split(batch, num_gpus)
+                    futures = []
+                    for worker, chunk in zip(workers, chunks):
+                        if len(chunk) == 0:
+                            continue
+                        futures.append(executor.submit(worker.infer, chunk))
 
-                with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
-                    if extract_fn is not None:
-                        features = extract_fn(model, x)  # [B, D]
-                        all_features.append(features.cpu().numpy())
-                    else:
-                        h_tensor = model.forward_features(x)
-                        h = h_tensor.cpu().detach().numpy()
-                        latent_index = h.shape[1] - latent_size**2
-                        cls_feature = h[:, 0, ...]
-                        all_features.append(cls_feature)
-
-                        if self.with_latent:
-                            latent_feature = h[:, latent_index:, ...]
-                            all_latent.append(latent_feature.astype(np.float16))
-
-                        del h_tensor
+                    for future in futures:
+                        features, latent = future.result()
+                        all_features.append(features)
+                        if latent is not None and all_latent is not None:
+                            all_latent.append(latent)
+                else:
+                    features, latent = workers[0].infer(batch)
+                    all_features.append(features)
+                    if latent is not None and all_latent is not None:
+                        all_latent.append(latent)
 
                 all_coords.extend(coords)
-
-                # Cleanup
-                del x
-                torch.cuda.empty_cache()
                 progress.update(1)
+
+            if use_parallel:
+                executor.shutdown(wait=False)
 
             progress.close()
 
@@ -245,8 +318,8 @@ class FeatureExtractionCommand:
 
         finally:
             progress.close()
-            del model, mean, std
-            torch.cuda.empty_cache()
+            for worker in workers:
+                worker.cleanup()
             gc.collect()
 
             if not done:

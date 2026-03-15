@@ -22,6 +22,7 @@ from ..utils.hdf5_paths import list_namespaces
 from ..utils.st import st_horizontal
 from .ui.config import (
     BASE_DIR,
+    DEFAULT_DEVICE,
     DEFAULT_MODEL,
     MODEL_LABELS,
     MODEL_NAMES_BY_LABEL,
@@ -48,7 +49,7 @@ warnings.filterwarnings(
 )
 
 set_default_progress("streamlit")
-set_default_device("cuda")
+set_default_device(DEFAULT_DEVICE)
 
 Image.MAX_IMAGE_PIXELS = 3_500_000_000
 

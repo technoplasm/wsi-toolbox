@@ -6,13 +6,16 @@ import os
 
 # Environment-based configuration
 BASE_DIR = os.getenv("BASE_DIR", "data")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni2")
+DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "auto")
 
 # Model configuration
 MODEL_LABELS = {
+    "uni2": "UNI2-h",
     "uni": "UNI",
-    "gigapath": "Prov-Gigapath",
-    "virchow2": "Virchow2",
+    "gigapath": "Prov-GigaPath",
+    "conch15": "Conch V1.5",
+    "h-optimus-0": "H-optimus-0",
 }
 MODEL_NAMES_BY_LABEL = {v: k for k, v in MODEL_LABELS.items()}
 MODEL_NAMES = list(MODEL_LABELS.keys())
