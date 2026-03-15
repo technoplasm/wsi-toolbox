@@ -10,7 +10,7 @@ from . import commands
 from .common import set_default_device, set_default_model_preset, set_default_progress
 from .utils.plot import plot_scatter_2d
 
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni")
+DEFAULT_MODEL = os.getenv("WT_MODEL", "uni2")
 
 
 class Status:
@@ -237,7 +237,7 @@ class Watcher:
             task.run()  # 同期実行に変更
 
 
-BASE_DIR = os.getenv("BASE_DIR", "data")
+BASE_DIR = os.getenv("WT_BASE_DIR", "data")
 
 
 def main():

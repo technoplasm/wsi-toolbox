@@ -64,7 +64,7 @@ wt.set_default_device('cuda:0,1')  # Use GPU 0 and 1
 For the Streamlit app, set via environment variable:
 
 ```bash
-DEFAULT_DEVICE=cuda:0 uv run task app
+WT_DEVICE=cuda:0 uv run task app
 ```
 
 ## Quick Start
@@ -467,7 +467,7 @@ cmd(['sample1.h5', 'sample2.h5'])
 uv run task app
 
 # Environment variables
-DEFAULT_MODEL=gigapath DEFAULT_DEVICE=cuda:1 uv run task app
+WT_MODEL=gigapath WT_DEVICE=cuda:1 WT_PREFETCH=2 uv run task app
 ```
 
 ## Development

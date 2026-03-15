@@ -21,6 +21,7 @@ from ..config import (
     DEFAULT_CLUSTER_RESOLUTION,
     MODEL_LABELS,
     PATCH_SIZE,
+    PREFETCH,
     THUMBNAIL_SIZE,
 )
 from ..models import STATUS_READY, FileEntry
@@ -83,7 +84,9 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     start_time = time.time()
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                         set_default_model_preset(st.session_state.model)
-                        cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
+                        cmd = commands.FeatureExtractionCommand(
+                            batch_size=BATCH_SIZE, overwrite=True, prefetch=PREFETCH
+                        )
                         # wsi_pathを渡す（キャッシュがない場合にWSIから直接パッチを読むため）
                         _ = cmd(hdf5_path, wsi_path=wsi_path)
                     elapsed = time.time() - start_time

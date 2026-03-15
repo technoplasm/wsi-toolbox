@@ -5,9 +5,10 @@ Application configuration and constants
 import os
 
 # Environment-based configuration
-BASE_DIR = os.getenv("BASE_DIR", "data")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni2")
-DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "auto")
+BASE_DIR = os.getenv("WT_BASE_DIR", "data")
+MODEL = os.getenv("WT_MODEL", "uni2")
+DEVICE = os.getenv("WT_DEVICE", "auto")
+PREFETCH = int(os.getenv("WT_PREFETCH", "1"))
 
 # Model configuration
 MODEL_LABELS = {

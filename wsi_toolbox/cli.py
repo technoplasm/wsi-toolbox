@@ -26,7 +26,7 @@ warnings.filterwarnings(
 )
 warnings.filterwarnings("ignore", category=UserWarning, message=".*cuda capability.*")
 
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "uni2")
+DEFAULT_MODEL = os.getenv("WT_MODEL", "uni2")
 
 
 def build_output_path(input_path: str, namespace: str, filename: str) -> str:

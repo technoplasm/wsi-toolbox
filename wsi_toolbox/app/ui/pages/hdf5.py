@@ -26,6 +26,7 @@ from ..config import (
     MAX_CLUSTER_RESOLUTION,
     MIN_CLUSTER_RESOLUTION,
     MODEL_LABELS,
+    PREFETCH,
     THUMBNAIL_SIZE,
 )
 from ..models import STATUS_BLOCKED, STATUS_READY, STATUS_UNSUPPORTED, FileEntry
@@ -176,7 +177,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
                 st.write(f"{f.name}の特徴量が未抽出なので、抽出を行います。")
                 set_default_model_preset(st.session_state.model)
                 with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
-                    cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True)
+                    cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True, prefetch=PREFETCH)
                     _ = cmd(f.path)
                 st.write(f"{model_label}特徴量の抽出完了。")
 

@@ -22,8 +22,8 @@ from ..utils.hdf5_paths import list_namespaces
 from ..utils.st import st_horizontal
 from .ui.config import (
     BASE_DIR,
-    DEFAULT_DEVICE,
-    DEFAULT_MODEL,
+    DEVICE,
+    MODEL,
     MODEL_LABELS,
     MODEL_NAMES_BY_LABEL,
 )
@@ -49,7 +49,7 @@ warnings.filterwarnings(
 )
 
 set_default_progress("streamlit")
-set_default_device(DEFAULT_DEVICE)
+set_default_device(DEVICE)
 
 Image.MAX_IMAGE_PIXELS = 3_500_000_000
 
@@ -432,7 +432,7 @@ def main():
         set_locked_state(False)
 
     if "model" not in st.session_state:
-        st.session_state.model = DEFAULT_MODEL
+        st.session_state.model = MODEL
 
     st.title("ロビえもんNEXT - WSI AI解析システム")
 
