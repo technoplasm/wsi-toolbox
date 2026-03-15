@@ -38,29 +38,38 @@ class _GPUWorker:
     """Holds a model copy on a specific GPU for parallel inference."""
 
     def __init__(self, model, device: str, mean, std, extract_fn, with_latent: bool):
+        import torch  # noqa: PLC0415
+
         self.device = device
         self.extract_fn = extract_fn
         self.with_latent = with_latent
-        self.model = model.to(device)
+        self.model = model.to(device, memory_format=torch.channels_last)
         self.mean = mean.to(device)
         self.std = std.to(device)
+
+        # Select best autocast dtype for this device
+        if device.startswith("cuda"):
+            self.autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        else:
+            self.autocast_dtype = torch.bfloat16
+        self.device_type = "cuda" if device.startswith("cuda") else "cpu"
 
         if extract_fn is None:
             self.latent_size = model.patch_embed.proj.kernel_size[0]
         else:
             self.latent_size = 0
 
+        logger.info(f"Worker {device}: autocast={self.autocast_dtype}, channels_last")
+
     def infer(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
         """Run inference on a batch. Returns (features, latent_or_None)."""
         import torch  # noqa: PLC0415
 
         x = (torch.from_numpy(batch) / 255).permute(0, 3, 1, 2)  # BHWC->BCHW
-        x = x.to(self.device)
+        x = x.to(self.device, memory_format=torch.channels_last)
         x = (x - self.mean) / self.std
 
-        device_type = "cuda" if self.device.startswith("cuda") else "cpu"
-
-        with torch.inference_mode(), torch.autocast(device_type=device_type, dtype=torch.float16):
+        with torch.inference_mode(), torch.autocast(device_type=self.device_type, dtype=self.autocast_dtype):
             if self.extract_fn is not None:
                 features = self.extract_fn(self.model, x)
                 result_features = features.cpu().numpy()
@@ -80,9 +89,6 @@ class _GPUWorker:
                 del h
 
         del x
-        if device_type == "cuda":
-            torch.cuda.empty_cache()
-
         return result_features, result_latent
 
     def cleanup(self):
