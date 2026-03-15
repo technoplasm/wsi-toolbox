@@ -59,7 +59,7 @@ class _GPUWorker:
         else:
             self.latent_size = 0
 
-        logger.info(f"Worker {device}: autocast={self.autocast_dtype}, channels_last")
+        logger.debug(f"Worker {device}: autocast={self.autocast_dtype}, channels_last")
 
     def infer(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
         """Run inference on a batch. Returns (features, latent_or_None)."""

@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import warnings
@@ -17,7 +18,7 @@ import streamlit as st
 sys.path.append(str(P(__file__).parent.parent))
 __package__ = "wsi_toolbox.app"
 
-from ..common import set_default_device, set_default_progress
+from ..common import set_default_device, set_default_progress, set_verbose
 from ..utils.hdf5_paths import list_namespaces
 from ..utils.st import st_horizontal
 from .ui.config import (
@@ -48,8 +49,14 @@ warnings.filterwarnings(
     "ignore", category=FutureWarning, message="You are using `torch.load` with `weights_only=False`"
 )
 
+logging.basicConfig(
+    format="[wsi-toolbox] %(levelname)s - %(message)s",
+    level=logging.DEBUG,
+)
+
 set_default_progress("streamlit")
 set_default_device(DEVICE)
+set_verbose(True)
 
 Image.MAX_IMAGE_PIXELS = 3_500_000_000
 
