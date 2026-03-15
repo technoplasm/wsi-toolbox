@@ -323,8 +323,14 @@ def render_file_list(files: List[FileEntry]) -> List[FileEntry]:
     if selected_rows is None:
         return []
 
-    selected_files = [files[int(i)] for i in selected_rows.index]
-    return selected_files
+    new_selection = [files[int(i)] for i in selected_rows.index]
+
+    # ロック中は選択変更を無視し、ロック前の選択を維持
+    if st.session_state.get("locked", False):
+        return st.session_state.get("locked_selection", new_selection)
+
+    st.session_state["locked_selection"] = new_selection
+    return new_selection
 
 
 def render_file_actions(selected_files: List[FileEntry]):
