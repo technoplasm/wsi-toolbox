@@ -483,8 +483,10 @@ class PrefetchReader:
                 logger.debug(
                     f"prefetch: get batch {batch_idx}, queue={queue.qsize()}/{self.prefetch}, wait={wait_ms:.1f}ms"
                 )
+                batch, coords, desc = item
+                desc = f"{desc} (q={queue.qsize()}/{self.prefetch} wait={wait_ms:.0f}ms)"
                 batch_idx += 1
-                yield item
+                yield batch, coords, desc
         finally:
             thread.join(timeout=1)
 

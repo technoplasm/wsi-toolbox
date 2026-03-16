@@ -51,7 +51,7 @@ warnings.filterwarnings(
 
 logging.basicConfig(
     format="[wsi-toolbox] %(levelname)s - %(message)s",
-    level=logging.DEBUG,
+    level=logging.INFO,
 )
 
 set_default_progress("streamlit")
@@ -235,6 +235,13 @@ def render_file_list(files: List[FileEntry]) -> List[FileEntry]:
         st.warning("ファイルが選択されていません")
         return []
 
+    # ロック中はグリッドの操作を無効化（iframeへのポインタイベントを遮断）
+    if st.session_state.get("locked", False):
+        st.markdown(
+            "<style>iframe { pointer-events: none !important; }</style>",
+            unsafe_allow_html=True,
+        )
+
     # FileEntryのリストを辞書のリストに変換し、DataFrameに変換
     data = [entry.to_dict() for entry in files]
     df = pd.DataFrame(data)
@@ -317,20 +324,14 @@ def render_file_list(files: List[FileEntry]) -> List[FileEntry]:
         theme="streamlit",
         enable_enterprise_modules=False,
         update_on=["selectionChanged"],
+        key="file_grid",
     )
 
     selected_rows = grid_response["selected_rows"]
     if selected_rows is None:
         return []
 
-    new_selection = [files[int(i)] for i in selected_rows.index]
-
-    # ロック中は選択変更を無視し、ロック前の選択を維持
-    if st.session_state.get("locked", False):
-        return st.session_state.get("locked_selection", new_selection)
-
-    st.session_state["locked_selection"] = new_selection
-    return new_selection
+    return [files[int(i)] for i in selected_rows.index]
 
 
 def render_file_actions(selected_files: List[FileEntry]):

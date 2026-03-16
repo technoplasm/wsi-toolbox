@@ -20,6 +20,8 @@ from .utils.seed import fix_global_seed, get_global_seed
 from .utils.white import create_white_detector
 from .wsi_files import WSI_EXTENSIONS, create_wsi_file
 
+logger = logging.getLogger(__name__)
+
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 warnings.filterwarnings(
     "ignore", category=FutureWarning, message="You are using `torch.load` with `weights_only=False`"
@@ -127,6 +129,7 @@ class CLI(AutoCLI):
     class CommonArgs(BaseModel):
         seed: int = get_global_seed()
         model: str = param(DEFAULT_MODEL, l="--model-name", s="-M")
+        progress: str = param("rich", choices=["rich", "tqdm"])
         device: str = param("auto", s="-D", description="Device: auto, cpu, cuda:0, cuda:0,1")
         verbose: bool = param(False, s="-v")
 
@@ -134,6 +137,7 @@ class CLI(AutoCLI):
         fix_global_seed(a.seed)
         common.set_default_model_preset(a.model)
         common.set_default_device(a.device)
+        common.set_default_progress(a.progress)
         logging.basicConfig(
             format="[wsi-toolbox] %(levelname)s - %(message)s",
             level=logging.DEBUG if a.verbose else logging.INFO,
@@ -255,7 +259,7 @@ class CLI(AutoCLI):
         result = cmd(h5_path, wsi_path=wsi_path)
 
         if not result.skipped:
-            print(f"done: {result.feature_dim}D features extracted ({result.patch_count} patches)")
+            logger.info(f"Feature extraction complete: {result.summary()}")
 
     class ClusterArgs(CommonArgs):
         input_paths: list[str] = param(..., l="--in", s="-i")

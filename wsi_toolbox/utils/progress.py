@@ -11,6 +11,9 @@ T = TypeVar("T")
 class BaseProgress:
     """Base interface for progress bars"""
 
+    terminal_output = False
+    """True if this backend produces visible terminal output (tqdm, rich)."""
+
     def update(self, n: int = 1) -> None:
         raise NotImplementedError
 
@@ -27,6 +30,17 @@ class BaseProgress:
     def close(self) -> None:
         raise NotImplementedError
 
+    def _log_progress(self) -> None:
+        """Log progress at info level for non-terminal backends."""
+        if self.terminal_output:
+            return
+        total = getattr(self, "total", None)
+        if not total:
+            return
+        n = getattr(self, "n", 0)
+        desc = getattr(self, "desc", "")
+        logger.info(f"{desc} [{n}/{total}]")
+
     def __enter__(self):
         return self
 
@@ -36,6 +50,8 @@ class BaseProgress:
 
 class TqdmProgress(BaseProgress):
     """tqdm wrapper"""
+
+    terminal_output = True
 
     def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
         self._pbar = tqdm(iterable=iterable, total=total, desc=desc, **kwargs)
@@ -92,6 +108,7 @@ class StreamlitProgress(BaseProgress):
         self.n += n
         if self.total:
             self.progress_bar.progress(min(self.n / self.total, 1.0))
+        self._log_progress()
 
     def set_description(self, desc: str = None, refresh: bool = True) -> None:
         """説明テキストを更新する"""
@@ -148,6 +165,8 @@ class StreamlitProgress(BaseProgress):
 
 class RichProgress(BaseProgress):
     """Rich progress bar wrapper"""
+
+    terminal_output = True
 
     def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
         from rich.progress import (  # noqa: PLC0415
@@ -221,7 +240,7 @@ class RichProgress(BaseProgress):
 
 
 class DummyProgress(BaseProgress):
-    """Dummy progress bar (no output)"""
+    """Dummy progress bar (no output, logs progress at info level)"""
 
     def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
         self.iterable = iterable
@@ -231,6 +250,7 @@ class DummyProgress(BaseProgress):
 
     def update(self, n: int = 1) -> None:
         self.n += n
+        self._log_progress()
 
     def set_description(self, desc: str = None, refresh: bool = True) -> None:
         if desc is not None:

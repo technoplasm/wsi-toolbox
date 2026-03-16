@@ -7,6 +7,7 @@ Supports multi-GPU parallel inference.
 
 import gc
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
@@ -29,9 +30,27 @@ class FeatureExtractResult(BaseModel):
 
     feature_dim: int = 0
     patch_count: int = 0
+    total_patches: int = 0
+    total_batches: int = 0
+    elapsed: float = 0.0
+    batch_time_mean: float = 0.0
+    batch_time_std: float = 0.0
     model: str = ""
     with_latent: bool = False
     skipped: bool = False
+
+    def summary(self) -> str:
+        filtered = self.total_patches - self.patch_count
+        ratio = self.patch_count / self.total_patches * 100 if self.total_patches else 0
+        m, s = divmod(int(self.elapsed), 60)
+        return (
+            f"{self.patch_count}/{self.total_patches} patches ({ratio:.1f}%), "
+            f"filtered={filtered}, "
+            f"{self.total_batches} batches, "
+            f"{m}m{s}s elapsed "
+            f"({self.batch_time_mean:.2f}\u00b1{self.batch_time_std:.2f}s/batch), "
+            f"model={self.model}, dim={self.feature_dim}"
+        )
 
 
 class _GPUWorker:
@@ -211,6 +230,8 @@ class FeatureExtractionCommand:
         workers: list[_GPUWorker] = []
         executor: ThreadPoolExecutor | None = None
         done = False
+        t_start = time.perf_counter()
+        batch_times: list[float] = []
 
         try:
             cfg = get_config()
@@ -246,6 +267,8 @@ class FeatureExtractionCommand:
                     progress.update(1)
                     continue
 
+                t_batch = time.perf_counter()
+
                 if use_parallel:
                     # Split batch across GPUs
                     chunks = np.array_split(batch, num_gpus)
@@ -266,6 +289,7 @@ class FeatureExtractionCommand:
                     if latent is not None and all_latent is not None:
                         all_latent.append(latent)
 
+                batch_times.append(time.perf_counter() - t_batch)
                 all_coords.extend(coords)
                 progress.update(1)
 
@@ -277,7 +301,9 @@ class FeatureExtractionCommand:
                 all_latent = np.concatenate(all_latent, axis=0)
 
             patch_count = len(all_coords)
-            logger.info(f"Extracted {patch_count} patches")
+            total_patches = reader.patch_count
+            elapsed = time.perf_counter() - t_start
+            bt = np.array(batch_times) if batch_times else np.array([0.0])
 
             # Save to HDF5
             with h5py.File(hdf5_path, "a") as f:
@@ -317,6 +343,11 @@ class FeatureExtractionCommand:
             return FeatureExtractResult(
                 feature_dim=all_features.shape[-1],
                 patch_count=patch_count,
+                total_patches=total_patches,
+                total_batches=total_batches,
+                elapsed=elapsed,
+                batch_time_mean=float(bt.mean()),
+                batch_time_std=float(bt.std()),
                 model=self.model_name,
                 with_latent=self.with_latent and extract_fn is None,
             )

@@ -2,8 +2,10 @@
 HDF5 analysis page
 """
 
+import logging
 import os
 import re
+import time
 from pathlib import Path as P
 from typing import List
 
@@ -31,6 +33,8 @@ from ..config import (
 )
 from ..models import STATUS_BLOCKED, STATUS_READY, STATUS_UNSUPPORTED, FileEntry
 from ..state import lock, render_reset_button, set_locked_state
+
+logger = logging.getLogger(__name__)
 
 
 def build_output_path(input_path: str, namespace: str, filename: str) -> str:
@@ -175,10 +179,12 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
         for f in selected_files:
             if not f.detail or not f.detail.has_features:
                 st.write(f"{f.name}の特徴量が未抽出なので、抽出を行います。")
+                logger.info(f"[FeatureExtraction] Start: {f.name} (model={st.session_state.model})")
                 set_default_model_preset(st.session_state.model)
                 with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                     cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True, prefetch=PREFETCH)
-                    _ = cmd(f.path)
+                    result = cmd(f.path)
+                logger.info(f"[FeatureExtraction] Done: {result.summary()}")
                 st.write(f"{model_label}特徴量の抽出完了。")
 
         set_default_model_preset(st.session_state.model)
@@ -203,6 +209,8 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
             cluster_cmd=cluster_cmd,
         )
 
+        logger.info(f"[Clustering] Start: {t}")
+        t0 = time.perf_counter()
         with st.spinner(f"{t}のUMAP + クラスタリング中...", show_time=True):
             base = P(selected_files[0].path).stem if namespace == "default" else ""
             suffix = f"_{subcluster_label}" if subcluster_filter else ""
@@ -230,6 +238,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
             fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
             plt.close(fig)
 
+        logger.info(f"[Clustering] Done: {t} ({time.perf_counter() - t0:.1f}s)")
         st.subheader("UMAP投射 + クラスタリング")
         umap_filename = os.path.basename(umap_path)
         st.image(Image.open(umap_path), caption=umap_filename)
@@ -237,6 +246,8 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
 
         st.divider()
 
+        logger.info(f"[Preview] Start: {t}")
+        t0 = time.perf_counter()
         with st.spinner("オーバービュー生成中...", show_time=True):
             for f in selected_files:
                 set_default_model_preset(st.session_state.model)
@@ -261,4 +272,5 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
                 st.image(thumb, caption=thumb_filename)
                 st.write(f"{thumb_filename}に出力しました。")
 
+        logger.info(f"[Preview] Done: {t} ({time.perf_counter() - t0:.1f}s)")
         render_reset_button()

@@ -2,6 +2,7 @@
 WSI processing page
 """
 
+import logging
 import os
 import time
 from pathlib import Path as P
@@ -26,6 +27,8 @@ from ..config import (
 )
 from ..models import STATUS_READY, FileEntry
 from ..state import lock, render_reset_button, set_locked_state
+
+logger = logging.getLogger(__name__)
 
 
 def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
@@ -81,16 +84,15 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                 if matched_h5_entry is not None and matched_h5_entry.detail and matched_h5_entry.detail.has_features:
                     st.write(f"すでに{model_label}特徴量を抽出済みなので処理をスキップしました。")
                 else:
-                    start_time = time.time()
+                    logger.info(f"[FeatureExtraction] Start: {f.name} (model={st.session_state.model})")
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                         set_default_model_preset(st.session_state.model)
                         cmd = commands.FeatureExtractionCommand(
                             batch_size=BATCH_SIZE, overwrite=True, prefetch=PREFETCH
                         )
-                        # wsi_pathを渡す（キャッシュがない場合にWSIから直接パッチを読むため）
-                        _ = cmd(hdf5_path, wsi_path=wsi_path)
-                    elapsed = time.time() - start_time
-                    minutes, seconds = divmod(int(elapsed), 60)
+                        result = cmd(hdf5_path, wsi_path=wsi_path)
+                    minutes, seconds = divmod(int(result.elapsed), 60)
+                    logger.info(f"[FeatureExtraction] Done: {result.summary()}")
                     st.write(f"{model_label}特徴量の抽出完了（{minutes}分{seconds}秒）")
                 hdf5_paths.append(hdf5_path)
                 if i < len(selected_files) - 1:
@@ -105,6 +107,8 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     umap_path = f"{base}_umap.png"
                     thumb_path = f"{base}_thumb.jpg"
 
+                    logger.info(f"[Clustering] Start: {f.name}")
+                    t0 = time.perf_counter()
                     with st.spinner("UMAP + クラスタリング中...", show_time=True):
                         set_default_model_preset(st.session_state.model)
                         combined_cmd = commands.ClusterWithUmapCommand(
@@ -132,13 +136,17 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                         )
                         fig.savefig(umap_path, bbox_inches="tight", pad_inches=0.5)
                         plt.close(fig)
+                    logger.info(f"[Clustering] Done: {f.name} ({time.perf_counter() - t0:.1f}s)")
                     st.write(f"クラスタリング結果を{os.path.basename(umap_path)}に出力しました。")
 
+                    logger.info(f"[Preview] Start: {f.name}")
+                    t0 = time.perf_counter()
                     with st.spinner("オーバービュー生成中", show_time=True):
                         set_default_model_preset(st.session_state.model)
                         preview_cmd = commands.PreviewClustersCommand(size=THUMBNAIL_SIZE, rotate=rotate_preview)
                         img = preview_cmd(hdf5_path, namespace="default")
                         img.save(thumb_path)
+                    logger.info(f"[Preview] Done: {f.name} ({time.perf_counter() - t0:.1f}s)")
                     st.write(f"オーバービューを{os.path.basename(thumb_path)}に出力しました。")
                 if i < len(selected_files) - 1:
                     st.divider()
