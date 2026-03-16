@@ -133,7 +133,7 @@ class ClusteringCommand:
         # Total: 1 (load) + 5 (clustering steps) + 1 (write) = 7
         own_progress = progress is None
         if own_progress:
-            pbar = _progress(total=7, desc="Clustering")
+            pbar = _progress(total=7, desc="Clustering", verbose=True)
             pbar.__enter__()
         else:
             pbar = progress
@@ -264,7 +264,7 @@ class ClusterWithUmapCommand:
             ClusterWithUmapResult with paths and statistics
         """
         # Total steps: UMAP (3) + Clustering (7) = 10
-        with _progress(total=10, desc="UMAP + Clustering") as pbar:
+        with _progress(total=10, desc="UMAP + Clustering", verbose=True) as pbar:
             umap_result = self.umap_cmd(hdf5_paths, progress=pbar)
             cluster_result = self.cluster_cmd(hdf5_paths, progress=pbar)
 

@@ -123,7 +123,7 @@ class UmapCommand:
         # Progress bar handling: use external if provided, otherwise create own
         own_progress = progress is None
         if own_progress:
-            pbar = _progress(total=3, desc="UMAP")
+            pbar = _progress(total=3, desc="UMAP", verbose=True)
             pbar.__enter__()
         else:
             pbar = progress

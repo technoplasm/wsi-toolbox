@@ -31,8 +31,8 @@ class BaseProgress:
         raise NotImplementedError
 
     def _log_progress(self) -> None:
-        """Log progress at info level for non-terminal backends."""
-        if self.terminal_output:
+        """Log progress at info level when verbose and no terminal output."""
+        if not getattr(self, "verbose", False) or self.terminal_output:
             return
         total = getattr(self, "total", None)
         if not total:
@@ -53,7 +53,14 @@ class TqdmProgress(BaseProgress):
 
     terminal_output = True
 
-    def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
+    def __init__(
+        self,
+        iterable: Optional[Iterable[T]] = None,
+        total: Optional[int] = None,
+        desc: str = "",
+        verbose: bool = False,
+        **kwargs,
+    ):
         self._pbar = tqdm(iterable=iterable, total=total, desc=desc, **kwargs)
 
     def update(self, n: int = 1) -> None:
@@ -78,9 +85,14 @@ class TqdmProgress(BaseProgress):
 class StreamlitProgress(BaseProgress):
     """Streamlit progress bar wrapper"""
 
-    def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
-        # import streamlit as st はここに置くこと
-        # import streamlit as st はここに置くこと
+    def __init__(
+        self,
+        iterable: Optional[Iterable[T]] = None,
+        total: Optional[int] = None,
+        desc: str = "",
+        verbose: bool = False,
+        **kwargs,
+    ):
         # import streamlit as st はここに置くこと
         import streamlit as st  # noqa: E402
 
@@ -92,6 +104,7 @@ class StreamlitProgress(BaseProgress):
         )
         self.desc = desc
         self.n = 0
+        self.verbose = verbose
         self.kwargs = kwargs
 
         # 説明テキスト用のコンテナ
@@ -168,7 +181,14 @@ class RichProgress(BaseProgress):
 
     terminal_output = True
 
-    def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
+    def __init__(
+        self,
+        iterable: Optional[Iterable[T]] = None,
+        total: Optional[int] = None,
+        desc: str = "",
+        verbose: bool = False,
+        **kwargs,
+    ):
         from rich.progress import (  # noqa: PLC0415
             BarColumn,
             MofNCompleteColumn,
@@ -240,13 +260,21 @@ class RichProgress(BaseProgress):
 
 
 class DummyProgress(BaseProgress):
-    """Dummy progress bar (no output, logs progress at info level)"""
+    """Dummy progress bar (no output)"""
 
-    def __init__(self, iterable: Optional[Iterable[T]] = None, total: Optional[int] = None, desc: str = "", **kwargs):
+    def __init__(
+        self,
+        iterable: Optional[Iterable[T]] = None,
+        total: Optional[int] = None,
+        desc: str = "",
+        verbose: bool = False,
+        **kwargs,
+    ):
         self.iterable = iterable
         self.total = total
         self.desc = desc
         self.n = 0
+        self.verbose = verbose
 
     def update(self, n: int = 1) -> None:
         self.n += n

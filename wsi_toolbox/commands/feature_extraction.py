@@ -225,7 +225,7 @@ class FeatureExtractionCommand:
         )
         # Progress bar (iteration-based)
         total_batches = reader.get_num_batches(self.batch_size)
-        progress = _progress(total=total_batches, desc="Initializing model")
+        progress = _progress(total=total_batches, desc="Initializing model", verbose=True)
 
         workers: list[_GPUWorker] = []
         executor: ThreadPoolExecutor | None = None
