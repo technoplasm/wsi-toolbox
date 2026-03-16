@@ -8,7 +8,7 @@ import os
 BASE_DIR = os.getenv("WT_BASE_DIR", "data")
 MODEL = os.getenv("WT_MODEL", "uni2")
 DEVICE = os.getenv("WT_DEVICE", "auto")
-PREFETCH = int(os.getenv("WT_PREFETCH", "1"))
+PREFETCH = int(os.getenv("WT_PREFETCH", "2"))
 
 # Model configuration
 MODEL_LABELS = {

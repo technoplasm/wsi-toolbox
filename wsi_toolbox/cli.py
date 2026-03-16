@@ -233,7 +233,7 @@ class CLI(AutoCLI):
         with_latent_features: bool = param(False, s="-L")
         # On-demand options
         target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
-        prefetch: int = param(1, l="--prefetch", description="Batches to prefetch (0 to disable)")
+        prefetch: int = param(2, l="--prefetch", description="Batches to prefetch (0 to disable)")
 
     def run_extract(self, a: ExtractArgs):
         input_path = Path(a.input_path)
