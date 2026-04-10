@@ -1,5 +1,7 @@
 /.venv
-/data
 /weights
-/out
 /dist
+
+/data
+/out
+/docs
