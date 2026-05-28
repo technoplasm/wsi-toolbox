@@ -232,6 +232,7 @@ class CLI(AutoCLI):
         overwrite: bool = param(False, s="-O")
         with_latent_features: bool = param(False, s="-L")
         # On-demand options
+        patch_size: int = param(256, s="-S", description="Patch size")
         target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
         prefetch: int = param(2, l="--prefetch", description="Batches to prefetch (0 to disable)")
 
@@ -253,6 +254,7 @@ class CLI(AutoCLI):
             batch_size=a.batch_size,
             with_latent=a.with_latent_features,
             overwrite=a.overwrite,
+            patch_size=a.patch_size,
             target_mpp=a.target_mpp,
             prefetch=a.prefetch,
         )
