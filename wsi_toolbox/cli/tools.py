@@ -11,107 +11,6 @@ from .. import commands
 from ..wsi_files import create_wsi_file, resolve_h5_path
 from ._base import CommonArgs
 
-# ---------------------------------------------------------------------------
-# show
-
-
-class ShowArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i", description="HDF5 or WSI file path")
-    verbose: bool = param(False, s="-v", description="Show detailed info")
-
-
-class ShowMixin:
-    ShowArgs = ShowArgs
-
-    def run_show(self, a: ShowArgs):
-        """Show HDF5 file structure and contents"""
-        hdf5_path = resolve_h5_path(a.input_path)
-        cmd = commands.ShowCommand(verbose=a.verbose)
-        cmd(hdf5_path)
-
-
-# ---------------------------------------------------------------------------
-# dzi
-
-
-class DziArgs(CommonArgs):
-    input_wsi: str = param(..., l="--input", s="-i", description="Input WSI file path")
-    output_dir: str = param(..., l="--output", s="-o", description="Output directory")
-    tile_size: int = param(256, l="--tile-size", s="-t", description="Tile size in pixels")
-    overlap: int = param(0, l="--overlap", description="Tile overlap in pixels")
-    jpeg_quality: int = param(90, s="-q", description="JPEG quality (1-100)")
-
-
-class DziMixin:
-    DziArgs = DziArgs
-
-    def run_dzi(self, a: DziArgs):
-        """Export WSI to Deep Zoom Image (DZI) format for OpenSeadragon"""
-        name = Path(a.input_wsi).stem
-        output_dir = Path(a.output_dir)
-
-        cmd = commands.DziCommand(
-            tile_size=a.tile_size,
-            overlap=a.overlap,
-            jpeg_quality=a.jpeg_quality,
-        )
-
-        result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name)
-        print(f"Export completed: {result.dzi_path}")
-
-
-# ---------------------------------------------------------------------------
-# thumb
-
-
-class ThumbArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i", description="Input WSI file path")
-    output_path: str = param("", l="--out", s="-o", description="Output path")
-    width: int = param(-1, s="-w", description="Width (-1 for auto)")
-    height: int = param(-1, s="-h", description="Height (-1 for auto)")
-    quality: int = param(90, s="-q", description="JPEG quality (1-100)")
-    open: bool = False
-
-
-class ThumbMixin:
-    ThumbArgs = ThumbArgs
-
-    def run_thumb(self, a: ThumbArgs):
-        """Generate thumbnail from WSI"""
-        wsi = create_wsi_file(a.input_path)
-
-        thumb_array = wsi.generate_thumbnail(width=a.width, height=a.height)
-        actual_h, actual_w = thumb_array.shape[:2]
-
-        output_path = a.output_path
-        if not output_path:
-            stem = Path(a.input_path).stem
-            output_path = str(Path(a.input_path).parent / f"{stem}_thumb_{actual_w}x{actual_h}.jpg")
-
-        img = Image.fromarray(thumb_array)
-        img.save(output_path, "JPEG", quality=a.quality)
-        print(f"wrote {output_path}")
-
-        if a.open:
-            os.system(f"xdg-open {output_path}")
-
-
-# ---------------------------------------------------------------------------
-# migrate
-
-
-class MigrateArgs(CommonArgs):
-    input_paths: list[str] = param(..., l="--in", s="-i", description="HDF5 file path(s) to migrate")
-
-
-class MigrateMixin:
-    MigrateArgs = MigrateArgs
-
-    def run_migrate(self, a: MigrateArgs):
-        """Migrate old HDF5 format to new format"""
-        for path in a.input_paths:
-            migrate_h5(path)
-
 
 def migrate_h5(input_path: str) -> bool:
     """
@@ -168,3 +67,74 @@ def migrate_h5(input_path: str) -> bool:
 
         print(f"Migrated: {input_path}")
         return True
+
+
+class ToolsMixin:
+    """Utility subcommands gathered into a single mixin."""
+
+    # ----- show -----
+    class ShowArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i", description="HDF5 or WSI file path")
+        verbose: bool = param(False, s="-v", description="Show detailed info")
+
+    def run_show(self, a: ShowArgs):
+        """Show HDF5 file structure and contents"""
+        hdf5_path = resolve_h5_path(a.input_path)
+        commands.ShowCommand(verbose=a.verbose)(hdf5_path)
+
+    # ----- dzi -----
+    class DziArgs(CommonArgs):
+        input_wsi: str = param(..., l="--input", s="-i", description="Input WSI file path")
+        output_dir: str = param(..., l="--output", s="-o", description="Output directory")
+        tile_size: int = param(256, l="--tile-size", s="-t", description="Tile size in pixels")
+        overlap: int = param(0, l="--overlap", description="Tile overlap in pixels")
+        jpeg_quality: int = param(90, s="-q", description="JPEG quality (1-100)")
+
+    def run_dzi(self, a: DziArgs):
+        """Export WSI to Deep Zoom Image (DZI) format for OpenSeadragon"""
+        name = Path(a.input_wsi).stem
+        output_dir = Path(a.output_dir)
+
+        cmd = commands.DziCommand(
+            tile_size=a.tile_size,
+            overlap=a.overlap,
+            jpeg_quality=a.jpeg_quality,
+        )
+        result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name)
+        print(f"Export completed: {result.dzi_path}")
+
+    # ----- thumb -----
+    class ThumbArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i", description="Input WSI file path")
+        output_path: str = param("", l="--out", s="-o", description="Output path")
+        width: int = param(-1, s="-w", description="Width (-1 for auto)")
+        height: int = param(-1, s="-h", description="Height (-1 for auto)")
+        quality: int = param(90, s="-q", description="JPEG quality (1-100)")
+        open: bool = False
+
+    def run_thumb(self, a: ThumbArgs):
+        """Generate thumbnail from WSI"""
+        wsi = create_wsi_file(a.input_path)
+
+        thumb_array = wsi.generate_thumbnail(width=a.width, height=a.height)
+        actual_h, actual_w = thumb_array.shape[:2]
+
+        output_path = a.output_path
+        if not output_path:
+            stem = Path(a.input_path).stem
+            output_path = str(Path(a.input_path).parent / f"{stem}_thumb_{actual_w}x{actual_h}.jpg")
+
+        Image.fromarray(thumb_array).save(output_path, "JPEG", quality=a.quality)
+        print(f"wrote {output_path}")
+
+        if a.open:
+            os.system(f"xdg-open {output_path}")
+
+    # ----- migrate -----
+    class MigrateArgs(CommonArgs):
+        input_paths: list[str] = param(..., l="--in", s="-i", description="HDF5 file path(s) to migrate")
+
+    def run_migrate(self, a: MigrateArgs):
+        """Migrate old HDF5 format to new format"""
+        for path in a.input_paths:
+            migrate_h5(path)

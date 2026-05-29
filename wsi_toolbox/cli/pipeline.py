@@ -15,25 +15,21 @@ from ._base import CommonArgs
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# cache
+class PipelineMixin:
+    """Data-building subcommands gathered into a single mixin."""
 
-
-class CacheArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i")
-    output_path: str = param("", l="--out", s="-o")
-    patch_size: int = param(256, s="-S")
-    target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
-    rows_per_read: int = param(4, l="--rows", description="Rows per read")
-    overwrite: bool = param(False, s="-O")
-    engine: str = param("auto", choices=["auto", "openslide", "tifffile"])
-    detect_white: list[str] = param(
-        [], l="--detect-white", s="-w", description="White detection: method threshold (e.g., 'ptp 0.9')"
-    )
-
-
-class CacheMixin:
-    CacheArgs = CacheArgs
+    # ----- cache -----
+    class CacheArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o")
+        patch_size: int = param(256, s="-S")
+        target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
+        rows_per_read: int = param(4, l="--rows", description="Rows per read")
+        overwrite: bool = param(False, s="-O")
+        engine: str = param("auto", choices=["auto", "openslide", "tifffile"])
+        detect_white: list[str] = param(
+            [], l="--detect-white", s="-w", description="White detection: method threshold (e.g., 'ptp 0.9')"
+        )
 
     def run_cache(self, a: CacheArgs):
         output_path = a.output_path
@@ -70,24 +66,16 @@ class CacheMixin:
         if not result.skipped:
             print(f"done: {result.patch_count} patches (mpp={result.mpp:.4f}, level={result.level_used})")
 
-
-# ---------------------------------------------------------------------------
-# extract
-
-
-class ExtractArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i", description="WSI file or HDF5 file")
-    output_path: str = param("", l="--out", s="-o", description="Output HDF5 path (for WSI input)")
-    batch_size: int = param(512, s="-B")
-    overwrite: bool = param(False, s="-O")
-    with_latent_features: bool = param(False, s="-L")
-    patch_size: int = param(256, s="-S", description="Patch size")
-    target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
-    prefetch: int = param(2, l="--prefetch", description="Batches to prefetch (0 to disable)")
-
-
-class ExtractMixin:
-    ExtractArgs = ExtractArgs
+    # ----- extract -----
+    class ExtractArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i", description="WSI file or HDF5 file")
+        output_path: str = param("", l="--out", s="-o", description="Output HDF5 path (for WSI input)")
+        batch_size: int = param(512, s="-B")
+        overwrite: bool = param(False, s="-O")
+        with_latent_features: bool = param(False, s="-L")
+        patch_size: int = param(256, s="-S", description="Patch size")
+        target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
+        prefetch: int = param(2, l="--prefetch", description="Batches to prefetch (0 to disable)")
 
     def run_extract(self, a: ExtractArgs):
         input_path = Path(a.input_path)
@@ -117,23 +105,15 @@ class ExtractMixin:
         if not result.skipped:
             logger.info(f"Feature extraction complete: {result.summary()}")
 
-
-# ---------------------------------------------------------------------------
-# aggregate
-
-
-class AggregateArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i", description="HDF5 or WSI file path")
-    slide_preset: str = param(
-        "titan",
-        l="--slide-preset",
-        description="Slide-level aggregator preset (e.g., titan)",
-    )
-    overwrite: bool = param(False, s="-O")
-
-
-class AggregateMixin:
-    AggregateArgs = AggregateArgs
+    # ----- aggregate -----
+    class AggregateArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i", description="HDF5 or WSI file path")
+        slide_preset: str = param(
+            "titan",
+            l="--slide-preset",
+            description="Slide-level aggregator preset (e.g., titan)",
+        )
+        overwrite: bool = param(False, s="-O")
 
     def run_aggregate(self, a: AggregateArgs):
         """Run a slide-level aggregator (TITAN, etc.) on tile features."""

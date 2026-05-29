@@ -1,46 +1,12 @@
-"""CLI entry point — composes all subcommand mixins onto CLIBase."""
+"""CLI entry point — composes pipeline / analysis / tools mixins onto CLIBase."""
 
 from ._base import DEFAULT_PRESET, CLIBase, CommonArgs, build_output_path
-from .analysis import (
-    ClusterMixin,
-    PcaMixin,
-    PreviewMixin,
-    PreviewScoreMixin,
-    UmapMixin,
-)
-from .pipeline import (
-    AggregateMixin,
-    CacheMixin,
-    ExtractMixin,
-)
-from .tools import (
-    DziMixin,
-    MigrateMixin,
-    ShowMixin,
-    ThumbMixin,
-    migrate_h5,
-)
+from .analysis import AnalysisMixin
+from .pipeline import PipelineMixin
+from .tools import ToolsMixin, migrate_h5
 
 
-class CLI(
-    # pipeline
-    CacheMixin,
-    ExtractMixin,
-    AggregateMixin,
-    # analysis
-    ClusterMixin,
-    UmapMixin,
-    PcaMixin,
-    PreviewMixin,
-    PreviewScoreMixin,
-    # tools
-    ShowMixin,
-    DziMixin,
-    ThumbMixin,
-    MigrateMixin,
-    # base last (most-derived methods like prepare() come from here)
-    CLIBase,
-):
+class CLI(PipelineMixin, AnalysisMixin, ToolsMixin, CLIBase):
     """All wsi-toolbox subcommands gathered via mixins; AutoCLI introspects MRO."""
 
 

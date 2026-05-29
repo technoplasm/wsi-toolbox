@@ -14,21 +14,18 @@ from ..utils.plot import plot_scatter_2d, plot_violin_1d
 from ..wsi_files import resolve_h5_path, resolve_h5_paths
 from ._base import CommonArgs, build_output_path
 
-# ---------------------------------------------------------------------------
-# cluster
 
+class AnalysisMixin:
+    """Feature-consuming subcommands gathered into a single mixin."""
 
-class ClusterArgs(CommonArgs):
-    input_paths: list[str] = param(..., l="--in", s="-i")
-    namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-    filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
-    resolution: float = param(1.0, description="Clustering resolution")
-    no_sort: bool = param(False, l="--no-sort", description="Disable cluster ID reordering by PCA")
-    overwrite: bool = param(False, s="-O")
-
-
-class ClusterMixin:
-    ClusterArgs = ClusterArgs
+    # ----- cluster -----
+    class ClusterArgs(CommonArgs):
+        input_paths: list[str] = param(..., l="--in", s="-i")
+        namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        resolution: float = param(1.0, description="Clustering resolution")
+        no_sort: bool = param(False, l="--no-sort", description="Disable cluster ID reordering by PCA")
+        overwrite: bool = param(False, s="-O")
 
     def run_cluster(self, a: ClusterArgs):
         input_paths = resolve_h5_paths(a.input_paths)
@@ -51,26 +48,18 @@ class ClusterMixin:
         print(f"  Samples:  {result.feature_count}")
         print(f"  Path:     {result.target_path}")
 
-
-# ---------------------------------------------------------------------------
-# umap
-
-
-class UmapArgs(CommonArgs):
-    input_paths: list[str] = param(..., l="--in", s="-i")
-    output_path: str = param("", l="--out", s="-o", description="Output UMAP path")
-    namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-    filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
-    n_neighbors: int = param(15, description="UMAP n_neighbors")
-    min_dist: float = param(0.1, description="UMAP min_dist")
-    use_parent_clusters: bool = param(False, l="--parent", s="-P", description="Use parent clusters for plotting")
-    overwrite: bool = param(False, s="-O")
-    save: bool = param(False, description="Save plot to file")
-    show: bool = param(False, description="Show UMAP plot")
-
-
-class UmapMixin:
-    UmapArgs = UmapArgs
+    # ----- umap -----
+    class UmapArgs(CommonArgs):
+        input_paths: list[str] = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o", description="Output UMAP path")
+        namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        n_neighbors: int = param(15, description="UMAP n_neighbors")
+        min_dist: float = param(0.1, description="UMAP min_dist")
+        use_parent_clusters: bool = param(False, l="--parent", s="-P", description="Use parent clusters for plotting")
+        overwrite: bool = param(False, s="-O")
+        save: bool = param(False, description="Save plot to file")
+        show: bool = param(False, description="Show UMAP plot")
 
     def run_umap(self, a: UmapArgs):
         input_paths = resolve_h5_paths(a.input_paths)
@@ -132,11 +121,8 @@ class UmapMixin:
                     continue
 
                 valid_mask = ~np.isnan(umap_coords[:, 0])
-                valid_coords = umap_coords[valid_mask]
-                valid_clusters = clusters[valid_mask]
-
-                coords_list.append(valid_coords)
-                clusters_list.append(valid_clusters)
+                coords_list.append(umap_coords[valid_mask])
+                clusters_list.append(clusters[valid_mask])
                 filenames.append(Path(hdf5_path).stem)
 
         if len(coords_list) == 0:
@@ -171,25 +157,17 @@ class UmapMixin:
         if a.show:
             plt.show()
 
-
-# ---------------------------------------------------------------------------
-# pca
-
-
-class PcaArgs(CommonArgs):
-    input_paths: list[str] = param(..., l="--in", s="-i")
-    namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
-    filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
-    n_components: int = param(1, s="-n", description="Number of PCA components (1, 2, or 3)")
-    scaler: str = param("minmax", s="-s", choices=["std", "minmax"], description="Scaling method")
-    overwrite: bool = param(False, s="-O")
-    show: bool = param(False, description="Show PCA plot")
-    save: bool = param(False, description="Save plot to file")
-    use_sub_clusters: bool = param(False, l="--sub", s="-S", description="Use sub-clusters for plotting")
-
-
-class PcaMixin:
-    PcaArgs = PcaArgs
+    # ----- pca -----
+    class PcaArgs(CommonArgs):
+        input_paths: list[str] = param(..., l="--in", s="-i")
+        namespace: str = param("", l="--namespace", s="-N", description="Namespace (auto-generated if empty)")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        n_components: int = param(1, s="-n", description="Number of PCA components (1, 2, or 3)")
+        scaler: str = param("minmax", s="-s", choices=["std", "minmax"], description="Scaling method")
+        overwrite: bool = param(False, s="-O")
+        show: bool = param(False, description="Show PCA plot")
+        save: bool = param(False, description="Save plot to file")
+        use_sub_clusters: bool = param(False, l="--sub", s="-S", description="Use sub-clusters for plotting")
 
     def run_pca(self, a: PcaArgs):
         input_paths = resolve_h5_paths(a.input_paths)
@@ -257,11 +235,8 @@ class PcaMixin:
                 else:
                     valid_mask = ~np.isnan(pca_values[:, 0])
 
-                valid_pca = pca_values[valid_mask]
-                valid_clusters = clusters[valid_mask]
-
-                pca_list.append(valid_pca)
-                clusters_list.append(valid_clusters)
+                pca_list.append(pca_values[valid_mask])
+                clusters_list.append(clusters[valid_mask])
                 filenames.append(Path(hdf5_path).stem)
 
         if len(pca_list) == 0:
@@ -302,23 +277,15 @@ class PcaMixin:
         if a.show:
             plt.show()
 
-
-# ---------------------------------------------------------------------------
-# preview (clusters)
-
-
-class PreviewArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i")
-    output_path: str = param("", l="--out", s="-o")
-    namespace: str = param("default", l="--namespace", s="-N")
-    filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
-    size: int = 64
-    rotate: bool = False
-    open: bool = False
-
-
-class PreviewMixin:
-    PreviewArgs = PreviewArgs
+    # ----- preview (clusters) -----
+    class PreviewArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o")
+        namespace: str = param("default", l="--namespace", s="-N")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        size: int = 64
+        rotate: bool = False
+        open: bool = False
 
     def run_preview(self, a: PreviewArgs):
         hdf5_path = resolve_h5_path(a.input_path)
@@ -342,26 +309,18 @@ class PreviewMixin:
         if a.open:
             os.system(f"xdg-open {output_path}")
 
-
-# ---------------------------------------------------------------------------
-# preview-score
-
-
-class PreviewScoreArgs(CommonArgs):
-    input_path: str = param(..., l="--in", s="-i")
-    output_path: str = param("", l="--out", s="-o")
-    score_name: str = param(..., l="--name", s="-n", description="Score name (e.g., 'pca1', 'pca2')")
-    namespace: str = param("default", l="--namespace", s="-N", description="Namespace")
-    filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
-    cmap: str = param("jet", l="--cmap", s="-c", description="Colormap name")
-    invert: bool = param(False, l="--invert", s="-I", description="Invert scores (1 - score)")
-    size: int = 64
-    rotate: bool = False
-    open: bool = False
-
-
-class PreviewScoreMixin:
-    PreviewScoreArgs = PreviewScoreArgs
+    # ----- preview-score -----
+    class PreviewScoreArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i")
+        output_path: str = param("", l="--out", s="-o")
+        score_name: str = param(..., l="--name", s="-n", description="Score name (e.g., 'pca1', 'pca2')")
+        namespace: str = param("default", l="--namespace", s="-N", description="Namespace")
+        filter_ids: list[int] = param([], l="--filter", s="-f", description="Filter cluster IDs")
+        cmap: str = param("jet", l="--cmap", s="-c", description="Colormap name")
+        invert: bool = param(False, l="--invert", s="-I", description="Invert scores (1 - score)")
+        size: int = 64
+        rotate: bool = False
+        open: bool = False
 
     def run_preview_score(self, a: PreviewScoreArgs):
         hdf5_path = resolve_h5_path(a.input_path)
