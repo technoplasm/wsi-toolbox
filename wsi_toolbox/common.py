@@ -102,6 +102,15 @@ def create_default_model():
     return _config.model_generator()
 
 
+def set_default_model_name(name: str):
+    """Set global default storage key for embedding output.
+
+    Use this to override the HDF5 top-level group name independently of the
+    foundation model preset (e.g., model_name='uni_224' while preset='uni').
+    """
+    _config.model_name = name
+
+
 def set_default_device(device: str):
     """Set global default device ('auto', 'cpu', 'cuda', 'cuda:0', 'cuda:0,1', etc.)"""
     _config.device = device
@@ -213,6 +222,7 @@ __all__ = [
     "get_config",
     "set_default_progress",
     "set_default_model",
+    "set_default_model_name",
     "set_default_model_preset",
     "create_default_model",
     "set_default_device",

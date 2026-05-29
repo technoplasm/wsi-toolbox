@@ -42,19 +42,26 @@ class PreviewPatchInfo:
     use_wsi: bool = False
 
     @classmethod
-    def from_h5(cls, f: h5py.File, h5_path: str, model_name: str, patch_size: int = 256) -> "PreviewPatchInfo":
+    def from_h5(cls, f: h5py.File, h5_path: str, model_name: str, patch_size: int | None = None) -> "PreviewPatchInfo":
         """
         Detect and create patch source info from H5 file.
 
         Args:
             f: Open HDF5 file
             h5_path: Path to H5 file (for WSI discovery)
-            model_name: Model name (e.g., 'uni')
-            patch_size: Patch size for cache lookup (default: 256)
+            model_name: Storage key (e.g., 'uni', 'uni_224')
+            patch_size: Patch size for cache lookup. If None, derive from
+                {model_name}/attrs['patch_size'].
 
         Returns:
             PreviewPatchInfo with correct paths or WSI flag
         """
+        if patch_size is None:
+            if model_name in f and "patch_size" in f[model_name].attrs:
+                patch_size = int(f[model_name].attrs["patch_size"])
+            else:
+                raise ValueError(f"patch_size not specified and {model_name}/attrs['patch_size'] not found")
+
         cache_group = f"cache/{patch_size}"
 
         # Try cache structure first
@@ -102,7 +109,7 @@ class BasePreviewCommand:
         font_size: int = 16,
         model_name: str | None = None,
         rotate: bool = False,
-        patch_size: int = 256,
+        patch_size: int | None = None,
     ):
         """
         Initialize preview command
@@ -110,9 +117,10 @@ class BasePreviewCommand:
         Args:
             size: Thumbnail patch size (output)
             font_size: Font size for labels
-            model_name: Model name (None to use global default)
+            model_name: Storage key (None to use global default)
             rotate: Whether to rotate patches 180 degrees
-            patch_size: Source patch size for cache lookup (default: 256)
+            patch_size: Source patch size for cache lookup. If None, derive
+                from {model_name}/attrs['patch_size'] in the HDF5 file.
         """
         self.size = size
         self.font_size = font_size
@@ -151,7 +159,7 @@ class BasePreviewCommand:
 
             if info.use_wsi:
                 # WSI on-demand: read each patch by coordinate
-                source = get_patch_reader(h5_path=hdf5_path, patch_size=self.patch_size, target_mpp=0.5)
+                source = get_patch_reader(h5_path=hdf5_path, patch_size=src_patch_size, target_mpp=0.5)
                 coords = f[info.coords_path][:]
 
                 tq = _progress(range(patch_count), desc="Rendering patches")

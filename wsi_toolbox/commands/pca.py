@@ -86,8 +86,6 @@ class PCACommand:
         self.model_name = _get("model_name", model_name)
 
         # Validate
-        if self.model_name not in ["uni", "gigapath", "virchow2"]:
-            raise ValueError(f"Invalid model: {self.model_name}")
         if self.n_components not in [1, 2, 3]:
             raise ValueError(f"Invalid n_components: {self.n_components}")
         if self.scaler not in ["minmax", "std"]:

@@ -364,7 +364,6 @@ def write_root_metadata(
     """
     if overwrite or "patch_count" not in f.attrs:
         f.attrs["mpp"] = metadata.get("mpp", 0)
-        f.attrs["patch_size"] = metadata.get("patch_size", 256)
         f.attrs["cols"] = metadata.get("cols", 0)
         f.attrs["rows"] = metadata.get("rows", 0)
         f.attrs["patch_count"] = patch_count

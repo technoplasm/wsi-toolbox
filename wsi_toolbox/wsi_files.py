@@ -688,6 +688,47 @@ def find_wsi_for_h5(h5_path: str) -> str | None:
     return None
 
 
+def resolve_h5_path(input_path: str) -> str:
+    """
+    Resolve an input path to its HDF5 counterpart.
+
+    - If input is .h5, return as-is.
+    - If input is a WSI (.ndpi, .svs, ...), locate the sibling .h5 (same stem,
+      same directory) and return it. The resolution is logged at INFO level.
+
+    Args:
+        input_path: Input file path (.h5 or any WSI_EXTENSIONS extension)
+
+    Returns:
+        Path to the resolved HDF5 file
+
+    Raises:
+        FileNotFoundError: If input is a WSI but no matching .h5 exists.
+        ValueError: If extension is unsupported.
+    """
+    p = Path(input_path)
+    ext = p.suffix.lower()
+
+    if ext == ".h5":
+        return input_path
+
+    if ext in WSI_EXTENSIONS:
+        h5 = p.with_suffix(".h5")
+        if not h5.exists():
+            raise FileNotFoundError(
+                f"No HDF5 found for WSI {input_path}: expected {h5}. Run 'wsi-toolbox extract' first."
+            )
+        logger.info(f"Auto-resolved: {input_path} -> {h5}")
+        return str(h5)
+
+    raise ValueError(f"Unsupported input file: {input_path} (expected .h5 or WSI: {sorted(WSI_EXTENSIONS)})")
+
+
+def resolve_h5_paths(input_paths: list[str]) -> list[str]:
+    """Resolve a list of input paths via :func:`resolve_h5_path`."""
+    return [resolve_h5_path(p) for p in input_paths]
+
+
 def find_best_level_for_mpp(wsi: "PyramidalWSIFile", target_mpp: float = 0.5) -> NativeLevel:
     """
     Find the native level closest to target mpp.

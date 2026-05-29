@@ -24,9 +24,9 @@ from ..utils.st import st_horizontal
 from .ui.config import (
     BASE_DIR,
     DEVICE,
-    MODEL,
     MODEL_LABELS,
     MODEL_NAMES_BY_LABEL,
+    PRESET,
 )
 from .ui.models import (
     FILE_TYPE_CONFIG,
@@ -446,7 +446,7 @@ def main():
         set_locked_state(False)
 
     if "model" not in st.session_state:
-        st.session_state.model = MODEL
+        st.session_state.model = PRESET
 
     st.title("ロビえもんNEXT - WSI AI解析システム")
 

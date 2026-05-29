@@ -6,7 +6,7 @@ import os
 
 # Environment-based configuration
 BASE_DIR = os.getenv("WT_BASE_DIR", "data")
-MODEL = os.getenv("WT_MODEL", "uni2")
+PRESET = os.getenv("WT_PRESET", "uni2")
 DEVICE = os.getenv("WT_DEVICE", "auto")
 PREFETCH = int(os.getenv("WT_PREFETCH", "2"))
 

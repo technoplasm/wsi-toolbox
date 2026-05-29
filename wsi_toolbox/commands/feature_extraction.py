@@ -138,6 +138,7 @@ class FeatureExtractionCommand:
         with_latent: bool = False,
         overwrite: bool = False,
         model_name: str | None = None,
+        preset: str | None = None,
         device: str | None = None,
         patch_size: int = 256,
         target_mpp: float = 0.5,
@@ -151,7 +152,12 @@ class FeatureExtractionCommand:
             batch_size: Batch size for inference
             with_latent: Whether to extract latent features
             overwrite: Whether to overwrite existing features
-            model_name: Model name (None to use global default)
+            model_name: HDF5 storage key for this embedding (None = use global default).
+                Free string; use distinct names like 'uni_224' / 'uni_256' to keep
+                runs of the same foundation model with different settings separate.
+            preset: Foundation model preset (None = same as model_name).
+                Set this when model_name is a custom storage key not directly
+                matching a preset, e.g., model_name='uni_224', preset='uni'.
             device: Device spec (None to use global default).
                 'auto', 'cpu', 'cuda:0', 'cuda:0,1', etc.
             patch_size: Patch size (default: 256)
@@ -163,6 +169,7 @@ class FeatureExtractionCommand:
         self.with_latent = with_latent
         self.overwrite = overwrite
         self.model_name = _get("model_name", model_name)
+        self.preset = preset if preset else self.model_name
         self.device = _get("device", device)
         self.patch_size = patch_size
         self.target_mpp = target_mpp
@@ -328,11 +335,12 @@ class FeatureExtractionCommand:
                     ds_latent = f.create_dataset(self.latent_feature_name, data=all_latent)
                     ds_latent.attrs["writing"] = False
 
-                # Save metadata as attrs on model group
+                # Save metadata as attrs on storage group (self-descriptive)
                 grp = f[self.model_name]
                 for key, value in reader.metadata.items():
                     grp.attrs[key] = value
                 grp.attrs["patch_count"] = patch_count
+                grp.attrs["preset"] = self.preset
 
                 # Also write to root attrs (if not already present)
                 write_root_metadata(f, reader.metadata, patch_count)

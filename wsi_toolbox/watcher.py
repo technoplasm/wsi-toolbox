@@ -10,7 +10,7 @@ from . import commands
 from .common import set_default_device, set_default_model_preset, set_default_progress
 from .utils.plot import plot_scatter_2d
 
-DEFAULT_MODEL = os.getenv("WT_MODEL", "uni2")
+DEFAULT_PRESET = os.getenv("WT_PRESET", "uni2")
 
 
 class Status:
@@ -30,23 +30,23 @@ class Task:
 
     @staticmethod
     def parse_request_line(line: str) -> tuple[str, bool]:
-        """Parse the request line for model and rotation specifications.
-        Returns (model_name, should_rotate)"""
+        """Parse the request line for preset and rotation specifications.
+        Returns (preset, should_rotate)"""
         parts = [p.strip() for p in line.split(",")]
-        model_name = parts[0] if parts and parts[0] else DEFAULT_MODEL
+        preset = parts[0] if parts and parts[0] else DEFAULT_PRESET
         should_rotate = len(parts) > 1 and parts[1].lower() == "rotate"
-        return model_name, should_rotate
+        return preset, should_rotate
 
     def __init__(self, folder: Path, options_line: str, on_complete: Optional[Callable[[Path], None]] = None):
         self.folder = folder
         self.options_line = options_line
-        self.model_name, self.should_rotate = self.parse_request_line(options_line)
+        self.preset, self.should_rotate = self.parse_request_line(options_line)
         self.on_complete = on_complete
         self.wsi_files = list(folder.glob("**/*.ndpi")) + list(folder.glob("**/*.svs"))
         self.wsi_files.sort()
 
         set_default_progress("tqdm")
-        set_default_model_preset(self.model_name)
+        set_default_model_preset(self.preset)
 
     def write_banner(self):
         """処理開始時のバナーをログに書き込み"""
@@ -54,7 +54,7 @@ class Task:
         self.append_log(f"Processing folder: {self.folder}")
         self.append_log(f"Request options: {self.options_line}")
         self.append_log("Parsed options:")
-        self.append_log(f"  - Model: {self.model_name} (default: {DEFAULT_MODEL})")
+        self.append_log(f"  - Preset: {self.preset} (default: {DEFAULT_PRESET})")
         self.append_log(f"  - Rotation: {'enabled' if self.should_rotate else 'disabled'}")
         self.append_log(f"Found {len(self.wsi_files)} WSI files:")
         for i, wsi_file in enumerate(self.wsi_files, 1):
@@ -116,8 +116,8 @@ class Task:
                         import h5py  # noqa: PLC0415
 
                         with h5py.File(hdf5_file, "r") as f:
-                            umap_embs = f[f"{self.model_name}/default/umap"][:]
-                            clusters = f[f"{self.model_name}/default/clusters"][:]
+                            umap_embs = f[f"{self.preset}/default/umap"][:]
+                            clusters = f[f"{self.preset}/default/clusters"][:]
                         fig = plot_scatter_2d(
                             [umap_embs], [clusters], [wsi_file.stem], title="UMAP", xlabel="UMAP 1", ylabel="UMAP 2"
                         )

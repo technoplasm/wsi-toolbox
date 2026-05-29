@@ -62,11 +62,9 @@ class ShowCommand:
     def _print_basic_info(self, f: h5py.File, result: ShowResult):
         if "patch_count" in f.attrs:
             result.patch_count = int(f.attrs["patch_count"])
-            result.patch_size = int(f.attrs.get("patch_size", 0))
 
             print("Basic Info:")
             print(f"  Patch Count:  {result.patch_count}")
-            print(f"  Patch Size:   {result.patch_size}px")
             print(f"  Grid:         {f.attrs.get('cols', 0)} x {f.attrs.get('rows', 0)} (cols x rows)")
             if "mpp" in f.attrs:
                 mpp = f.attrs["mpp"]
@@ -80,6 +78,7 @@ class ShowCommand:
         if available_models:
             print("Available Models:")
             for model in available_models:
+                grp = f[model]
                 has_features = f"{model}/features" in f
                 has_latent = f"{model}/latent_features" in f
                 feat_str = "features" if has_features else "x features"
@@ -89,7 +88,16 @@ class ShowCommand:
                     feat_shape = f[f"{model}/features"].shape
                     feat_str += f" {feat_shape}"
 
-                print(f"  {model:12s} {feat_str}{latent_str}")
+                preset = grp.attrs.get("preset", "")
+                ps = grp.attrs.get("patch_size", 0)
+                meta_parts = []
+                if preset and preset != model:
+                    meta_parts.append(f"preset={preset}")
+                if ps:
+                    meta_parts.append(f"patch={ps}")
+                meta_str = f" [{', '.join(meta_parts)}]" if meta_parts else ""
+
+                print(f"  {model:12s} {feat_str}{latent_str}{meta_str}")
             print()
 
     def _print_namespaces(self, f: h5py.File, result: ShowResult):

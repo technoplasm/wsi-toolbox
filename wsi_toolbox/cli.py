@@ -18,7 +18,7 @@ from .utils.hdf5_paths import build_cluster_path, list_namespaces
 from .utils.plot import plot_scatter_2d, plot_violin_1d
 from .utils.seed import fix_global_seed, get_global_seed
 from .utils.white import create_white_detector
-from .wsi_files import WSI_EXTENSIONS, create_wsi_file
+from .wsi_files import WSI_EXTENSIONS, create_wsi_file, resolve_h5_path, resolve_h5_paths
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ warnings.filterwarnings(
 )
 warnings.filterwarnings("ignore", category=UserWarning, message=".*cuda capability.*")
 
-DEFAULT_MODEL = os.getenv("WT_MODEL", "uni2")
+DEFAULT_PRESET = os.getenv("WT_PRESET", "uni2")
 
 
 def build_output_path(input_path: str, namespace: str, filename: str) -> str:
@@ -56,7 +56,7 @@ def build_output_path(input_path: str, namespace: str, filename: str) -> str:
 
 
 common.set_default_progress("rich")
-common.set_default_model_preset(DEFAULT_MODEL)
+common.set_default_model_preset(DEFAULT_PRESET)
 common.set_default_cluster_cmap("tab20")
 
 
@@ -128,14 +128,26 @@ def select_namespace(
 class CLI(AutoCLI):
     class CommonArgs(BaseModel):
         seed: int = get_global_seed()
-        model: str = param(DEFAULT_MODEL, l="--model-name", s="-M")
+        preset: str = param(
+            DEFAULT_PRESET,
+            l="--preset",
+            description="Foundation model preset (uni, uni2, gigapath, ...)",
+        )
+        model: str = param(
+            "",
+            l="--model-name",
+            s="-M",
+            description="HDF5 storage key (free string; defaults to --preset)",
+        )
         progress: str = param("rich", choices=["rich", "tqdm"])
         device: str = param("auto", s="-D", description="Device: auto, cpu, cuda:0, cuda:0,1")
         verbose: bool = param(False, s="-v")
 
     def prepare(self, a: CommonArgs):
         fix_global_seed(a.seed)
-        common.set_default_model_preset(a.model)
+        # Preset registers the foundation model. model_name (storage key) defaults to preset.
+        common.set_default_model_preset(a.preset)
+        common.set_default_model_name(a.model if a.model else a.preset)
         common.set_default_device(a.device)
         common.set_default_progress(a.progress)
         logging.basicConfig(
@@ -250,10 +262,13 @@ class CLI(AutoCLI):
             wsi_path = None
             h5_path = a.input_path
 
+        model_name = a.model if a.model else a.preset
         cmd = commands.FeatureExtractionCommand(
             batch_size=a.batch_size,
             with_latent=a.with_latent_features,
             overwrite=a.overwrite,
+            model_name=model_name,
+            preset=a.preset,
             patch_size=a.patch_size,
             target_mpp=a.target_mpp,
             prefetch=a.prefetch,
@@ -272,6 +287,9 @@ class CLI(AutoCLI):
         overwrite: bool = param(False, s="-O")
 
     def run_cluster(self, a: ClusterArgs):
+        # Resolve any WSI paths to their sibling .h5
+        input_paths = resolve_h5_paths(a.input_paths)
+
         # Build parent_filters
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
 
@@ -283,7 +301,7 @@ class CLI(AutoCLI):
             sort_clusters=not a.no_sort,
             overwrite=a.overwrite,
         )
-        result = cmd(a.input_paths)
+        result = cmd(input_paths)
 
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
@@ -306,6 +324,9 @@ class CLI(AutoCLI):
         show: bool = param(False, description="Show UMAP plot")
 
     def run_umap(self, a: UmapArgs):
+        # Resolve any WSI paths to their sibling .h5
+        input_paths = resolve_h5_paths(a.input_paths)
+
         # Build parent_filters if filter_ids specified
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
 
@@ -318,7 +339,7 @@ class CLI(AutoCLI):
             min_dist=a.min_dist,
             overwrite=a.overwrite,
         )
-        result = cmd(a.input_paths)
+        result = cmd(input_paths)
 
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
@@ -334,7 +355,7 @@ class CLI(AutoCLI):
         )
 
         # Check if clusters exist
-        with h5py.File(a.input_paths[0], "r") as f:
+        with h5py.File(input_paths[0], "r") as f:
             if cluster_path not in f:
                 if a.use_parent_clusters:
                     print(f"Error: Parent clusters not found at {cluster_path}")
@@ -349,7 +370,7 @@ class CLI(AutoCLI):
         clusters_list = []
         filenames = []
 
-        for hdf5_path in a.input_paths:
+        for hdf5_path in input_paths:
             with h5py.File(hdf5_path, "r") as f:
                 # Check if both datasets exist
                 if result.target_path not in f:
@@ -400,7 +421,7 @@ class CLI(AutoCLI):
 
         if a.save or a.output_path:
             # Build filename
-            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else ""
+            base_name = P(input_paths[0]).stem if len(input_paths) == 1 else ""
             if a.output_path:
                 output_path = a.output_path
             else:
@@ -408,7 +429,7 @@ class CLI(AutoCLI):
                     filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_umap.png"
                 else:
                     filename = f"{base_name}_umap.png"
-                output_path = build_output_path(a.input_paths[0], namespace, filename)
+                output_path = build_output_path(input_paths[0], namespace, filename)
             plt.savefig(output_path)
             print(f"wrote {output_path}")
 
@@ -427,6 +448,9 @@ class CLI(AutoCLI):
         use_sub_clusters: bool = param(False, l="--sub", s="-S", description="Use sub-clusters for plotting")
 
     def run_pca(self, a: PcaArgs):
+        # Resolve any WSI paths to their sibling .h5
+        input_paths = resolve_h5_paths(a.input_paths)
+
         # Build parent_filters
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
 
@@ -438,7 +462,7 @@ class CLI(AutoCLI):
             scaler=a.scaler,
             overwrite=a.overwrite,
         )
-        result = cmd(a.input_paths)
+        result = cmd(input_paths)
 
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
@@ -456,7 +480,7 @@ class CLI(AutoCLI):
         )
 
         # Check if clusters exist
-        with h5py.File(a.input_paths[0], "r") as f:
+        with h5py.File(input_paths[0], "r") as f:
             if cluster_path not in f:
                 if a.use_sub_clusters:
                     print(f"Error: Sub-clusters not found at {cluster_path}")
@@ -475,7 +499,7 @@ class CLI(AutoCLI):
         clusters_list = []
         filenames = []
 
-        for hdf5_path in a.input_paths:
+        for hdf5_path in input_paths:
             with h5py.File(hdf5_path, "r") as f:
                 # Check if both datasets exist
                 if result.target_path not in f:
@@ -537,13 +561,13 @@ class CLI(AutoCLI):
 
         if a.save:
             # Build filename
-            base_name = P(a.input_paths[0]).stem if len(a.input_paths) == 1 else ""
+            base_name = P(input_paths[0]).stem if len(input_paths) == 1 else ""
             if a.filter_ids:
                 filename = f"{base_name}_{'+'.join(map(str, a.filter_ids))}_pca{a.n_components}.png"
             else:
                 filename = f"{base_name}_pca{a.n_components}.png"
 
-            fig_path = build_output_path(a.input_paths[0], namespace, filename)
+            fig_path = build_output_path(input_paths[0], namespace, filename)
             plt.savefig(fig_path)
             print(f"wrote {fig_path}")
 
@@ -560,19 +584,22 @@ class CLI(AutoCLI):
         open: bool = False
 
     def run_preview(self, a):
+        # Resolve any WSI path to its sibling .h5
+        hdf5_path = resolve_h5_path(a.input_path)
+
         output_path = a.output_path
         filter_str = ""
         if not output_path:
-            base_name = P(a.input_path).stem
+            base_name = P(hdf5_path).stem
             if len(a.filter_ids) > 0:
                 filter_str = "+".join(map(str, a.filter_ids))
                 filename = f"{base_name}_{filter_str}_preview.jpg"
             else:
                 filename = f"{base_name}_preview.jpg"
-            output_path = build_output_path(a.input_path, a.namespace, filename)
+            output_path = build_output_path(hdf5_path, a.namespace, filename)
 
         cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model, rotate=a.rotate)
-        img = cmd(a.input_path, namespace=a.namespace, filter_path=filter_str)
+        img = cmd(hdf5_path, namespace=a.namespace, filter_path=filter_str)
         img.save(output_path)
         print(f"wrote {output_path}")
 
@@ -592,20 +619,23 @@ class CLI(AutoCLI):
         open: bool = False
 
     def run_preview_score(self, a):
+        # Resolve any WSI path to its sibling .h5
+        hdf5_path = resolve_h5_path(a.input_path)
+
         output_path = a.output_path
         filter_str = ""
         if not output_path:
-            base_name = P(a.input_path).stem
+            base_name = P(hdf5_path).stem
             if len(a.filter_ids) > 0:
                 filter_str = "+".join(map(str, a.filter_ids))
                 filename = f"{base_name}_{filter_str}_{a.score_name}_preview.jpg"
             else:
                 filename = f"{base_name}_{a.score_name}_preview.jpg"
-            output_path = build_output_path(a.input_path, a.namespace, filename)
+            output_path = build_output_path(hdf5_path, a.namespace, filename)
 
         cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
         img = cmd(
-            a.input_path,
+            hdf5_path,
             score_name=a.score_name,
             namespace=a.namespace,
             filter_path=filter_str,
@@ -619,13 +649,14 @@ class CLI(AutoCLI):
             os.system(f"xdg-open {output_path}")
 
     class ShowArgs(CommonArgs):
-        input_path: str = param(..., l="--in", s="-i", description="HDF5 file path")
+        input_path: str = param(..., l="--in", s="-i", description="HDF5 or WSI file path")
         verbose: bool = param(False, s="-v", description="Show detailed info")
 
     def run_show(self, a: ShowArgs):
         """Show HDF5 file structure and contents"""
+        hdf5_path = resolve_h5_path(a.input_path)
         cmd = commands.ShowCommand(verbose=a.verbose)
-        cmd(a.input_path)
+        cmd(hdf5_path)
 
     class DziArgs(CommonArgs):
         input_wsi: str = param(..., l="--input", s="-i", description="Input WSI file path")
