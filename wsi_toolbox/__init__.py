@@ -65,13 +65,6 @@ from .common import (
     set_verbose,
 )
 
-# Models
-from .models import (
-    MODEL_EXTRACT_FN,
-    MODEL_NAMES,
-    create_foundation_model,
-)
-
 # Patch readers
 from .patch_reader import (
     CachePatchReader,
@@ -79,6 +72,13 @@ from .patch_reader import (
     PrefetchReader,
     WSIPatchReader,
     get_patch_reader,
+)
+
+# Presets
+from .presets import (
+    PRESET_EXTRACT_FN,
+    PRESET_NAMES,
+    create_foundation_model,
 )
 
 # Utility functions
@@ -142,9 +142,9 @@ __all__ = [
     "CachePatchReader",
     "PrefetchReader",
     "get_patch_reader",
-    # Models
-    "MODEL_EXTRACT_FN",
-    "MODEL_NAMES",
+    # Presets
+    "PRESET_EXTRACT_FN",
+    "PRESET_NAMES",
     "create_foundation_model",
     # Utilities
     "leiden_cluster",

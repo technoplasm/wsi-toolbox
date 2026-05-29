@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable
 
-MODEL_NAMES = [
+PRESET_NAMES = [
     "uni",
     "uni2",
     "gigapath",
@@ -18,7 +18,7 @@ MODEL_NAMES = [
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
 
-MODEL_NORMALIZATION: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
+PRESET_NORMALIZATION: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "uni": (_IMAGENET_MEAN, _IMAGENET_STD),
     "uni2": (_IMAGENET_MEAN, _IMAGENET_STD),
     "gigapath": (_IMAGENET_MEAN, _IMAGENET_STD),
@@ -31,23 +31,24 @@ MODEL_NORMALIZATION: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "phikon2": (_IMAGENET_MEAN, _IMAGENET_STD),
 }
 
-MODEL_EXTRACT_FN: dict[str, Callable] = {
+PRESET_EXTRACT_FN: dict[str, Callable] = {
     "conch15_768": lambda model, x: model(x),
 }
+
 
 # Suppress noisy logs from huggingface_hub and timm
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("timm").setLevel(logging.WARNING)
 
 
-def create_foundation_model(model_name: str):
+def create_foundation_model(preset: str):
     """
     Create a foundation model instance by preset name.
 
     Args:
-        model_name: One of 'uni', 'uni2', 'gigapath', 'virchow', 'virchow2',
-                    'h-optimus-0', 'conch15', 'conch15_768', 'midnight',
-                    'phikon2'
+        preset: One of 'uni', 'uni2', 'gigapath', 'virchow', 'virchow2',
+                'h-optimus-0', 'conch15', 'conch15_768', 'midnight',
+                'phikon2'
 
     Returns:
         torch.nn.Module: Model instance (not moved to device, not in eval mode)
@@ -57,10 +58,10 @@ def create_foundation_model(model_name: str):
     import torch  # noqa: PLC0415
     from timm.layers import SwiGLUPacked  # noqa: PLC0415
 
-    if model_name == "uni":
+    if preset == "uni":
         return timm.create_model("hf-hub:MahmoodLab/uni", pretrained=True, dynamic_img_size=True, init_values=1e-5)
 
-    if model_name == "uni2":
+    if preset == "uni2":
         return timm.create_model(
             "hf-hub:MahmoodLab/UNI2-h",
             pretrained=True,
@@ -80,22 +81,22 @@ def create_foundation_model(model_name: str):
             dynamic_img_pad=True,
         )
 
-    if model_name in ("conch15", "conch15_768"):
+    if preset in ("conch15", "conch15_768"):
         from .conch import create_conch_model  # noqa: PLC0415
 
         return create_conch_model()
 
-    if model_name == "midnight":
+    if preset == "midnight":
         from .midnight import create_midnight_model  # noqa: PLC0415
 
         return create_midnight_model()
 
-    if model_name == "gigapath":
+    if preset == "gigapath":
         return timm.create_model(
             "hf_hub:prov-gigapath/prov-gigapath", pretrained=True, dynamic_img_size=True, dynamic_img_pad=True
         )
 
-    if model_name == "h-optimus-0":
+    if preset == "h-optimus-0":
         return timm.create_model(
             "hf-hub:bioptimus/H-optimus-0",
             pretrained=True,
@@ -104,7 +105,7 @@ def create_foundation_model(model_name: str):
             dynamic_img_pad=True,
         )
 
-    if model_name == "virchow":
+    if preset == "virchow":
         return timm.create_model(
             "hf-hub:paige-ai/Virchow",
             pretrained=True,
@@ -114,7 +115,7 @@ def create_foundation_model(model_name: str):
             dynamic_img_pad=True,
         )
 
-    if model_name == "virchow2":
+    if preset == "virchow2":
         return timm.create_model(
             "hf-hub:paige-ai/Virchow2",
             pretrained=True,
@@ -124,9 +125,9 @@ def create_foundation_model(model_name: str):
             dynamic_img_pad=True,
         )
 
-    if model_name == "phikon2":
+    if preset == "phikon2":
         from .phikon import create_phikon_model  # noqa: PLC0415
 
         return create_phikon_model()
 
-    raise ValueError(f"Invalid model_name: {model_name}. Must be one of {MODEL_NAMES}")
+    raise ValueError(f"Invalid preset: {preset}. Must be one of {PRESET_NAMES}")

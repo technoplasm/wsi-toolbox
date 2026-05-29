@@ -27,8 +27,8 @@ from ..config import (
     DEFAULT_CLUSTER_RESOLUTION,
     MAX_CLUSTER_RESOLUTION,
     MIN_CLUSTER_RESOLUTION,
-    MODEL_LABELS,
     PREFETCH,
+    PRESET_LABELS,
     THUMBNAIL_SIZE,
 )
 from ..models import STATUS_BLOCKED, STATUS_READY, STATUS_UNSUPPORTED, FileEntry
@@ -55,7 +55,7 @@ def build_output_path(input_path: str, namespace: str, filename: str) -> str:
 
 def render_mode_hdf5(selected_files: List[FileEntry]):
     """Render UI for HDF5 analysis mode."""
-    model_label = MODEL_LABELS[st.session_state.model]
+    model_label = PRESET_LABELS[st.session_state.model]
     st.subheader("HDF5ファイル解析オプション", divider=True)
 
     # 選択されたファイルの詳細情報を取得

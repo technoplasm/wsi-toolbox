@@ -20,9 +20,9 @@ from wsi_toolbox.utils.plot import plot_scatter_2d
 from ..config import (
     BATCH_SIZE,
     DEFAULT_CLUSTER_RESOLUTION,
-    MODEL_LABELS,
     PATCH_SIZE,
     PREFETCH,
+    PRESET_LABELS,
     THUMBNAIL_SIZE,
 )
 from ..models import STATUS_READY, FileEntry
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
     """Render UI for WSI processing mode."""
-    model_label = MODEL_LABELS[st.session_state.model]
+    model_label = PRESET_LABELS[st.session_state.model]
 
     st.subheader("WSIをパッチ分割し特徴量を抽出する", divider=True)
     st.write(f"WSIから{model_label}特徴量を抽出します。処理時間はファイルサイズ1GBあたり約1分です。")

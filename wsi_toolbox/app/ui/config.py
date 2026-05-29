@@ -10,16 +10,16 @@ PRESET = os.getenv("WT_PRESET", "uni2")
 DEVICE = os.getenv("WT_DEVICE", "auto")
 PREFETCH = int(os.getenv("WT_PREFETCH", "2"))
 
-# Model configuration
-MODEL_LABELS = {
+# Preset configuration
+PRESET_LABELS = {
     "uni2": "UNI2-h",
     "uni": "UNI",
     "gigapath": "Prov-GigaPath",
     "conch15": "Conch V1.5",
     "h-optimus-0": "H-optimus-0",
 }
-MODEL_NAMES_BY_LABEL = {v: k for k, v in MODEL_LABELS.items()}
-MODEL_NAMES = list(MODEL_LABELS.keys())
+PRESETS_BY_LABEL = {v: k for k, v in PRESET_LABELS.items()}
+PRESET_NAMES = list(PRESET_LABELS.keys())
 
 # Processing constants
 BATCH_SIZE = 256

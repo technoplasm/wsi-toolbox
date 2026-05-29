@@ -24,9 +24,9 @@ from ..utils.st import st_horizontal
 from .ui.config import (
     BASE_DIR,
     DEVICE,
-    MODEL_LABELS,
-    MODEL_NAMES_BY_LABEL,
     PRESET,
+    PRESET_LABELS,
+    PRESETS_BY_LABEL,
 )
 from .ui.models import (
     FILE_TYPE_CONFIG,
@@ -77,14 +77,14 @@ def render_navigation(current_dir_abs, default_root_abs):
         if st.button("フォルダ更新", disabled=st.session_state.locked):
             st.rerun()
 
-        model_label = MODEL_LABELS[st.session_state.model]
+        model_label = PRESET_LABELS[st.session_state.model]
         new_model_label = st.selectbox(
             "使用モデル",
-            list(MODEL_LABELS.values()),
-            index=list(MODEL_LABELS.values()).index(model_label),
+            list(PRESET_LABELS.values()),
+            index=list(PRESET_LABELS.values()).index(model_label),
             disabled=st.session_state.locked,
         )
-        new_model = MODEL_NAMES_BY_LABEL[new_model_label]
+        new_model = PRESETS_BY_LABEL[new_model_label]
 
         # モデルが変更された場合、即座にリロード
         if new_model != st.session_state.model:
