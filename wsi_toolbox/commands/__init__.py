@@ -3,6 +3,8 @@
 from ..common import _get as _get
 from ..common import _get_cluster_color as _get_cluster_color
 from ..common import _progress as _progress
+from .aggregate import AggregateCommand as AggregateCommand
+from .aggregate import AggregateResult as AggregateResult
 from .cache import CacheCommand as CacheCommand
 from .cache import CacheResult as CacheResult
 from .cache import Wsi2HDF5Command as Wsi2HDF5Command

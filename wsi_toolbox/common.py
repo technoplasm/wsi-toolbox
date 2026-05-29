@@ -9,7 +9,7 @@ from typing import Callable
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, Field
 
-from .presets import PRESET_EXTRACT_FN, PRESET_NAMES, PRESET_NORMALIZATION, create_foundation_model
+from .presets import PRESET_EXTRACT_FN, PRESET_NAMES, PRESET_NORMALIZATION, create_preset_model
 from .utils.progress import Progress
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ def set_default_model_preset(preset_name: str):
         raise ValueError(f"Invalid preset: {preset_name}. Must be one of {PRESET_NAMES}")
 
     _config.model_name = preset_name
-    _config.model_generator = partial(create_foundation_model, preset_name)
+    _config.model_generator = partial(create_preset_model, preset_name)
     norm = PRESET_NORMALIZATION[preset_name]
     _config.norm_mean = norm[0]
     _config.norm_std = norm[1]

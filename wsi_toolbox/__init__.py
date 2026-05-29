@@ -34,6 +34,7 @@ __version__ = version("wsi-toolbox")
 # Configuration
 # Commands
 from .commands import (
+    AggregateCommand,
     CacheCommand,
     ClusteringCommand,
     DziCommand,
@@ -45,6 +46,7 @@ from .commands import (
     ShowCommand,
     Wsi2HDF5Command,
 )
+from .commands.aggregate import AggregateResult
 
 # Command result types
 from .commands.cache import (
@@ -78,7 +80,10 @@ from .patch_reader import (
 from .presets import (
     PRESET_EXTRACT_FN,
     PRESET_NAMES,
-    create_foundation_model,
+    SLIDE_PRESET_NAMES,
+    SLIDE_PRESET_TILE_SOURCES,
+    create_preset_model,
+    create_slide_preset_model,
 )
 
 # Utility functions
@@ -113,6 +118,8 @@ __all__ = [
     "CacheCommand",
     "Wsi2HDF5Command",  # Deprecated alias
     "FeatureExtractionCommand",
+    "AggregateCommand",
+    "AggregateResult",
     "ClusteringCommand",
     "UmapCommand",
     "PCACommand",
@@ -145,7 +152,10 @@ __all__ = [
     # Presets
     "PRESET_EXTRACT_FN",
     "PRESET_NAMES",
-    "create_foundation_model",
+    "SLIDE_PRESET_NAMES",
+    "SLIDE_PRESET_TILE_SOURCES",
+    "create_preset_model",
+    "create_slide_preset_model",
     # Utilities
     "leiden_cluster",
     "reorder_clusters_by_pca",

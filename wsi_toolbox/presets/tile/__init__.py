@@ -41,9 +41,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("timm").setLevel(logging.WARNING)
 
 
-def create_foundation_model(preset: str):
+def create_preset_model(preset: str):
     """
-    Create a foundation model instance by preset name.
+    Create a tile-level foundation model instance by preset name.
 
     Args:
         preset: One of 'uni', 'uni2', 'gigapath', 'virchow', 'virchow2',

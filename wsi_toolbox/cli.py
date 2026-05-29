@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from . import commands, common
+from .presets.slide import resolve_tile_model_name
 from .utils.hdf5_paths import build_cluster_path, list_namespaces
 from .utils.plot import plot_scatter_2d, plot_violin_1d
 from .utils.seed import fix_global_seed, get_global_seed
@@ -277,6 +278,37 @@ class CLI(AutoCLI):
 
         if not result.skipped:
             logger.info(f"Feature extraction complete: {result.summary()}")
+
+    class AggregateArgs(CommonArgs):
+        input_path: str = param(..., l="--in", s="-i", description="HDF5 or WSI file path")
+        slide_preset: str = param(
+            "titan",
+            l="--slide-preset",
+            description="Slide-level aggregator preset (e.g., titan)",
+        )
+        overwrite: bool = param(False, s="-O")
+
+    def run_aggregate(self, a: AggregateArgs):
+        """Run a slide-level aggregator (TITAN, etc.) on tile features."""
+        hdf5_path = resolve_h5_path(a.input_path)
+        tile_model_name = resolve_tile_model_name(
+            hdf5_path,
+            a.slide_preset,
+            explicit=a.model if a.model else None,
+        )
+        cmd = commands.AggregateCommand(
+            slide_preset=a.slide_preset,
+            tile_model_name=tile_model_name,
+            overwrite=a.overwrite,
+        )
+        result = cmd(hdf5_path)
+        if result.skipped:
+            print(f"⊘ Skipped (already exists): {result.target_path}")
+        else:
+            print(f"✓ Aggregated {result.n_patches} patches → {result.target_path}")
+        print(f"  slide_preset:    {result.slide_preset}")
+        print(f"  tile_model_name: {result.tile_model_name}")
+        print(f"  feature_dim:     {result.feature_dim}")
 
     class ClusterArgs(CommonArgs):
         input_paths: list[str] = param(..., l="--in", s="-i")
