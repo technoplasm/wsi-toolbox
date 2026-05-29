@@ -13,7 +13,7 @@ import wsi_toolbox as wt
 
 # Set global configuration
 wt.set_default_progress('tqdm')       # Progress: 'tqdm' or 'streamlit'
-wt.set_default_model_preset('uni')    # Model: 'uni', 'gigapath', 'virchow2'
+wt.set_default_preset('uni')    # Model: 'uni', 'gigapath', 'virchow2'
 wt.set_default_device('cuda')         # Device: 'cuda' or 'cpu'
 ```
 
@@ -32,14 +32,15 @@ Can read directly from WSI or from cached patches.
 ```python
 import wsi_toolbox as wt
 
-wt.set_default_model_preset('uni')
+wt.set_default_preset('uni')
 wt.set_default_device('cuda')
 
 cmd = wt.FeatureExtractionCommand(
+    model='uni',         # HDF5 storage key (required)
+    preset='uni',        # Foundation model preset (required)
     batch_size=256,
-    with_latent=False,   # Extract latent features
+    with_latent=False,
     overwrite=False,
-    model_name=None,     # None = use global default
     device=None,         # None = use global default
 )
 
@@ -53,6 +54,33 @@ if not result.skipped:
     print(f"Feature dim: {result.feature_dim}")
     print(f"Patch count: {result.patch_count}")
     print(f"Model: {result.model}")
+```
+
+### AggregateCommand
+
+Run a slide-level aggregator (e.g. TITAN) on tile features. Produces a single
+slide-level vector and writes it to `{tile_model}/aggregates/{slide_preset}/feature`.
+
+**CLI equivalent:** `wt aggregate`
+
+```python
+import wsi_toolbox as wt
+from wsi_toolbox.presets.slide import resolve_tile_model
+
+hdf5_path = 'sample.h5'
+
+# Optional: let the helper find the right tile_model (e.g. 'conch15_768'
+# for the 'titan' slide preset). Raises if 0 or >1 compatible groups exist.
+tile_model = resolve_tile_model(hdf5_path, slide_preset='titan')
+
+cmd = wt.AggregateCommand(
+    slide_preset='titan',
+    tile_model=tile_model,
+    overwrite=False,
+)
+result = cmd(hdf5_path)
+# result.target_path → 'conch15_768/aggregates/titan/feature'
+# result.feature_dim → 768
 ```
 
 ### CacheCommand
@@ -89,10 +117,10 @@ Perform Leiden clustering on features or UMAP coordinates.
 import wsi_toolbox as wt
 
 cmd = wt.ClusteringCommand(
+    model='uni',              # HDF5 storage key (required)
     resolution=1.0,           # Leiden resolution
     namespace=None,           # None = auto-generate from filenames
     parent_filters=None,      # Hierarchical filters, e.g., [[1,2,3], [4,5]]
-    source='features',        # 'features' or 'umap'
     overwrite=False,
 )
 result = cmd(['output.h5'])   # Accepts single path or list
@@ -105,8 +133,7 @@ print(f"Path: {result.target_path}")
 #### Multi-file Clustering
 
 ```python
-# Cluster multiple files together
-cmd = wt.ClusteringCommand(resolution=1.0)
+cmd = wt.ClusteringCommand(model='uni', resolution=1.0)
 result = cmd(['file1.h5', 'file2.h5', 'file3.h5'])
 # Namespace auto-generated: "file1+file2+file3"
 ```
@@ -114,8 +141,8 @@ result = cmd(['file1.h5', 'file2.h5', 'file3.h5'])
 #### Sub-clustering
 
 ```python
-# Sub-cluster only patches in clusters 0, 1, 2
 cmd = wt.ClusteringCommand(
+    model='uni',
     resolution=2.0,
     parent_filters=[[0, 1, 2]],
 )
@@ -133,6 +160,7 @@ Compute UMAP embeddings from features.
 import wsi_toolbox as wt
 
 cmd = wt.UmapCommand(
+    model='uni',              # HDF5 storage key (required)
     namespace=None,
     parent_filters=None,
     n_components=2,
@@ -142,12 +170,6 @@ cmd = wt.UmapCommand(
     overwrite=False,
 )
 result = cmd('output.h5')
-
-print(f"Samples: {result.n_samples}")
-print(f"Components: {result.n_components}")
-print(f"Path: {result.target_path}")
-
-# Access computed embeddings
 embeddings = cmd.get_embeddings()  # numpy array (N, 2)
 ```
 
@@ -161,6 +183,7 @@ Compute PCA scores from features.
 import wsi_toolbox as wt
 
 cmd = wt.PCACommand(
+    model='uni',
     n_components=2,       # 1, 2, or 3
     namespace=None,
     parent_filters=None,
@@ -168,10 +191,6 @@ cmd = wt.PCACommand(
     overwrite=False,
 )
 result = cmd('output.h5')
-
-print(f"Samples: {result.n_samples}")
-print(f"Components: {result.n_components}")
-print(f"Path: {result.target_path}")
 ```
 
 ### PreviewClustersCommand
@@ -184,7 +203,8 @@ Generate thumbnail with cluster color overlay.
 import wsi_toolbox as wt
 
 cmd = wt.PreviewClustersCommand(
-    size=64,           # Thumbnail patch size
+    model='uni',
+    size=64,
     font_size=16,
     rotate=False,
 )
@@ -201,7 +221,7 @@ Generate thumbnail with PCA score heatmap.
 ```python
 import wsi_toolbox as wt
 
-cmd = wt.PreviewScoresCommand(size=64)
+cmd = wt.PreviewScoresCommand(model='uni', size=64)
 img = cmd(
     'output.h5',
     score_name='pca1',      # Score dataset: 'pca1', 'pca2', etc.
@@ -275,12 +295,23 @@ region = wsi.read_region((x, y, width, height))
 thumb = wsi.generate_thumbnail(width=1000)
 ```
 
-## Available Models
+## Available Presets
+
+Two registries: tile presets (per-patch feature extractors) and slide presets (slide-level aggregators).
 
 ```python
 import wsi_toolbox as wt
 
-model = wt.create_foundation_model('uni') # 'gigapath' and 'virchow2' are also available.
+# Tile presets
+print(wt.PRESET_NAMES)
+# ['uni', 'uni2', 'gigapath', 'virchow', 'virchow2', 'h-optimus-0',
+#  'conch15', 'conch15_768', 'midnight', 'phikon2']
+tile_model = wt.create_preset_model('uni')
+
+# Slide presets
+print(wt.SLIDE_PRESET_NAMES)            # ['titan']
+print(wt.SLIDE_PRESET_TILE_SOURCES)     # {'titan': ('conch15_768',)}
+slide_model = wt.create_slide_preset_model('titan')
 ```
 
 ## Notes
@@ -295,37 +326,33 @@ Large datasets (`patches`, `features`, `latent_features`) have a `writing` attri
 ```python
 import wsi_toolbox as wt
 
-# Global configuration
-wt.set_default_model_preset('uni')
+# Global configuration: register the foundation model preset
+wt.set_default_preset('uni')
 wt.set_default_device('cuda')
 
-# Option A: Direct extraction from WSI (simplest)
-extract_cmd = wt.FeatureExtractionCommand(batch_size=256)
+PRESET = 'uni'      # foundation model
+MODEL = 'uni'       # h5 storage key (same as preset by default)
+
+# 1. Extract
+extract_cmd = wt.FeatureExtractionCommand(model=MODEL, preset=PRESET, batch_size=256)
 extract_result = extract_cmd('output.h5', wsi_path='input.ndpi')
 print(f"Features: {extract_result.feature_dim}D")
 
-# Option B: Cache first, then extract (faster for repeated access)
-# cache_cmd = wt.CacheCommand(patch_size=256)
-# cache_cmd('input.ndpi', 'output.h5')
-# extract_result = extract_cmd('output.h5')
-
 # 2. Clustering
-cluster_cmd = wt.ClusteringCommand(resolution=1.0)
+cluster_cmd = wt.ClusteringCommand(model=MODEL, resolution=1.0)
 cluster_result = cluster_cmd(['output.h5'])
 print(f"Clusters: {cluster_result.cluster_count}")
 
 # 3. UMAP
-umap_cmd = wt.UmapCommand()
-umap_result = umap_cmd('output.h5')
-print(f"UMAP: {umap_result.n_samples} samples")
+umap_cmd = wt.UmapCommand(model=MODEL)
+umap_cmd('output.h5')
 
-# 5. PCA
-pca_cmd = wt.PCACommand(n_components=1)
-pca_result = pca_cmd('output.h5')
-print(f"PCA: {pca_result.n_samples} samples")
+# 4. PCA
+pca_cmd = wt.PCACommand(model=MODEL, n_components=1)
+pca_cmd('output.h5')
 
-# 6. Preview
-preview_cmd = wt.PreviewClustersCommand(size=64)
+# 5. Preview
+preview_cmd = wt.PreviewClustersCommand(model=MODEL, size=64)
 img = preview_cmd('output.h5', namespace='default')
 img.save('preview.jpg')
 ```

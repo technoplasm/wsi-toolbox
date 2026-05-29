@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from ..utils.analysis import leiden_cluster, reorder_clusters_by_pca
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
 from ..utils.progress import BaseProgress
-from . import _get, _progress
+from . import _progress
 from .data_loader import MultipleContext
 
 if TYPE_CHECKING:
@@ -61,28 +61,28 @@ class ClusteringCommand:
 
     def __init__(
         self,
+        model: str,
         resolution: float = 1.0,
         namespace: str | None = None,
         parent_filters: list[list[int]] | None = None,
         sort_clusters: bool = True,
         overwrite: bool = False,
-        model_name: str | None = None,
     ):
         """
         Args:
+            model: HDF5 storage key (e.g., 'uni', 'conch15_768', 'uni_224')
             resolution: Leiden clustering resolution
             namespace: Explicit namespace (None = auto-generate)
             parent_filters: Hierarchical filters, e.g., [[1,2,3], [4,5]]
             sort_clusters: Reorder cluster IDs by PCA distribution (default: True)
             overwrite: Overwrite existing clusters
-            model_name: Model name (None = use global default)
         """
+        self.model = model
         self.resolution = resolution
         self.namespace = namespace
         self.parent_filters = parent_filters or []
         self.sort_clusters = sort_clusters
         self.overwrite = overwrite
-        self.model_name = _get("model_name", model_name)
 
         # Internal state
         self.hdf5_paths = []
@@ -111,9 +111,7 @@ class ClusteringCommand:
             raise ValueError("Namespace cannot contain '+' (reserved for multi-file auto-generated namespaces)")
 
         # Build target path
-        target_path = build_cluster_path(
-            self.model_name, self.namespace, filters=self.parent_filters, dataset="clusters"
-        )
+        target_path = build_cluster_path(self.model, self.namespace, filters=self.parent_filters, dataset="clusters")
 
         # Check if already exists
         if not self.overwrite:
@@ -141,7 +139,7 @@ class ClusteringCommand:
         try:
             # Load data (always from features)
             pbar.set_description("Loading features")
-            ctx = MultipleContext(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
+            ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
             data = ctx.load_features(source="features")
             pbar.update(1)
 
@@ -198,7 +196,7 @@ class ClusteringCommand:
 
                 ds = f.create_dataset(target_path, data=full_clusters)
                 ds.attrs["resolution"] = self.resolution
-                ds.attrs["model"] = self.model_name
+                ds.attrs["model"] = self.model
 
 
 class ClusterWithUmapResult(BaseModel):

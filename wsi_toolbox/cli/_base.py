@@ -23,7 +23,7 @@ DEFAULT_PRESET = os.getenv("WT_PRESET", "uni2")
 
 # Module-import-time defaults (preserved from original cli.py).
 common.set_default_progress("rich")
-common.set_default_model_preset(DEFAULT_PRESET)
+common.set_default_preset(DEFAULT_PRESET)
 common.set_default_cluster_cmap("tab20")
 
 
@@ -52,7 +52,7 @@ class CommonArgs(BaseModel):
     )
     model: str = param(
         "",
-        l="--model-name",
+        l="--model",
         s="-M",
         description="HDF5 storage key (free string; defaults to --preset)",
     )
@@ -71,9 +71,9 @@ class CLIBase(AutoCLI):
 
     def prepare(self, a: CommonArgs):
         fix_global_seed(a.seed)
-        # Preset registers the foundation model. model_name (storage key) defaults to preset.
-        common.set_default_model_preset(a.preset)
-        common.set_default_model_name(a.model if a.model else a.preset)
+        # Preset is the only session-level model concept; the h5 storage key
+        # (a.model) is passed per-command to the respective Command.
+        common.set_default_preset(a.preset)
         common.set_default_device(a.device)
         common.set_default_progress(a.progress)
         logging.basicConfig(

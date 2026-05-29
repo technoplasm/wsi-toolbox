@@ -94,13 +94,13 @@ def render_navigation(current_dir_abs, default_root_abs):
 
 
 @st.cache_data(ttl=60)
-def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[HDF5Detail]:
+def get_hdf5_detail(hdf_path: str, model: str, _mtime: float) -> Optional[HDF5Detail]:
     """
     HDF5ファイルの詳細を取得（キャッシュ付き）
 
     Args:
         hdf_path: HDF5ファイルパス
-        model_name: モデル名
+        model: モデル名
         _mtime: ファイル更新時刻（キャッシュ無効化用）
     """
     try:
@@ -140,11 +140,11 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
                     rows=0,
                     cluster_ids_by_name={},
                 )
-            has_features = (f"{model_name}/features" in f) and (len(f[f"{model_name}/features"]) == patch_count)
+            has_features = (f"{model}/features" in f) and (len(f[f"{model}/features"]) == patch_count)
             cluster_names = ["未施行"]
-            if model_name in f:
+            if model in f:
                 # List all namespaces (directories with clusters dataset)
-                namespaces = list_namespaces(f, model_name)
+                namespaces = list_namespaces(f, model)
                 if namespaces:
                     cluster_names = []
                     for ns in namespaces:
@@ -158,7 +158,7 @@ def get_hdf5_detail(hdf_path: str, model_name: str, _mtime: float) -> Optional[H
                 if c == "未施行":
                     continue
                 ns = "default" if c == "デフォルト" else c
-                k = f"{model_name}/{ns}/clusters"
+                k = f"{model}/{ns}/clusters"
                 if k in f:
                     ids = np.unique(f[k][()]).tolist()
                     cluster_ids_by_name[c] = ids

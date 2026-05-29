@@ -14,11 +14,11 @@ pip install wsi-toolbox
 pip install git+https://github.com/technoplasm/wsi-toolbox.git
 ```
 
-## Supported Models
+## Presets
 
-The following foundation models are available:
+### Tile presets (per-patch feature extractors)
 
-| Model | Arch | Params | Dim | HuggingFace |
+| Preset | Arch | Params | Dim | HuggingFace |
 |-------|------|--------|-----|-------------|
 | `uni` | ViT-L/16 | 300M | 1024 | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/UNI) |
 | `uni2` (default) | ViT-H/14 | 681M | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
@@ -32,6 +32,22 @@ The following foundation models are available:
 | `phikon2` | ViT-L/16 | 300M | 1024 | [owkin/phikon-v2](https://huggingface.co/owkin/phikon-v2) |
 
 `conch15_768` outputs FC-projected features (not cls_token), intended for [TITAN](https://huggingface.co/MahmoodLab/TITAN) input.
+
+### Slide presets (slide-level aggregators)
+
+| Preset | Tile source | Dim | HuggingFace |
+|-------|-------------|-----|-------------|
+| `titan` | `conch15_768` | 768 | [MahmoodLab/TITAN](https://huggingface.co/MahmoodLab/TITAN) |
+
+### Preset vs model
+
+- `--preset` selects which foundation model to load (e.g. `uni`, `gigapath`). Only `preset` is a session-level default.
+- `-M` / `--model` is the **HDF5 storage key** under which results are written. Defaults to `--preset`. Use a distinct value to keep multiple extractions of the same preset separate (e.g. different `--patch-size`).
+
+```bash
+wt extract -i sample.ndpi --preset uni                          # → uni/features
+wt extract -i sample.ndpi --preset uni -M uni_224 -S 224        # → uni_224/features (same preset, 224 px)
+```
 
 **Setup**: These models require HuggingFace authentication. Accept the license on each model page, then:
 
@@ -83,19 +99,19 @@ wt preview -i sample.h5
 ```python
 import wsi_toolbox as wt
 
-wt.set_default_model_preset('uni2')
+wt.set_default_preset('uni2')
 wt.set_default_device('auto')
 
 # 1. Extract
-cmd = wt.FeatureExtractionCommand(batch_size=256)
+cmd = wt.FeatureExtractionCommand(model='uni2', preset='uni2', batch_size=256)
 cmd('sample.h5', wsi_path='sample.ndpi')
 
 # 2. Cluster
-cluster_cmd = wt.ClusteringCommand(resolution=1.0)
+cluster_cmd = wt.ClusteringCommand(model='uni2', resolution=1.0)
 cluster_cmd(['sample.h5'])
 
 # 3. Preview
-preview_cmd = wt.PreviewClustersCommand()
+preview_cmd = wt.PreviewClustersCommand(model='uni2')
 img = preview_cmd('sample.h5')
 img.save('sample_preview.jpg')
 ```
@@ -118,12 +134,12 @@ Extract patch embeddings from WSI using foundation models.
 
 ```bash
 wt extract -i sample.ndpi -o sample.h5
-wt extract -i sample.ndpi -M gigapath      # Use Gigapath model
-wt extract -i sample.ndpi -M virchow2      # Use Virchow2 model
-wt extract -i sample.ndpi -M conch15_768   # CONCH v1.5 (768D via AttentionalPooler)
-wt extract -i sample.ndpi -M midnight      # OpenMidnight model
-wt extract -i sample.ndpi -L               # Include latent features
-wt extract -i sample.ndpi -D cuda:0,1      # Multi-GPU parallel
+wt extract -i sample.ndpi --preset gigapath        # Use Gigapath
+wt extract -i sample.ndpi --preset virchow2        # Use Virchow2
+wt extract -i sample.ndpi --preset conch15_768     # CONCH v1.5 (768D, TITAN-ready)
+wt extract -i sample.ndpi --preset midnight        # OpenMidnight
+wt extract -i sample.ndpi -L                       # Include latent features
+wt extract -i sample.ndpi -D cuda:0,1              # Multi-GPU parallel
 ```
 
 ```python
@@ -131,6 +147,32 @@ cmd = wt.FeatureExtractionCommand(batch_size=256, with_latent=True)
 result = cmd('sample.h5', wsi_path='sample.ndpi')
 # result.feature_dim, result.patch_count
 ```
+
+---
+
+### aggregate
+
+Run a slide-level aggregator (e.g. TITAN) on tile features to produce a single slide embedding.
+
+| CLI | Python |
+|-----|--------|
+| `wt aggregate -i sample.h5` | `AggregateCommand(slide_preset='titan', tile_model='conch15_768')('sample.h5')` |
+
+```bash
+# Auto-resolve: scans the h5 for a tile preset compatible with titan (= conch15_768)
+wt aggregate -i sample.h5
+
+# Explicit storage key (multiple compatible groups → required)
+wt aggregate -i sample.h5 -M conch15_768
+```
+
+```python
+cmd = wt.AggregateCommand(slide_preset='titan', tile_model='conch15_768')
+result = cmd('sample.h5')
+# → conch15_768/aggregates/titan/feature  (D=768)
+```
+
+Requires `conch15_768/features` to exist (run `wt extract --preset conch15_768 -S 512` first).
 
 ---
 
@@ -333,39 +375,36 @@ with h5py.File('sample.h5', 'r') as f:
     f.attrs['original_width']    # Original width (px)
     f.attrs['original_height']   # Original height (px)
 
-    # Patch grid info
-    f.attrs['mpp']               # Actual mpp used
-    f.attrs['patch_size']        # Patch size (e.g., 256)
-    f.attrs['patch_count']       # Total patches
-    f.attrs['cols']              # Grid columns
-    f.attrs['rows']              # Grid rows
+    # Default extraction grid (legacy/back-compat; per-preset values live on {model}/.attrs)
+    f.attrs['mpp']
+    f.attrs['patch_count']
+    f.attrs['cols']
+    f.attrs['rows']
 ```
 
-### Model Features
+### Tile features
 
-Features are stored under `{model}/`. Supported models: `uni`, `uni2`, `gigapath`, `virchow`, `virchow2`, `h-optimus-0`, `conch15`, `conch15_768`, `midnight`, `phikon2`.
+Features are stored under `{model}/`. `model` (the storage key) defaults to the preset name (e.g. `uni`, `conch15_768`) but is a free string when `-M` is given.
 
 ```
-{model}/
-├── features        # [N, D] patch embeddings
-│                   #   uni: D=1024
-│                   #   uni2: D=1536
-│                   #   gigapath: D=1536
-│                   #   virchow: D=1280
-│                   #   virchow2: D=1280
-│                   #   h-optimus-0: D=1536
-│                   #   conch15: D=1024
-│                   #   conch15_768: D=768
-│                   #   midnight: D=1536
-│                   #   phikon2: D=1024
-├── coordinates     # [N, 2] patch coordinates (x, y pixels)
-└── latent_features # [N, L, D] optional (with -L flag)
+{model}/                  attrs: preset, patch_size, target_mpp, mpp, cols, rows, patch_count
+├── features                   # [N, D]
+├── coordinates                # [N, 2] level-0 (x, y) in pixels
+├── latent_features            # [N, L, D] optional (with -L flag)
+├── aggregates/                # slide-level aggregator outputs
+│   └── {slide_preset}/
+│       └── feature            # [D_slide]
+└── {namespace}/               # analysis results (see below)
 ```
+
+Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `virchow/2: 1280`, `h-optimus-0: 1536`, `conch15: 1024`, `conch15_768: 768`, `midnight: 1536`, `phikon2: 1024`.
 
 ```python
 with h5py.File('sample.h5', 'r') as f:
-    features = f['uni/features'][:]         # (N, 1024)
-    coords = f['uni/coordinates'][:]        # (N, 2)
+    features = f['uni/features'][:]                              # (N, 1024)
+    coords   = f['uni/coordinates'][:]                           # (N, 2)
+    preset   = f['uni'].attrs['preset']                          # which foundation model
+    slide    = f['conch15_768/aggregates/titan/feature'][:]      # (768,)
 ```
 
 ### Analysis Results (Hierarchical)
@@ -386,9 +425,9 @@ Results are stored under `{model}/{namespace}/`.
 **Sub-clustering (filter hierarchy)**:
 
 ```
-uni/default/clusters                           # Base
-uni/default/filter/1+2+3/clusters              # Sub-cluster of 1,2,3
-uni/default/filter/1+2+3/filter/0+1/clusters   # Further nesting
+{model}/default/clusters                           # Base
+{model}/default/filter/1+2+3/clusters              # Sub-cluster of 1,2,3
+{model}/default/filter/1+2+3/filter/0+1/clusters   # Further nesting
 ```
 
 See [Advanced Usage](#advanced-usage) for examples.
@@ -467,7 +506,7 @@ cmd(['sample1.h5', 'sample2.h5'])
 uv run task app
 
 # Environment variables
-WT_MODEL=gigapath WT_DEVICE=cuda:1 WT_PREFETCH=2 uv run task app
+WT_PRESET=gigapath WT_DEVICE=cuda:1 WT_PREFETCH=2 uv run task app
 ```
 
 ## Development

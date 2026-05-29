@@ -3,7 +3,7 @@
 Loads tile features+coordinates from a tile-preset group and runs a slide-level
 aggregator (TITAN, etc.) to produce one vector per WSI. Writes the result to:
 
-    {tile_model_name}/aggregates/{slide_preset}/feature
+    {tile_model}/aggregates/{slide_preset}/feature
 """
 
 import logging
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class AggregateResult(BaseModel):
     slide_preset: str
-    tile_model_name: str
+    tile_model: str
     target_path: str
     feature_dim: int
     n_patches: int
@@ -35,43 +35,41 @@ class AggregateCommand:
     def __init__(
         self,
         slide_preset: str,
-        tile_model_name: str,
+        tile_model: str,
         device: str | None = None,
         overwrite: bool = False,
     ):
         """
         Args:
             slide_preset: Slide aggregator preset (e.g., "titan")
-            tile_model_name: HDF5 storage key for the tile features to aggregate.
+            tile_model: HDF5 storage key for the tile features to aggregate.
                 Resolve compatibility/availability at the call site (see
-                ``wsi_toolbox.presets.slide.resolve_tile_model_name``).
+                ``wsi_toolbox.presets.slide.resolve_tile_model``).
             device: Inference device. None uses global default.
             overwrite: Replace existing slide feature if present.
         """
         if slide_preset not in SLIDE_PRESET_NAMES:
             raise ValueError(f"Unknown slide preset: {slide_preset}. Must be one of {SLIDE_PRESET_NAMES}")
         self.slide_preset = slide_preset
-        self.tile_model_name = tile_model_name
+        self.tile_model = tile_model
         self.device = _get("device", device)
         self.overwrite = overwrite
 
     def __call__(self, hdf5_path: str) -> AggregateResult:
-        target_path = f"{self.tile_model_name}/aggregates/{self.slide_preset}/feature"
+        target_path = f"{self.tile_model}/aggregates/{self.slide_preset}/feature"
 
         # 1. Load inputs and check skip
         with h5py.File(hdf5_path, "r") as f:
-            tile_grp = f.get(self.tile_model_name)
+            tile_grp = f.get(self.tile_model)
             if tile_grp is None or "features" not in tile_grp:
-                raise RuntimeError(
-                    f"Tile model_name '{self.tile_model_name}' not found or has no features in {hdf5_path}"
-                )
+                raise RuntimeError(f"Tile model '{self.tile_model}' not found or has no features in {hdf5_path}")
 
             if not self.overwrite and target_path in f:
                 existing = f[target_path]
                 logger.info(f"Aggregate already exists at {target_path}, skipping")
                 return AggregateResult(
                     slide_preset=self.slide_preset,
-                    tile_model_name=self.tile_model_name,
+                    tile_model=self.tile_model,
                     target_path=target_path,
                     feature_dim=int(existing.shape[-1]),
                     n_patches=int(tile_grp["features"].shape[0]),
@@ -120,7 +118,7 @@ class AggregateCommand:
 
         return AggregateResult(
             slide_preset=self.slide_preset,
-            tile_model_name=self.tile_model_name,
+            tile_model=self.tile_model,
             target_path=target_path,
             feature_dim=int(slide_emb_np.shape[-1]),
             n_patches=int(features.shape[0]),

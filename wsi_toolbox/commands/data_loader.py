@@ -40,7 +40,7 @@ class MultipleContext:
     4. Iterating over files for writing results
 
     Usage:
-        ctx = MultipleContext(hdf5_paths, model_name, namespace, filters)
+        ctx = MultipleContext(hdf5_paths, model, namespace, filters)
         data = ctx.load_features()
 
         results = some_computation(data)
@@ -54,19 +54,19 @@ class MultipleContext:
     def __init__(
         self,
         hdf5_paths: list[str],
-        model_name: str,
+        model: str,
         namespace: str,
         parent_filters: list[list[int]] | None = None,
     ):
         """
         Args:
             hdf5_paths: List of HDF5 file paths
-            model_name: Model name (e.g., "uni")
+            model: HDF5 storage key (e.g., "uni", "conch15_768")
             namespace: Namespace (e.g., "default", "001+002")
             parent_filters: Hierarchical filters, e.g., [[1,2,3], [4,5]]
         """
         self.hdf5_paths = hdf5_paths
-        self.model_name = model_name
+        self.model = model
         self.namespace = namespace
         self.parent_filters = parent_filters or []
 
@@ -90,7 +90,7 @@ class MultipleContext:
         for hdf5_path in self.hdf5_paths:
             with h5py.File(hdf5_path, "r") as f:
                 # Get patch count from features length
-                feature_path = f"{self.model_name}/features"
+                feature_path = f"{self.model}/features"
                 if feature_path not in f:
                     raise RuntimeError(f"Features not found at {feature_path} in {hdf5_path}")
                 patch_count = len(f[feature_path])
@@ -107,7 +107,7 @@ class MultipleContext:
                 # Load data based on source
                 if source == "umap":
                     umap_path = build_cluster_path(
-                        self.model_name,
+                        self.model,
                         self.namespace,
                         filters=self.parent_filters if self.parent_filters else None,
                         dataset="umap",
@@ -118,7 +118,7 @@ class MultipleContext:
                     if np.any(np.isnan(data)):
                         raise RuntimeError(f"NaN values in UMAP coordinates at {umap_path}")
                 else:
-                    feature_path = f"{self.model_name}/features"
+                    feature_path = f"{self.model}/features"
                     if feature_path not in f:
                         raise RuntimeError(f"Features not found at {feature_path} in {hdf5_path}")
                     data = f[feature_path][mask]
@@ -179,7 +179,7 @@ class MultipleContext:
         # Get the deepest cluster path (parent of where we'll write new clusters)
         # If filters = [[1,2,3], [4,5]], we need clusters at filter/1+2+3/
         parent_cluster_path = build_cluster_path(
-            self.model_name,
+            self.model,
             self.namespace,
             filters=self.parent_filters[:-1] if len(self.parent_filters) > 1 else None,
             dataset="clusters",
@@ -206,13 +206,13 @@ class MultipleContext:
             (clusters, mask): Parent cluster values and boolean mask
         """
         with h5py.File(hdf5_path, "r") as f:
-            feature_path = f"{self.model_name}/features"
+            feature_path = f"{self.model}/features"
             patch_count = len(f[feature_path])
             mask = self._build_mask(f, patch_count)
 
             if self.parent_filters:
                 parent_cluster_path = build_cluster_path(
-                    self.model_name,
+                    self.model,
                     self.namespace,
                     filters=self.parent_filters[:-1] if len(self.parent_filters) > 1 else None,
                     dataset="clusters",

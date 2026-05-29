@@ -33,12 +33,12 @@ def create_slide_preset_model(preset: str):
     raise ValueError(f"Invalid slide preset: {preset}. Must be one of {SLIDE_PRESET_NAMES}")
 
 
-def resolve_tile_model_name(
+def resolve_tile_model(
     hdf5_path: str,
     slide_preset: str,
     explicit: str | None = None,
 ) -> str:
-    """Pick the tile model_name to feed into a slide preset.
+    """Pick the tile model to feed into a slide preset.
 
     Args:
         hdf5_path: Path to the HDF5 file to scan.
@@ -48,11 +48,11 @@ def resolve_tile_model_name(
             attrs["preset"] is in the compatible-source list for slide_preset.
 
     Returns:
-        Tile model_name (the h5 top-level storage key).
+        Tile model (the h5 top-level storage key).
 
     Raises:
         RuntimeError: 0 compatible groups (need to extract first), or
-            multiple groups (user must specify --model-name).
+            multiple groups (user must specify --model).
     """
     if slide_preset not in SLIDE_PRESET_NAMES:
         raise ValueError(f"Unknown slide preset: {slide_preset}. Must be one of {SLIDE_PRESET_NAMES}")
@@ -65,7 +65,7 @@ def resolve_tile_model_name(
         if explicit is not None:
             grp = f.get(explicit)
             if grp is None or not isinstance(grp, h5py.Group) or "features" not in grp:
-                raise RuntimeError(f"Tile model_name '{explicit}' not found or has no features in {hdf5_path}")
+                raise RuntimeError(f"Tile model '{explicit}' not found or has no features in {hdf5_path}")
             preset_attr = grp.attrs.get("preset", "")
             if preset_attr not in allowed:
                 logger.warning(
@@ -93,8 +93,8 @@ def resolve_tile_model_name(
         if len(candidates) > 1:
             raise RuntimeError(
                 f"Multiple compatible tile features found in {hdf5_path}: {sorted(candidates)}. "
-                f"Specify --model-name explicitly."
+                f"Specify --model explicitly."
             )
 
-        logger.info(f"Auto-selected tile model_name: '{candidates[0]}' for slide preset '{slide_preset}'")
+        logger.info(f"Auto-selected tile model: '{candidates[0]}' for slide preset '{slide_preset}'")
         return candidates[0]

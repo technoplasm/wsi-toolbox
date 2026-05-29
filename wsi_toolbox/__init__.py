@@ -7,9 +7,9 @@ Basic Usage:
     >>> import wsi_toolbox as wt
     >>>
     >>> # Extract features directly from WSI (no cache needed)
-    >>> wt.set_default_model_preset('uni')
+    >>> wt.set_default_preset('uni')
     >>> wt.set_default_device('cuda')
-    >>> cmd = wt.FeatureExtractionCommand(batch_size=256)
+    >>> cmd = wt.FeatureExtractionCommand(model='uni', preset='uni', batch_size=256)
     >>> result = cmd('output.h5', wsi_path='input.ndpi')
     >>>
     >>> # Or create cache first for faster repeated access
@@ -60,9 +60,9 @@ from .commands.umap_embedding import UmapCommand
 from .common import (
     create_default_model,
     get_config,
+    set_default_custom_preset,
     set_default_device,
-    set_default_model,
-    set_default_model_preset,
+    set_default_preset,
     set_default_progress,
     set_verbose,
 )
@@ -109,8 +109,8 @@ __all__ = [
     # Configuration functions
     "get_config",
     "set_default_progress",
-    "set_default_model",
-    "set_default_model_preset",
+    "set_default_custom_preset",
+    "set_default_preset",
     "create_default_model",
     "set_default_device",
     "set_verbose",

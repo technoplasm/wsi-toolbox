@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 from PIL import Image
 
 from wsi_toolbox import commands
-from wsi_toolbox.common import set_default_model_preset
+from wsi_toolbox.common import set_default_preset
 from wsi_toolbox.utils.hdf5_paths import build_namespace
 from wsi_toolbox.utils.plot import plot_scatter_2d
 
@@ -180,25 +180,33 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
             if not f.detail or not f.detail.has_features:
                 st.write(f"{f.name}の特徴量が未抽出なので、抽出を行います。")
                 logger.info(f"[FeatureExtraction] Start: {f.name} (model={st.session_state.model})")
-                set_default_model_preset(st.session_state.model)
+                set_default_preset(st.session_state.model)
                 with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
-                    cmd = commands.FeatureExtractionCommand(batch_size=BATCH_SIZE, overwrite=True, prefetch=PREFETCH)
+                    cmd = commands.FeatureExtractionCommand(
+                        model=st.session_state.model,
+                        preset=st.session_state.model,
+                        batch_size=BATCH_SIZE,
+                        overwrite=True,
+                        prefetch=PREFETCH,
+                    )
                     result = cmd(f.path)
                 logger.info(f"[FeatureExtraction] Done: {result.summary()}")
                 st.write(f"{model_label}特徴量の抽出完了。")
 
-        set_default_model_preset(st.session_state.model)
+        set_default_preset(st.session_state.model)
 
         # UMAP + Clustering with unified progress
         cmd_namespace = None if namespace == default_namespace else namespace
         t = "と".join([f.name for f in selected_files])
 
         umap_cmd = commands.UmapCommand(
+            model=st.session_state.model,
             namespace=cmd_namespace,
             parent_filters=[subcluster_filter] if subcluster_filter else [],
             overwrite=overwrite,
         )
         cluster_cmd = commands.ClusteringCommand(
+            model=st.session_state.model,
             resolution=resolution,
             namespace=cmd_namespace,
             parent_filters=[subcluster_filter] if subcluster_filter else [],
@@ -250,8 +258,10 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
         t0 = time.perf_counter()
         with st.spinner("オーバービュー生成中...", show_time=True):
             for f in selected_files:
-                set_default_model_preset(st.session_state.model)
-                preview_cmd = commands.PreviewClustersCommand(size=THUMBNAIL_SIZE, rotate=rotate_preview)
+                set_default_preset(st.session_state.model)
+                preview_cmd = commands.PreviewClustersCommand(
+                    model=st.session_state.model, size=THUMBNAIL_SIZE, rotate=rotate_preview
+                )
 
                 p = P(f.path)
                 base = p.stem

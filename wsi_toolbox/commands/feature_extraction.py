@@ -134,11 +134,11 @@ class FeatureExtractionCommand:
 
     def __init__(
         self,
+        model: str,
+        preset: str,
         batch_size: int = 256,
         with_latent: bool = False,
         overwrite: bool = False,
-        model_name: str | None = None,
-        preset: str | None = None,
         device: str | None = None,
         patch_size: int = 256,
         target_mpp: float = 0.5,
@@ -149,15 +149,14 @@ class FeatureExtractionCommand:
         Initialize feature extractor.
 
         Args:
+            model: HDF5 storage key for this embedding series. Free string;
+                use distinct names like 'uni_224' / 'uni_256' to keep runs of
+                the same foundation model with different settings separate.
+            preset: Foundation model preset (e.g., 'uni', 'conch15_768').
+                Drives which model is loaded.
             batch_size: Batch size for inference
             with_latent: Whether to extract latent features
             overwrite: Whether to overwrite existing features
-            model_name: HDF5 storage key for this embedding (None = use global default).
-                Free string; use distinct names like 'uni_224' / 'uni_256' to keep
-                runs of the same foundation model with different settings separate.
-            preset: Foundation model preset (None = same as model_name).
-                Set this when model_name is a custom storage key not directly
-                matching a preset, e.g., model_name='uni_224', preset='uni'.
             device: Device spec (None to use global default).
                 'auto', 'cpu', 'cuda:0', 'cuda:0,1', etc.
             patch_size: Patch size (default: 256)
@@ -165,11 +164,11 @@ class FeatureExtractionCommand:
             prefetch: Number of batches to prefetch (0 to disable, default: 1)
             white_detector: Function (patch) -> bool, True if white.
         """
+        self.model = model
+        self.preset = preset
         self.batch_size = batch_size
         self.with_latent = with_latent
         self.overwrite = overwrite
-        self.model_name = _get("model_name", model_name)
-        self.preset = preset if preset else self.model_name
         self.device = _get("device", device)
         self.patch_size = patch_size
         self.target_mpp = target_mpp
@@ -182,9 +181,9 @@ class FeatureExtractionCommand:
             self.white_detector = white_detector
 
         # Dataset paths
-        self.feature_name = f"{self.model_name}/features"
-        self.coordinates_name = f"{self.model_name}/coordinates"
-        self.latent_feature_name = f"{self.model_name}/latent_features"
+        self.feature_name = f"{self.model}/features"
+        self.coordinates_name = f"{self.model}/coordinates"
+        self.latent_feature_name = f"{self.model}/latent_features"
 
     def __call__(self, hdf5_path: str, wsi_path: str | None = None) -> FeatureExtractResult:
         """
@@ -320,8 +319,8 @@ class FeatureExtractionCommand:
                     safe_del(f, self.latent_feature_name)
 
                 # Ensure model group exists
-                if self.model_name not in f:
-                    f.create_group(self.model_name)
+                if self.model not in f:
+                    f.create_group(self.model)
 
                 # Save features
                 ds_features = f.create_dataset(self.feature_name, data=all_features)
@@ -336,7 +335,7 @@ class FeatureExtractionCommand:
                     ds_latent.attrs["writing"] = False
 
                 # Save metadata as attrs on storage group (self-descriptive)
-                grp = f[self.model_name]
+                grp = f[self.model]
                 for key, value in reader.metadata.items():
                     grp.attrs[key] = value
                 grp.attrs["patch_count"] = patch_count
@@ -356,7 +355,7 @@ class FeatureExtractionCommand:
                 elapsed=elapsed,
                 batch_time_mean=float(bt.mean()),
                 batch_time_std=float(bt.std()),
-                model=self.model_name,
+                model=self.model,
                 with_latent=self.with_latent and extract_fn is None,
             )
 

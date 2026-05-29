@@ -14,7 +14,7 @@ import streamlit as st
 from matplotlib import pyplot as plt
 
 from wsi_toolbox import commands
-from wsi_toolbox.common import set_default_model_preset
+from wsi_toolbox.common import set_default_preset
 from wsi_toolbox.utils.plot import plot_scatter_2d
 
 from ..config import (
@@ -86,9 +86,13 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                 else:
                     logger.info(f"[FeatureExtraction] Start: {f.name} (model={st.session_state.model})")
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
-                        set_default_model_preset(st.session_state.model)
+                        set_default_preset(st.session_state.model)
                         cmd = commands.FeatureExtractionCommand(
-                            batch_size=BATCH_SIZE, overwrite=True, prefetch=PREFETCH
+                            model=st.session_state.model,
+                            preset=st.session_state.model,
+                            batch_size=BATCH_SIZE,
+                            overwrite=True,
+                            prefetch=PREFETCH,
                         )
                         result = cmd(hdf5_path, wsi_path=wsi_path)
                     minutes, seconds = divmod(int(result.elapsed), 60)
@@ -110,11 +114,13 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     logger.info(f"[Clustering] Start: {f.name}")
                     t0 = time.perf_counter()
                     with st.spinner("UMAP + クラスタリング中...", show_time=True):
-                        set_default_model_preset(st.session_state.model)
+                        set_default_preset(st.session_state.model)
                         combined_cmd = commands.ClusterWithUmapCommand(
-                            umap_cmd=commands.UmapCommand(),
+                            umap_cmd=commands.UmapCommand(model=st.session_state.model),
                             cluster_cmd=commands.ClusteringCommand(
-                                resolution=DEFAULT_CLUSTER_RESOLUTION, namespace="default"
+                                model=st.session_state.model,
+                                resolution=DEFAULT_CLUSTER_RESOLUTION,
+                                namespace="default",
                             ),
                         )
                         result = combined_cmd([hdf5_path])
@@ -142,8 +148,10 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     logger.info(f"[Preview] Start: {f.name}")
                     t0 = time.perf_counter()
                     with st.spinner("オーバービュー生成中", show_time=True):
-                        set_default_model_preset(st.session_state.model)
-                        preview_cmd = commands.PreviewClustersCommand(size=THUMBNAIL_SIZE, rotate=rotate_preview)
+                        set_default_preset(st.session_state.model)
+                        preview_cmd = commands.PreviewClustersCommand(
+                            model=st.session_state.model, size=THUMBNAIL_SIZE, rotate=rotate_preview
+                        )
                         img = preview_cmd(hdf5_path, namespace="default")
                         img.save(thumb_path)
                     logger.info(f"[Preview] Done: {f.name} ({time.perf_counter() - t0:.1f}s)")

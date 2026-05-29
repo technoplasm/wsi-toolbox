@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
 from ..utils.progress import BaseProgress
-from . import _get, _progress
+from . import _progress
 from .data_loader import MultipleContext
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ class UmapCommand:
 
     def __init__(
         self,
+        model: str,
         namespace: str | None = None,
         parent_filters: list[list[int]] | None = None,
         n_components: int = 2,
@@ -53,12 +54,12 @@ class UmapCommand:
         min_dist: float = 0.1,
         metric: str = "euclidean",
         overwrite: bool = False,
-        model_name: str | None = None,
     ):
         """
         Initialize UMAP command
 
         Args:
+            model: HDF5 storage key (e.g., 'uni', 'conch15_768')
             namespace: Explicit namespace (None = auto-generate from input paths)
             parent_filters: Hierarchical filters, e.g., [[1,2,3]]
             n_components: Number of UMAP dimensions (default: 2)
@@ -66,8 +67,8 @@ class UmapCommand:
             min_dist: UMAP min_dist parameter (default: 0.1)
             metric: UMAP metric (default: "euclidean")
             overwrite: Whether to overwrite existing UMAP coordinates
-            model_name: Model name (None to use global default)
         """
+        self.model = model
         self.namespace = namespace
         self.parent_filters = parent_filters or []
         self.n_components = n_components
@@ -75,7 +76,6 @@ class UmapCommand:
         self.min_dist = min_dist
         self.metric = metric
         self.overwrite = overwrite
-        self.model_name = _get("model_name", model_name)
 
         # Internal state
         self.hdf5_paths = []
@@ -103,7 +103,7 @@ class UmapCommand:
             raise ValueError("Namespace cannot contain '+' (reserved for multi-file auto-generated namespaces)")
 
         # Build target path
-        target_path = build_cluster_path(self.model_name, self.namespace, filters=self.parent_filters, dataset="umap")
+        target_path = build_cluster_path(self.model, self.namespace, filters=self.parent_filters, dataset="umap")
 
         # Check if already exists
         if not self.overwrite:
@@ -131,7 +131,7 @@ class UmapCommand:
         try:
             # Load features
             pbar.set_description("Loading features")
-            ctx = MultipleContext(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
+            ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
             features = ctx.load_features(source="features")
             pbar.update(1)
 
@@ -181,7 +181,7 @@ class UmapCommand:
                 ds.attrs["n_neighbors"] = self.n_neighbors
                 ds.attrs["min_dist"] = self.min_dist
                 ds.attrs["metric"] = self.metric
-                ds.attrs["model"] = self.model_name
+                ds.attrs["model"] = self.model
 
     def get_embeddings(self):
         """Get computed UMAP embeddings"""

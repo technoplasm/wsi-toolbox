@@ -30,8 +30,10 @@ class AnalysisMixin:
     def run_cluster(self, a: ClusterArgs):
         input_paths = resolve_h5_paths(a.input_paths)
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
+        model = a.model if a.model else a.preset
 
         cmd = commands.ClusteringCommand(
+            model=model,
             resolution=a.resolution,
             namespace=a.namespace if a.namespace else None,
             parent_filters=parent_filters,
@@ -64,8 +66,10 @@ class AnalysisMixin:
     def run_umap(self, a: UmapArgs):
         input_paths = resolve_h5_paths(a.input_paths)
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
+        model = a.model if a.model else a.preset
 
         cmd = commands.UmapCommand(
+            model=model,
             namespace=a.namespace if a.namespace else None,
             parent_filters=parent_filters,
             n_components=2,
@@ -84,7 +88,7 @@ class AnalysisMixin:
         namespace = a.namespace if a.namespace else cmd.namespace
 
         cluster_path = build_cluster_path(
-            a.model, namespace, filters=None if a.use_parent_clusters else parent_filters, dataset="clusters"
+            model, namespace, filters=None if a.use_parent_clusters else parent_filters, dataset="clusters"
         )
 
         with h5py.File(input_paths[0], "r") as f:
@@ -172,8 +176,10 @@ class AnalysisMixin:
     def run_pca(self, a: PcaArgs):
         input_paths = resolve_h5_paths(a.input_paths)
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
+        model = a.model if a.model else a.preset
 
         cmd = commands.PCACommand(
+            model=model,
             n_components=a.n_components,
             namespace=a.namespace if a.namespace else None,
             parent_filters=parent_filters,
@@ -193,7 +199,7 @@ class AnalysisMixin:
         namespace = a.namespace if a.namespace else cmd.namespace
 
         cluster_path = build_cluster_path(
-            a.model, namespace, filters=parent_filters if a.use_sub_clusters else None, dataset="clusters"
+            model, namespace, filters=parent_filters if a.use_sub_clusters else None, dataset="clusters"
         )
 
         with h5py.File(input_paths[0], "r") as f:
@@ -289,6 +295,7 @@ class AnalysisMixin:
 
     def run_preview(self, a: PreviewArgs):
         hdf5_path = resolve_h5_path(a.input_path)
+        model = a.model if a.model else a.preset
 
         output_path = a.output_path
         filter_str = ""
@@ -301,7 +308,7 @@ class AnalysisMixin:
                 filename = f"{base_name}_preview.jpg"
             output_path = build_output_path(hdf5_path, a.namespace, filename)
 
-        cmd = commands.PreviewClustersCommand(size=a.size, model_name=a.model, rotate=a.rotate)
+        cmd = commands.PreviewClustersCommand(model=model, size=a.size, rotate=a.rotate)
         img = cmd(hdf5_path, namespace=a.namespace, filter_path=filter_str)
         img.save(output_path)
         print(f"wrote {output_path}")
@@ -324,6 +331,7 @@ class AnalysisMixin:
 
     def run_preview_score(self, a: PreviewScoreArgs):
         hdf5_path = resolve_h5_path(a.input_path)
+        model = a.model if a.model else a.preset
 
         output_path = a.output_path
         filter_str = ""
@@ -336,7 +344,7 @@ class AnalysisMixin:
                 filename = f"{base_name}_{a.score_name}_preview.jpg"
             output_path = build_output_path(hdf5_path, a.namespace, filename)
 
-        cmd = commands.PreviewScoresCommand(size=a.size, model_name=a.model, rotate=a.rotate)
+        cmd = commands.PreviewScoresCommand(model=model, size=a.size, rotate=a.rotate)
         img = cmd(
             hdf5_path,
             score_name=a.score_name,

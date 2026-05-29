@@ -9,7 +9,7 @@ import numpy as np
 from pydantic import BaseModel
 
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
-from . import _get, _progress
+from . import _progress
 from .data_loader import MultipleContext
 
 logger = logging.getLogger(__name__)
@@ -62,28 +62,28 @@ class PCACommand:
 
     def __init__(
         self,
+        model: str,
         n_components: int = 2,
         namespace: str | None = None,
         parent_filters: list[list[int]] | None = None,
         scaler: str = "minmax",
         overwrite: bool = False,
-        model_name: str | None = None,
     ):
         """
         Args:
+            model: HDF5 storage key (e.g., 'uni', 'conch15_768')
             n_components: Number of PCA components (1, 2, or 3)
             namespace: Explicit namespace (None = auto-generate)
             parent_filters: Hierarchical filters, e.g., [[1,2,3], [4,5]]
             scaler: Scaling method ("minmax" or "std")
             overwrite: Overwrite existing PCA scores
-            model_name: Model name (None = use global default)
         """
+        self.model = model
         self.n_components = n_components
         self.namespace = namespace
         self.parent_filters = parent_filters or []
         self.scaler = scaler
         self.overwrite = overwrite
-        self.model_name = _get("model_name", model_name)
 
         # Validate
         if self.n_components not in [1, 2, 3]:
@@ -118,7 +118,7 @@ class PCACommand:
 
         # Build target path
         target_path = build_cluster_path(
-            self.model_name, self.namespace, filters=self.parent_filters, dataset=f"pca{self.n_components}"
+            self.model, self.namespace, filters=self.parent_filters, dataset=f"pca{self.n_components}"
         )
 
         # Check if already exists
@@ -140,7 +140,7 @@ class PCACommand:
         with _progress(total=3, desc="PCA") as pbar:
             # Load data
             pbar.set_description("Loading features")
-            ctx = MultipleContext(hdf5_paths, self.model_name, self.namespace, self.parent_filters)
+            ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
             features = ctx.load_features(source="features")
             pbar.update(1)
 
@@ -202,4 +202,4 @@ class PCACommand:
                 ds = f.create_dataset(target_path, data=full_scores)
                 ds.attrs["n_components"] = self.n_components
                 ds.attrs["scaler"] = self.scaler
-                ds.attrs["model"] = self.model_name
+                ds.attrs["model"] = self.model

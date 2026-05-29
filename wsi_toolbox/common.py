@@ -17,11 +17,14 @@ logger = logging.getLogger(__name__)
 
 # === Global Configuration (Pydantic) ===
 class Config(BaseModel):
-    """Global configuration for commands"""
+    """Global configuration for commands.
+
+    Note: only preset-related state is session-global. The h5 storage key
+    ("model") is per-command and never lives in this Config.
+    """
 
     progress: str = Field(default="tqdm", description="Progress bar backend")
-    model_name: str = Field(default="uni", description="Default model name")
-    model_generator: Callable | None = Field(default=None, description="Model generator function")
+    model_generator: Callable | None = Field(default=None, description="Preset model factory")
     norm_mean: tuple[float, ...] = Field(default=(0.485, 0.456, 0.406), description="Normalization mean")
     norm_std: tuple[float, ...] = Field(default=(0.229, 0.224, 0.225), description="Normalization std")
     extract_fn: Callable | None = Field(default=None, description="Custom feature extraction function")
@@ -47,68 +50,66 @@ def set_default_progress(backend: str):
     _config.progress = backend
 
 
-def set_default_model(name: str, generator: Callable, label: str | None = None):
-    """Set custom model generator as default
+def set_default_preset(preset: str):
+    """Activate one of the built-in tile presets as the default foundation model.
+
+    Sets the model generator, normalization, and extract function for the
+    selected preset. Does not touch any storage-key state (that lives per-call).
 
     Args:
-        name: Model name (used for file paths, etc.)
-        generator: Callable that returns a model instance (e.g., lambda: MyModel())
-        label: Display label (defaults to name if not provided)
-
-    Example:
-        >>> set_default_model('resnet', lambda: torchvision.models.resnet50())
-        >>> set_default_model('custom', create_my_model, label='My Custom Model')
+        preset: One of PRESET_NAMES (e.g. 'uni', 'uni2', 'gigapath', ...).
     """
-    _config.model_name = name
-    _config.model_generator = generator
+    if preset not in PRESET_NAMES:
+        raise ValueError(f"Invalid preset: {preset}. Must be one of {PRESET_NAMES}")
 
-
-def set_default_model_preset(preset_name: str):
-    """Set default model from preset.
-
-    Args:
-        preset_name: One of 'uni', 'uni2', 'gigapath', 'virchow', 'virchow2',
-                     'h-optimus-0', 'conch15', 'conch15_768', 'midnight',
-                     'phikon2'
-    """
-    if preset_name not in PRESET_NAMES:
-        raise ValueError(f"Invalid preset: {preset_name}. Must be one of {PRESET_NAMES}")
-
-    _config.model_name = preset_name
-    _config.model_generator = partial(create_preset_model, preset_name)
-    norm = PRESET_NORMALIZATION[preset_name]
+    _config.model_generator = partial(create_preset_model, preset)
+    norm = PRESET_NORMALIZATION[preset]
     _config.norm_mean = norm[0]
     _config.norm_std = norm[1]
-    _config.extract_fn = PRESET_EXTRACT_FN.get(preset_name)
+    _config.extract_fn = PRESET_EXTRACT_FN.get(preset)
+
+
+def set_default_custom_preset(
+    generator: Callable,
+    norm_mean: tuple[float, ...] | None = None,
+    norm_std: tuple[float, ...] | None = None,
+    extract_fn: Callable | None = None,
+):
+    """Activate a user-supplied factory as the default foundation model.
+
+    Args:
+        generator: Callable returning a model instance (e.g. lambda: MyModel()).
+        norm_mean: Optional normalization mean (defaults to ImageNet).
+        norm_std: Optional normalization std (defaults to ImageNet).
+        extract_fn: Optional custom feature-extraction function used by
+            FeatureExtractionCommand for atypical model interfaces.
+    """
+    _config.model_generator = generator
+    if norm_mean is not None:
+        _config.norm_mean = norm_mean
+    if norm_std is not None:
+        _config.norm_std = norm_std
+    _config.extract_fn = extract_fn
 
 
 def create_default_model():
     """Create a new model instance using the registered generator.
 
     Returns:
-        torch.nn.Module: Fresh model instance
+        torch.nn.Module: Fresh model instance.
 
     Raises:
-        RuntimeError: If no model generator is registered
+        RuntimeError: If no generator is registered.
 
     Example:
-        >>> set_default_model_preset('uni')
-        >>> model = create_default_model()  # Creates new UNI model instance
+        >>> set_default_preset('uni')
+        >>> model = create_default_model()
     """
     if _config.model_generator is None:
         raise RuntimeError(
-            "No model generator registered. Call set_default_model() or set_default_model_preset() first."
+            "No model generator registered. Call set_default_preset() or set_default_custom_preset() first."
         )
     return _config.model_generator()
-
-
-def set_default_model_name(name: str):
-    """Set global default storage key for embedding output.
-
-    Use this to override the HDF5 top-level group name independently of the
-    foundation model preset (e.g., model_name='uni_224' while preset='uni').
-    """
-    _config.model_name = name
 
 
 def set_default_device(device: str):
@@ -221,9 +222,8 @@ __all__ = [
     "Config",
     "get_config",
     "set_default_progress",
-    "set_default_model",
-    "set_default_model_name",
-    "set_default_model_preset",
+    "set_default_preset",
+    "set_default_custom_preset",
     "create_default_model",
     "set_default_device",
     "resolve_devices",

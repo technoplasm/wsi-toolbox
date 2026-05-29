@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic_autocli import param
 
 from .. import commands
-from ..presets.slide import resolve_tile_model_name
+from ..presets.slide import resolve_tile_model
 from ..utils.white import create_white_detector
 from ..wsi_files import WSI_EXTENSIONS, resolve_h5_path
 from ._base import CommonArgs
@@ -89,13 +89,13 @@ class PipelineMixin:
             wsi_path = None
             h5_path = a.input_path
 
-        model_name = a.model if a.model else a.preset
+        model = a.model if a.model else a.preset
         cmd = commands.FeatureExtractionCommand(
+            model=model,
+            preset=a.preset,
             batch_size=a.batch_size,
             with_latent=a.with_latent_features,
             overwrite=a.overwrite,
-            model_name=model_name,
-            preset=a.preset,
             patch_size=a.patch_size,
             target_mpp=a.target_mpp,
             prefetch=a.prefetch,
@@ -118,14 +118,14 @@ class PipelineMixin:
     def run_aggregate(self, a: AggregateArgs):
         """Run a slide-level aggregator (TITAN, etc.) on tile features."""
         hdf5_path = resolve_h5_path(a.input_path)
-        tile_model_name = resolve_tile_model_name(
+        tile_model = resolve_tile_model(
             hdf5_path,
             a.slide_preset,
             explicit=a.model if a.model else None,
         )
         cmd = commands.AggregateCommand(
             slide_preset=a.slide_preset,
-            tile_model_name=tile_model_name,
+            tile_model=tile_model,
             overwrite=a.overwrite,
         )
         result = cmd(hdf5_path)
@@ -133,6 +133,6 @@ class PipelineMixin:
             print(f"⊘ Skipped (already exists): {result.target_path}")
         else:
             print(f"✓ Aggregated {result.n_patches} patches → {result.target_path}")
-        print(f"  slide_preset:    {result.slide_preset}")
-        print(f"  tile_model_name: {result.tile_model_name}")
-        print(f"  feature_dim:     {result.feature_dim}")
+        print(f"  slide_preset: {result.slide_preset}")
+        print(f"  tile_model:   {result.tile_model}")
+        print(f"  feature_dim:  {result.feature_dim}")

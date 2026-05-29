@@ -72,7 +72,7 @@ def build_namespace(input_paths: list[str]) -> str:
 
 
 def build_cluster_path(
-    model_name: str,
+    model: str,
     namespace: str = "default",
     filters: list[list[int]] | None = None,
     dataset: str = "clusters",
@@ -81,7 +81,7 @@ def build_cluster_path(
     Build HDF5 path for clustering data
 
     Args:
-        model_name: Model name (e.g., "uni", "gigapath")
+        model: Model name (e.g., "uni", "gigapath")
         namespace: Namespace (e.g., "default", "001+002")
         filters: Nested list of cluster filters, e.g., [[1,2,3], [0,1]]
         dataset: Dataset name ("clusters", "umap", "pca1", "pca2", "pca3")
@@ -109,7 +109,7 @@ def build_cluster_path(
     if not validate_namespace(namespace):
         raise ValueError(f"Invalid namespace '{namespace}'. Reserved names: {', '.join(sorted(RESERVED_NAMESPACES))}")
 
-    path = f"{model_name}/{namespace}"
+    path = f"{model}/{namespace}"
 
     if filters:
         for filter_ids in filters:
@@ -128,18 +128,18 @@ def parse_cluster_path(path: str) -> dict:
         path: HDF5 path (e.g., "uni/default/filter/1+2+3/clusters")
 
     Returns:
-        Dict with keys: model_name, namespace, filters, dataset
+        Dict with keys: model, namespace, filters, dataset
 
     Examples:
         >>> parse_cluster_path("uni/default/clusters")
-        {'model_name': 'uni', 'namespace': 'default', 'filters': [], 'dataset': 'clusters'}
+        {'model': 'uni', 'namespace': 'default', 'filters': [], 'dataset': 'clusters'}
 
         >>> parse_cluster_path("uni/default/filter/1+2+3/clusters")
-        {'model_name': 'uni', 'namespace': 'default', 'filters': [[1,2,3]], 'dataset': 'clusters'}
+        {'model': 'uni', 'namespace': 'default', 'filters': [[1,2,3]], 'dataset': 'clusters'}
     """
     parts = path.split("/")
 
-    result = {"model_name": parts[0], "namespace": parts[1], "filters": [], "dataset": parts[-1]}
+    result = {"model": parts[0], "namespace": parts[1], "filters": [], "dataset": parts[-1]}
 
     # Parse filter hierarchy
     i = 2
@@ -155,43 +155,43 @@ def parse_cluster_path(path: str) -> dict:
     return result
 
 
-def list_namespaces(h5_file, model_name: str) -> list[str]:
+def list_namespaces(h5_file, model: str) -> list[str]:
     """
     List all namespaces in HDF5 file for given model
 
     Args:
         h5_file: h5py.File object (opened)
-        model_name: Model name
+        model: Model name
 
     Returns:
         List of namespace strings
     """
-    if model_name not in h5_file:
+    if model not in h5_file:
         return []
 
     namespaces = []
-    for key in h5_file[model_name].keys():
-        if isinstance(h5_file[f"{model_name}/{key}"], h5py.Group):
+    for key in h5_file[model].keys():
+        if isinstance(h5_file[f"{model}/{key}"], h5py.Group):
             # Check if it contains 'clusters' dataset
-            if "clusters" in h5_file[f"{model_name}/{key}"]:
+            if "clusters" in h5_file[f"{model}/{key}"]:
                 namespaces.append(key)
 
     return namespaces
 
 
-def list_filters(h5_file, model_name: str, namespace: str) -> list[str]:
+def list_filters(h5_file, model: str, namespace: str) -> list[str]:
     """
     List all filter paths under a namespace
 
     Args:
         h5_file: h5py.File object (opened)
-        model_name: Model name
+        model: Model name
         namespace: Namespace
 
     Returns:
         List of filter strings (e.g., ["1+2+3", "5"])
     """
-    base_path = f"{model_name}/{namespace}/filter"
+    base_path = f"{model}/{namespace}/filter"
     if base_path not in h5_file:
         return []
 
@@ -237,7 +237,7 @@ def rename_namespace(
     hdf5_path: str,
     old_namespace: str,
     new_namespace: str,
-    model_name: str | None = None,
+    model: str | None = None,
 ) -> list[str]:
     """
     Rename a namespace in HDF5 file.
@@ -246,7 +246,7 @@ def rename_namespace(
         hdf5_path: Path to HDF5 file
         old_namespace: Current namespace name
         new_namespace: New namespace name
-        model_name: Specific model to rename (None = all models)
+        model: Specific model to rename (None = all models)
 
     Returns:
         List of renamed paths
@@ -258,7 +258,7 @@ def rename_namespace(
         >>> rename_namespace('output.h5', 'default', 'my_analysis')
         ['uni/default -> uni/my_analysis']
 
-        >>> rename_namespace('output.h5', 'default', 'experiment1', model_name='uni')
+        >>> rename_namespace('output.h5', 'default', 'experiment1', model='uni')
         ['uni/default -> uni/experiment1']
     """
     if not validate_namespace(new_namespace):
@@ -270,8 +270,8 @@ def rename_namespace(
 
     with h5py.File(hdf5_path, "a") as f:
         # Determine which models to process
-        if model_name:
-            models = [model_name]
+        if model:
+            models = [model]
         else:
             # Find all models that have the old namespace
             models = [k for k in f.keys() if isinstance(f[k], h5py.Group)]
@@ -299,7 +299,7 @@ def rename_namespace(
 def remove_namespace(
     hdf5_path: str,
     namespace: str,
-    model_name: str | None = None,
+    model: str | None = None,
 ) -> list[str]:
     """
     Remove a namespace from HDF5 file.
@@ -307,7 +307,7 @@ def remove_namespace(
     Args:
         hdf5_path: Path to HDF5 file
         namespace: Namespace name to remove
-        model_name: Specific model to remove from (None = all models)
+        model: Specific model to remove from (None = all models)
 
     Returns:
         List of removed paths
@@ -319,15 +319,15 @@ def remove_namespace(
         >>> remove_namespace('output.h5', 'old_experiment')
         ['uni/old_experiment']
 
-        >>> remove_namespace('output.h5', 'test', model_name='uni')
+        >>> remove_namespace('output.h5', 'test', model='uni')
         ['uni/test']
     """
     removed = []
 
     with h5py.File(hdf5_path, "a") as f:
         # Determine which models to process
-        if model_name:
-            models = [model_name]
+        if model:
+            models = [model]
         else:
             # Find all models that have the namespace
             models = [k for k in f.keys() if isinstance(f[k], h5py.Group)]

@@ -14,7 +14,7 @@ from PIL import Image, ImageFont
 from ..patch_reader import get_patch_reader
 from ..utils import create_frame, get_platform_font
 from ..utils.hdf5_paths import build_cluster_path
-from . import _get, _get_cluster_color, _progress
+from . import _get_cluster_color, _progress
 
 logger = logging.getLogger(__name__)
 
@@ -42,25 +42,25 @@ class PreviewPatchInfo:
     use_wsi: bool = False
 
     @classmethod
-    def from_h5(cls, f: h5py.File, h5_path: str, model_name: str, patch_size: int | None = None) -> "PreviewPatchInfo":
+    def from_h5(cls, f: h5py.File, h5_path: str, model: str, patch_size: int | None = None) -> "PreviewPatchInfo":
         """
         Detect and create patch source info from H5 file.
 
         Args:
             f: Open HDF5 file
             h5_path: Path to H5 file (for WSI discovery)
-            model_name: Storage key (e.g., 'uni', 'uni_224')
+            model: Storage key (e.g., 'uni', 'uni_224')
             patch_size: Patch size for cache lookup. If None, derive from
-                {model_name}/attrs['patch_size'].
+                {model}/attrs['patch_size'].
 
         Returns:
             PreviewPatchInfo with correct paths or WSI flag
         """
         if patch_size is None:
-            if model_name in f and "patch_size" in f[model_name].attrs:
-                patch_size = int(f[model_name].attrs["patch_size"])
+            if model in f and "patch_size" in f[model].attrs:
+                patch_size = int(f[model].attrs["patch_size"])
             else:
-                raise ValueError(f"patch_size not specified and {model_name}/attrs['patch_size'] not found")
+                raise ValueError(f"patch_size not specified and {model}/attrs['patch_size'] not found")
 
         cache_group = f"cache/{patch_size}"
 
@@ -78,9 +78,9 @@ class PreviewPatchInfo:
                 )
 
         # Try model coordinates + WSI on-demand
-        model_coords = f"{model_name}/coordinates"
+        model_coords = f"{model}/coordinates"
         if model_coords in f:
-            grp = f[model_name]
+            grp = f[model]
             return cls(
                 patches_path=None,
                 coords_path=model_coords,
@@ -105,9 +105,9 @@ class BasePreviewCommand:
 
     def __init__(
         self,
+        model: str,
         size: int = 64,
         font_size: int = 16,
-        model_name: str | None = None,
         rotate: bool = False,
         patch_size: int | None = None,
     ):
@@ -115,16 +115,16 @@ class BasePreviewCommand:
         Initialize preview command
 
         Args:
+            model: Storage key (e.g., 'uni', 'conch15_768')
             size: Thumbnail patch size (output)
             font_size: Font size for labels
-            model_name: Storage key (None to use global default)
             rotate: Whether to rotate patches 180 degrees
             patch_size: Source patch size for cache lookup. If None, derive
-                from {model_name}/attrs['patch_size'] in the HDF5 file.
+                from {model}/attrs['patch_size'] in the HDF5 file.
         """
+        self.model = model
         self.size = size
         self.font_size = font_size
-        self.model_name = _get("model_name", model_name)
         self.rotate = rotate
         self.patch_size = patch_size
 
@@ -143,9 +143,7 @@ class BasePreviewCommand:
 
         with h5py.File(hdf5_path, "r") as f:
             # Get patch source info
-            info = PreviewPatchInfo.from_h5(
-                f, h5_path=hdf5_path, model_name=self.model_name, patch_size=self.patch_size
-            )
+            info = PreviewPatchInfo.from_h5(f, h5_path=hdf5_path, model=self.model, patch_size=self.patch_size)
             cols = info.cols
             rows = info.rows
             patch_count = info.patch_count
@@ -274,7 +272,7 @@ class PreviewClustersCommand(BasePreviewCommand):
                 filters.append(filter_ids)
 
         # Build cluster path
-        cluster_path = build_cluster_path(self.model_name, namespace, filters)
+        cluster_path = build_cluster_path(self.model, namespace, filters)
 
         if cluster_path not in f:
             raise RuntimeError(f"{cluster_path} does not exist in HDF5 file")
@@ -343,7 +341,7 @@ class PreviewScoresCommand(BasePreviewCommand):
                 filters.append(filter_ids)
 
         # Build hierarchical path
-        score_path = build_cluster_path(self.model_name, namespace, filters, dataset=score_name)
+        score_path = build_cluster_path(self.model, namespace, filters, dataset=score_name)
 
         if score_path not in f:
             raise RuntimeError(f"{score_path} does not exist in HDF5 file")
@@ -405,7 +403,7 @@ class PreviewLatentPCACommand(BasePreviewCommand):
         from sklearn.preprocessing import MinMaxScaler  # noqa: PLC0415
 
         # Load latent features
-        h = f[f"{self.model_name}/latent_features"][()]  # B, L(16x16), EMB(1024)
+        h = f[f"{self.model}/latent_features"][()]  # B, L(16x16), EMB(1024)
         h = h.astype(np.float32)
         s = h.shape
 
@@ -476,7 +474,7 @@ class PreviewLatentClusterCommand(BasePreviewCommand):
             dict with 'overlays' and 'alpha_mask'
         """
         # Load latent clusters
-        clusters = f[f"{self.model_name}/latent_clusters"][()]  # B, L(16x16)
+        clusters = f[f"{self.model}/latent_clusters"][()]  # B, L(16x16)
         s = clusters.shape
 
         # Estimate original latent size
