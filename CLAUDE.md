@@ -16,7 +16,7 @@ WSIデータを様々な形で活用する
 - **進捗・プリセット・デバイスはコマンドの引数で渡す**（`on_progress=` / `should_cancel=` は `__call__`、
   `preset=` / `device=` はコンストラクタ）。`wt.defaults` を書き換えるコードを新たに書かない
   （`set_default_*` は notebook 利用者のためのもの。ライブラリ内・cli・app・watcher・外部サービスは
-  引数で明示する）。設計は `_docs/v1-design.md`、公開 API は `README_API.md`
+  引数で明示する）。設計は `_docs/design-progress-events.md`、公開 API は `README_API.md`
 - 進捗は描画せずイベント（`ProgressEvent`）を `Reporter` 経由で sink に流す。新しいコマンドも
   `make_reporter(on_progress, should_cancel)` → `_run(..., reporter)` の形に揃える（`commands/_base.py`）
 

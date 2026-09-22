@@ -2,8 +2,8 @@
 
 A comprehensive toolkit for Whole Slide Image (WSI) processing, feature extraction, and clustering analysis.
 
-> **v1.0**: progress, preset and device are now passed to commands as arguments (see [Python API](#python-api)).
-> Upgrading from 0.5? Read [`_docs/migration-1.0.md`](_docs/migration-1.0.md). Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
+> **0.6**: progress, preset and device are now passed to commands as arguments (see [Python API](#python-api)).
+> Upgrading from 0.5? Read [`_docs/migration-0.6.md`](_docs/migration-0.6.md). Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
@@ -126,7 +126,7 @@ img.save('sample_preview.jpg')
 ## Python API
 
 Every command follows the same pattern: configuration in `__init__`, execution in `__call__`, a Pydantic
-result object back. In 1.0 the three things a caller may want to control at run time are all **arguments**:
+result object back. In 0.6 the three things a caller may want to control at run time are all **arguments**:
 
 | What | Where | Fallback when omitted |
 |------|-------|-----------------------|

@@ -1,15 +1,15 @@
-# Migrating from wsi-toolbox 0.5 to 1.0
+# Migrating from wsi-toolbox 0.5 to 0.6
 
-1.0 changes how a caller controls three things — **progress display**, **which foundation model**, and
+0.6 changes how a caller controls three things — **progress display**, **which foundation model**, and
 **which device** — and how a run is **cancelled**. Everything else (command names, result types, HDF5 layout,
-CLI subcommands and options) is unchanged. The design behind this is in [`v1-design.md`](v1-design.md).
+CLI subcommands and options) is unchanged. The design behind this is in [`design-progress-events.md`](design-progress-events.md).
 
 In one sentence: *commands emit progress events instead of drawing bars, and take `preset=` / `device=` /
 `on_progress=` / `should_cancel=` as arguments instead of reading a mutable global.*
 
 ## 1. Removed names and their replacements
 
-| Removed in 1.0 | Use instead |
+| Removed in 0.6 | Use instead |
 |----------------|-------------|
 | `wt.BaseProgress`, `wt.register_progress`, `wsi_toolbox.utils.progress` (whole module, incl. `TqdmProgress` / `RichProgress` / `StreamlitProgress` / `DummyProgress`) | Pass a sink callable as `on_progress=`. Built-ins: `TqdmSink`, `RichSink`, `StreamlitSink`, `LoggingSink`, `MultiSink`, `NullSink` (see §3) |
 | `wt.get_config()`, `wsi_toolbox.common.Config`, `common._config` | `wt.defaults` / `wt.get_defaults()` (a `Defaults` model with `preset`, `device`, `progress`, `cluster_cmap`, `verbose`) |
@@ -36,7 +36,7 @@ FeatureExtractionCommand(model: str, preset: str, batch_size=256, with_latent=Fa
                          device: str | None = None, patch_size=256, target_mpp=0.5, prefetch=1, white_detector=None)
 cmd(hdf5_path, wsi_path=None)
 
-# 1.0
+# 0.6
 FeatureExtractionCommand(model: str, preset: str | TilePreset | None = None, device: str | None = None,
                          batch_size=256, with_latent=False, overwrite=False, patch_size=256, target_mpp=0.5,
                          prefetch=1, white_detector=None)
@@ -66,7 +66,7 @@ command, on each call.
 
 ## 3. Progress: from `BaseProgress` to events
 
-0.5 asked you to *implement a tqdm-like object* and register it under a backend name. 1.0 *sends you events*.
+0.5 asked you to *implement a tqdm-like object* and register it under a backend name. 0.6 *sends you events*.
 
 ```python
 # 0.5
@@ -83,7 +83,7 @@ register_progress("mine", MyProgress)
 wt.set_default_progress("mine")
 cmd(hdf5_path)
 
-# 1.0
+# 0.6
 def my_sink(event: wt.ProgressEvent) -> None:
     print(event.phase, event.n, event.total, event.message, event.done)
 
@@ -132,7 +132,7 @@ wt.set_default_custom_preset(
 )
 cmd = wt.FeatureExtractionCommand(model='mine', preset='uni')   # preset was required but ignored for the model
 
-# 1.0
+# 0.6
 my_preset = wt.TilePreset(
     name='mine',                                # stored in the HDF5 group attrs as 'preset'
     create_model=lambda: MyEncoder(),           # fresh module; the command moves it to the device and calls .eval()
@@ -151,7 +151,7 @@ process — the thing 0.5's single global generator could not do.
 
 ## 5. Cancellation
 
-0.5 had no cancellation API; the only way was to raise from inside a progress callback. 1.0 makes it explicit:
+0.5 had no cancellation API; the only way was to raise from inside a progress callback. 0.6 makes it explicit:
 
 ```python
 stop = threading.Event()

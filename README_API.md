@@ -3,7 +3,7 @@
 Reference for everything exported from `wsi_toolbox` (`import wsi_toolbox as wt`). The list below is the
 package's `__all__`; if a name is not here it is not public. Usage-oriented docs are in
 [README.md](README.md) (see [Python API](README.md#python-api)); 0.5 → 1.0 changes are in
-[`_docs/migration-1.0.md`](_docs/migration-1.0.md).
+[`_docs/migration-0.6.md`](_docs/migration-0.6.md).
 
 ```bash
 pip install wsi-toolbox

@@ -1,7 +1,7 @@
-# wsi-toolbox v1.0 設計: 進捗・プリセット・デバイスの明示化
+# wsi-toolbox 0.6 設計（進捗・プリセット・デバイスの明示化）: 進捗・プリセット・デバイスの明示化
 
-作成: 2026-09-23（issue #2）。ステータス: **コア実装済み・ドキュメント済み（README / README_API / migration-1.0.md / CHANGELOG）。入口（cli / app / watcher）は追従中**。v0.5.1 → v1.0.0 の破壊的変更を含む。
-このメモは v1.0.0 リリースまでの単一情報源。完了後は README に統合する。移行ガイドは `migration-1.0.md`。
+作成: 2026-09-23（issue #2）。ステータス: **コア実装済み・ドキュメント済み（README / README_API / migration-0.6.md / CHANGELOG）。入口（cli / app / watcher）は追従中**。v0.5.1 → v0.6.0 の破壊的変更を含む。
+このメモは 0.6.0 リリースまでの単一情報源。完了後は README に統合する。移行ガイドは `migration-0.6.md`。
 
 ## 1. 動機
 
@@ -148,7 +148,7 @@ progress 引数と `UmapCommand` の同引数は削除し、内部の `_run(path
 | `cli/_base.py` | モジュール import 時の `set_default_*` を削除。`prepare` は `self.preset / self.device / self.sink = RichSink() or TqdmSink()` を持ち、各サブコマンドが Command に渡す。`--progress` は `rich / tqdm / none` |
 | `app/main.py`、`app/ui/pages/*` | `set_default_*` を削除。`StreamlitSink(st.container())` と `preset=st.session_state.model` を各呼び出しに渡す。壊れてもよいが、cli と同じ段階名・進捗が出ること |
 | `watcher.py` | `TqdmSink()` + `LoggingSink(ログファイル用 logger)` を `MultiSink` で。preset / device は引数 |
-| vision compute（別 repo、v1 公開後） | `on_progress=ndjson sink`、`should_cancel=flag.is_set`、`preset=` `device=` 明示。`compute/compute/jobs/progress.py` の contextvar hack を削除 |
+| vision compute（別 repo、0.6 公開後） | `on_progress=ndjson sink`、`should_cancel=flag.is_set`、`preset=` `device=` 明示。`compute/compute/jobs/progress.py` の contextvar hack を削除 |
 
 ## 4. 互換性と移行（0.5 → 1.0）
 
@@ -169,7 +169,7 @@ progress 引数と `UmapCommand` の同引数は削除し、内部の `_run(path
 - `test_clustering.py`: 上の h5 で `UmapCommand` → `ClusteringCommand` → `ClusterWithUmapCommand`、段階名の並び
 - `test_cli.py`: `wt --help` と `wt extract --help` が exit 0
 
-`pyproject.toml`: `[dependency-groups] dev = ["pytest", "ruff"]`、taskipy に `test`。version を `1.0.0`。
+`pyproject.toml`: `[dependency-groups] dev = ["pytest", "ruff"]`、taskipy に `test`。version を `0.6.0`。
 
 ## 6. 進め方
 
