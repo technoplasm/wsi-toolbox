@@ -1,358 +1,394 @@
 # WSI-toolbox API Guide
 
-## Installation
+Reference for everything exported from `wsi_toolbox` (`import wsi_toolbox as wt`). The list below is the
+package's `__all__`; if a name is not here it is not public. Usage-oriented docs are in
+[README.md](README.md) (see [Python API](README.md#python-api)); 0.5 → 1.0 changes are in
+[`_docs/migration-1.0.md`](_docs/migration-1.0.md).
 
 ```bash
 pip install wsi-toolbox
 ```
 
-## Basic Usage
+## Public names
+
+| Group | Names |
+|-------|-------|
+| Version | `__version__` |
+| Defaults | `Defaults`, `defaults`, `get_defaults`, `set_default_preset`, `set_default_device`, `set_default_progress`, `set_default_cluster_cmap`, `set_verbose`, `resolve_preset`, `resolve_devices` |
+| Progress | `ProgressEvent`, `ProgressSink`, `Reporter`, `Cancelled`, `UNSET`, `TqdmSink`, `RichSink`, `StreamlitSink`, `LoggingSink`, `MultiSink`, `NullSink`, `resolve_sink` |
+| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand`, `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand` |
+| Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult` |
+| WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
+| Patch readers | `PatchReader`, `WSIPatchReader`, `CachePatchReader`, `PrefetchReader`, `get_patch_reader` |
+| Presets | `TilePreset`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model` |
+| Utilities | `leiden_cluster`, `reorder_clusters_by_pca`, `rename_namespace`, `remove_namespace` |
+
+## Defaults
+
+Process-wide defaults, read by commands when an argument is `None` / not given. **Nothing in the library writes
+them**; only the `set_default_*` functions do. Services should pass `preset=` / `device=` / `on_progress=`
+explicitly and leave the defaults alone.
+
+```python
+class Defaults(BaseModel):
+    preset: str | TilePreset | None = None   # commands raise ValueError when both this and preset= are unset
+    device: str = "auto"
+    progress: str | ProgressSink | None = "tqdm"
+    cluster_cmap: str = "tab20"
+    verbose: bool = True
+
+defaults: Defaults                                   # the instance
+get_defaults() -> Defaults
+set_default_preset(preset: str | TilePreset)         # name must be in PRESET_NAMES
+set_default_device(device: str)                      # 'auto' | 'cpu' | 'cuda' | 'cuda:0' | 'cuda:0,1'
+set_default_progress(progress: str | ProgressSink | None)   # 'tqdm' | 'rich' | 'streamlit' | 'logging' | 'none', a callable, or None
+set_default_cluster_cmap(cmap_name: str)
+set_verbose(verbose: bool)
+
+resolve_preset(preset: str | TilePreset | None) -> TilePreset   # None -> defaults.preset; ValueError if unset
+resolve_devices(device: str | None = None) -> list[str]        # None -> defaults.device; e.g. ['cuda:0', 'cuda:1'] or ['cpu']
+```
 
 ```python
 import wsi_toolbox as wt
 
-# Set global configuration
-wt.set_default_progress('tqdm')       # Progress: 'tqdm' or 'streamlit'
-wt.set_default_preset('uni')    # Model: 'uni', 'gigapath', 'virchow2'
-wt.set_default_device('cuda')         # Device: 'cuda' or 'cpu'
+wt.set_default_preset('uni2')
+wt.set_default_device('cuda:0')
+wt.set_default_progress('rich')
+```
+
+## Progress
+
+Commands emit `ProgressEvent`s through a `Reporter`; a *sink* (any `Callable[[ProgressEvent], None]`) displays
+them. Sinks are stateful — create a fresh one per command call.
+
+```python
+@dataclass(frozen=True, slots=True)
+class ProgressEvent:
+    phase: str            # stage name, e.g. "Processing patches"
+    n: int                # progress within the phase
+    total: int | None     # phase size, None if unknown
+    elapsed: float        # seconds since the command started
+    message: str = ""     # supplementary text (tqdm postfix)
+    done: bool = False    # True only on the final event
+    fraction -> float | None   # property: n / total clamped to [0, 1]
+
+ProgressSink = Callable[[ProgressEvent], None]
+
+class Cancelled(Exception): ...   # raised by commands when should_cancel() returns True (after cleanup)
+
+UNSET   # sentinel: "on_progress not given" (-> defaults.progress) as opposed to None (silent)
+```
+
+### Sinks
+
+| Sink | Constructor | Behaviour |
+|------|-------------|-----------|
+| `TqdmSink` | `TqdmSink(**tqdm_kwargs)` | One tqdm bar per phase; `message` as postfix. Default |
+| `RichSink` | `RichSink(console=None)` | `rich.progress`, one task per phase. Used by the CLI |
+| `StreamlitSink` | `StreamlitSink(container=None)` | `st.progress` per phase inside `container` (default: main page) |
+| `LoggingSink` | `LoggingSink(logger=None, every=5.0, level=logging.INFO)` | Logs `phase [n/total] message`; phase changes always, advances at most every `every` seconds, `Done (Xs)` at the end |
+| `MultiSink` | `MultiSink(*sinks)` | Forwards every event to all sinks (`None`s are skipped) |
+| `NullSink` | `NullSink()` | Discards events |
+
+```python
+resolve_sink(name_or_sink: str | ProgressSink | None) -> ProgressSink | None
+# 'tqdm' | 'rich' | 'streamlit' | 'logging' -> new instance; 'none' or None -> None; callable -> itself
+```
+
+### Reporter
+
+The object commands use internally. Public so that composite pipelines can feed several commands' `_run(...,
+reporter)` one continuous stream, and so custom code can emit the same events.
+
+```python
+class Reporter:
+    def __init__(self, on_progress: ProgressSink | None, should_cancel: Callable[[], bool] | None = None,
+                 *, min_interval: float = 0.0): ...
+    def phase(self, name: str, total: int | None = None, message: str = "") -> None   # new phase, n=0, checks cancel
+    def advance(self, n: int = 1, message: str | None = None) -> None                  # n += n, emit (throttled), checks cancel
+    def set_message(self, message: str) -> None
+    def check_cancel(self) -> None                 # raises Cancelled
+    def iter(self, iterable, *, total: int | None = None) -> Iterator   # tqdm(iterable) equivalent
+    def finish(self) -> None                       # emits done=True
+    elapsed: float; current_phase: str             # properties
+    # context manager: finish() on normal exit, nothing on exception
 ```
 
 ## Commands
 
-All commands follow the pattern: `__init__` for configuration, `__call__` for execution.
-Each command returns a Pydantic BaseModel result with type-safe attributes.
+All commands: configuration in `__init__`, execution in `__call__`, a Pydantic result back. Every `__call__`
+(except `ShowCommand`) takes two keyword-only arguments:
+
+- `on_progress: ProgressSink | None = UNSET` — not given → `resolve_sink(defaults.progress)`; `None` → silent
+- `should_cancel: Callable[[], bool] | None = None` — polled at phase boundaries and inside long loops; `True` → `Cancelled`
+
+The phase names each command emits are tabulated in [README.md](README.md#phase-names).
 
 ### FeatureExtractionCommand
 
-Extract features from patches using foundation models.
-Can read directly from WSI or from cached patches.
+Extract per-patch features with a tile foundation model, from a patch cache if present or straight from the
+WSI. **CLI:** `wt extract`.
 
-**CLI equivalent:** `wt extract`
+```python
+wt.FeatureExtractionCommand(
+    model: str,                              # HDF5 storage key (required), e.g. 'uni2' or 'uni_224'
+    preset: str | TilePreset | None = None,  # foundation model; None -> defaults.preset (ValueError if unset)
+    device: str | None = None,               # None -> defaults.device
+    batch_size: int = 256,
+    with_latent: bool = False,
+    overwrite: bool = False,
+    patch_size: int = 256,
+    target_mpp: float = 0.5,
+    prefetch: int = 1,
+    white_detector: Callable[[np.ndarray], bool] | None = None,
+)
+cmd(hdf5_path: str, wsi_path: str | None = None, *, on_progress=UNSET, should_cancel=None) -> FeatureExtractResult
+```
+
+`FeatureExtractResult`: `feature_dim`, `patch_count`, `total_patches`, `total_batches`, `elapsed`,
+`batch_time_mean`, `batch_time_std`, `model`, `with_latent`, `skipped`; `.summary()` gives a one-line string.
 
 ```python
 import wsi_toolbox as wt
 
-wt.set_default_preset('uni')
-wt.set_default_device('cuda')
-
-cmd = wt.FeatureExtractionCommand(
-    model='uni',         # HDF5 storage key (required)
-    preset='uni',        # Foundation model preset (required)
-    batch_size=256,
-    with_latent=False,
-    overwrite=False,
-    device=None,         # None = use global default
-)
-
-# Direct from WSI (no cache needed)
-result = cmd('output.h5', wsi_path='input.ndpi')
-
-# Or from cache (if available)
-result = cmd('output.h5')
-
+cmd = wt.FeatureExtractionCommand(model='uni2', preset='uni2', device='cuda:0', batch_size=256)
+result = cmd('output.h5', wsi_path='input.ndpi', on_progress=wt.RichSink())
 if not result.skipped:
-    print(f"Feature dim: {result.feature_dim}")
-    print(f"Patch count: {result.patch_count}")
-    print(f"Model: {result.model}")
+    print(result.summary())
 ```
 
-### AggregateCommand
-
-Run a slide-level aggregator (e.g. TITAN) on tile features. Produces a single
-slide-level vector and writes it to `{tile_model}/aggregates/{slide_preset}/feature`.
-
-**CLI equivalent:** `wt aggregate`
-
-```python
-import wsi_toolbox as wt
-from wsi_toolbox.presets.slide import resolve_tile_model
-
-hdf5_path = 'sample.h5'
-
-# Optional: let the helper find the right tile_model (e.g. 'conch15_768'
-# for the 'titan' slide preset). Raises if 0 or >1 compatible groups exist.
-tile_model = resolve_tile_model(hdf5_path, slide_preset='titan')
-
-cmd = wt.AggregateCommand(
-    slide_preset='titan',
-    tile_model=tile_model,
-    overwrite=False,
-)
-result = cmd(hdf5_path)
-# result.target_path → 'conch15_768/aggregates/titan/feature'
-# result.feature_dim → 768
-```
+Cancellation is checked after every batch; on `Cancelled` the partial `features` / `coordinates` datasets are
+removed before the exception propagates.
 
 ### CacheCommand
 
-Cache tile patches from WSI to HDF5 for faster repeated access.
-This is optional - FeatureExtractionCommand can read directly from WSI.
-
-**CLI equivalent:** `wt cache`
+Cache tile patches from a WSI into `cache/{patch_size}/` in the HDF5 file. Optional: extraction can read the WSI
+directly. **CLI:** `wt cache`. `Wsi2HDF5Command` / `Wsi2HDF5Result` are deprecated aliases.
 
 ```python
-import wsi_toolbox as wt
-
-cmd = wt.CacheCommand(
-    patch_size=256,      # Patch size in pixels
-    target_mpp=0.5,      # Target microns per pixel
-    rows_per_read=4,     # Rows to read at once
-    engine='auto',       # 'auto', 'openslide', 'tifffile'
-)
-result = cmd('input.ndpi', 'output.h5')
-
-# Result attributes
-print(f"Patches: {result.patch_count}")
-print(f"MPP: {result.mpp}")
-print(f"Grid: {result.cols} x {result.rows}")
+wt.CacheCommand(patch_size=256, target_mpp=0.5, rows_per_read=4, engine='auto', overwrite=False, white_detector=None)
+cmd(input_path: str, output_path: str, *, on_progress=UNSET, should_cancel=None) -> CacheResult
 ```
+
+`CacheResult`: `mpp`, `target_mpp`, `level_used`, `patch_count`, `patch_size`, `cols`, `rows`, `output_path`, `skipped`. Cancellation is checked after every row strip; the
+partial cache is removed.
+
+### AggregateCommand
+
+Run a slide-level aggregator (e.g. TITAN) over tile features, writing `{tile_model}/aggregates/{slide_preset}/feature`.
+**CLI:** `wt aggregate`. Slide presets are uv-only (not in the PyPI package).
+
+```python
+wt.AggregateCommand(slide_preset: str, tile_model: str, device: str | None = None, overwrite=False)
+cmd(hdf5_path: str, *, on_progress=UNSET, should_cancel=None) -> AggregateResult
+```
+
+`AggregateResult`: `slide_preset`, `tile_model`, `target_path`, `feature_dim`, `n_patches`, `skipped`. Use
+`wsi_toolbox.presets.slide.resolve_tile_model(hdf5_path, slide_preset)` to find the compatible `tile_model`
+automatically (raises when 0 or more than one group is compatible).
 
 ### ClusteringCommand
 
-Perform Leiden clustering on features or UMAP coordinates.
-
-**CLI equivalent:** `wt cluster`
+Leiden clustering of features. **CLI:** `wt cluster`.
 
 ```python
-import wsi_toolbox as wt
-
-cmd = wt.ClusteringCommand(
-    model='uni',              # HDF5 storage key (required)
-    resolution=1.0,           # Leiden resolution
-    namespace=None,           # None = auto-generate from filenames
-    parent_filters=None,      # Hierarchical filters, e.g., [[1,2,3], [4,5]]
-    overwrite=False,
+wt.ClusteringCommand(
+    model: str,
+    resolution: float = 1.0,
+    namespace: str | None = None,             # None -> 'default' (single file) or 'a+b+c' (multi-file)
+    parent_filters: list[list[int]] | None = None,   # sub-clustering, e.g. [[1, 2, 3]]
+    sort_clusters: bool = True,               # reorder cluster ids by PCA
+    overwrite: bool = False,
 )
-result = cmd(['output.h5'])   # Accepts single path or list
-
-print(f"Clusters: {result.cluster_count}")
-print(f"Samples: {result.feature_count}")
-print(f"Path: {result.target_path}")
+cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> ClusteringResult
 ```
 
-#### Multi-file Clustering
-
-```python
-cmd = wt.ClusteringCommand(model='uni', resolution=1.0)
-result = cmd(['file1.h5', 'file2.h5', 'file3.h5'])
-# Namespace auto-generated: "file1+file2+file3"
-```
-
-#### Sub-clustering
-
-```python
-cmd = wt.ClusteringCommand(
-    model='uni',
-    resolution=2.0,
-    parent_filters=[[0, 1, 2]],
-)
-result = cmd('output.h5')
-# Output path: uni/default/filter/0+1+2/clusters
-```
+`ClusteringResult`: `cluster_count`, `feature_count`, `target_path`, `skipped`.
 
 ### UmapCommand
 
-Compute UMAP embeddings from features.
-
-**CLI equivalent:** `wt umap`
+UMAP projection of features. **CLI:** `wt umap`.
 
 ```python
-import wsi_toolbox as wt
-
-cmd = wt.UmapCommand(
-    model='uni',              # HDF5 storage key (required)
-    namespace=None,
-    parent_filters=None,
-    n_components=2,
-    n_neighbors=15,
-    min_dist=0.1,
-    metric='euclidean',
-    overwrite=False,
-)
-result = cmd('output.h5')
-embeddings = cmd.get_embeddings()  # numpy array (N, 2)
+wt.UmapCommand(model: str, namespace=None, parent_filters=None, n_components=2, n_neighbors=15,
+               min_dist=0.1, metric='euclidean', overwrite=False)
+cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> UmapResult
+cmd.get_embeddings() -> np.ndarray     # (N, n_components) after a run
 ```
+
+`UmapResult`: `n_samples`, `n_components`, `namespace`, `target_path`, `skipped`.
+
+### ClusterWithUmapCommand
+
+`UmapCommand` then `ClusteringCommand` through **one** progress stream (a single `Reporter`, a single `done`).
+
+```python
+wt.ClusterWithUmapCommand(umap_cmd: UmapCommand, cluster_cmd: ClusteringCommand)
+cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> ClusterWithUmapResult
+```
+
+`ClusterWithUmapResult`: `umap_target_path`, `cluster_target_path`, `n_samples`, `cluster_count`,
+`umap_skipped`, `cluster_skipped`.
 
 ### PCACommand
 
-Compute PCA scores from features.
-
-**CLI equivalent:** `wt pca`
+PCA scores of features. **CLI:** `wt pca`.
 
 ```python
-import wsi_toolbox as wt
-
-cmd = wt.PCACommand(
-    model='uni',
-    n_components=2,       # 1, 2, or 3
-    namespace=None,
-    parent_filters=None,
-    scaler='minmax',      # 'minmax' or 'std'
-    overwrite=False,
-)
-result = cmd('output.h5')
+wt.PCACommand(model: str, n_components: int = 2, namespace=None, parent_filters=None, scaler='minmax', overwrite=False)
+cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> PCAResult
 ```
 
-### PreviewClustersCommand
+`PCAResult`: `n_samples`, `n_components`, `namespace`, `target_path`, `skipped`.
 
-Generate thumbnail with cluster color overlay.
+### Preview commands
 
-**CLI equivalent:** `wt preview`
-
-```python
-import wsi_toolbox as wt
-
-cmd = wt.PreviewClustersCommand(
-    model='uni',
-    size=64,
-    font_size=16,
-    rotate=False,
-)
-img = cmd('output.h5', namespace='default', filter_path='')
-img.save('preview_clusters.jpg')
-```
-
-### PreviewScoresCommand
-
-Generate thumbnail with PCA score heatmap.
-
-**CLI equivalent:** `wt preview-score`
+Thumbnail overlays. All subclass `BasePreviewCommand` and return a `PIL.Image.Image`. They need the patch
+images: `cache/{patch_size}/` in the file or the original WSI next to it (same stem).
 
 ```python
-import wsi_toolbox as wt
+wt.BasePreviewCommand(model: str, size=64, font_size=16, rotate=False, patch_size: int | None = None)
+cmd(hdf5_path: str, *, on_progress=UNSET, should_cancel=None, **prepare_kwargs) -> PIL.Image.Image
 
-cmd = wt.PreviewScoresCommand(model='uni', size=64)
-img = cmd(
-    'output.h5',
-    score_name='pca1',      # Score dataset: 'pca1', 'pca2', etc.
-    namespace='default',
-    filter_path='',
-    cmap_name='jet',
-    invert=False,
-)
-img.save('preview_pca.jpg')
+wt.PreviewClustersCommand(...)(hdf5_path, namespace='default', filter_path='')                      # wt preview
+wt.PreviewScoresCommand(...)(hdf5_path, score_name='pca1', namespace='default', filter_path='',
+                             cmap_name='jet', invert=False)                                        # wt preview-score
+wt.PreviewLatentPCACommand(...)(hdf5_path, alpha=0.5)
+wt.PreviewLatentClusterCommand(...)(hdf5_path, alpha=0.5)
 ```
 
 ### ShowCommand
 
-Display HDF5 file structure.
-
-**CLI equivalent:** `wt show`
+Print the HDF5 structure. **CLI:** `wt show`. No progress arguments.
 
 ```python
-import wsi_toolbox as wt
-
-cmd = wt.ShowCommand(verbose=True)
-result = cmd('output.h5')
-
-print(f"Patches: {result.patch_count}")
-print(f"Models: {result.models}")
-print(f"Namespaces: {result.namespaces}")
+wt.ShowCommand(verbose: bool = False)
+cmd(hdf5_path: str) -> ShowResult      # patch_count, patch_size, models, namespaces
 ```
 
 ### DziCommand
 
-Export WSI to Deep Zoom Image format (for OpenSeadragon).
-
-**CLI equivalent:** `wt dzi`
+Export a pyramidal WSI as Deep Zoom tiles (OpenSeadragon). **CLI:** `wt dzi`.
 
 ```python
-import wsi_toolbox as wt
-
-cmd = wt.DziCommand(
-    tile_size=256,
-    overlap=0,
-    jpeg_quality=90,
-    format='jpeg',       # 'jpeg' or 'png'
-)
-result = cmd(wsi_path='input.ndpi', output_dir='./output', name='slide')
-
-print(f"DZI path: {result.dzi_path}")
-print(f"Max level: {result.max_level}")
-print(f"Size: {result.width} x {result.height}")
+wt.DziCommand(tile_size=256, overlap=0, jpeg_quality=90, format='jpeg')
+cmd(wsi_path: str | None = None, wsi_file: WSIFile | None = None, output_dir='.', name='slide',
+    *, on_progress=UNSET, should_cancel=None) -> DziResult
 ```
 
+`DziResult`: `dzi_path`, `max_level`, `tile_size`, `overlap`, `width`, `height`. Cancellation is checked after every tile.
 
-## WSI File Operations
+## Presets
 
 ```python
-import wsi_toolbox as wt
+@dataclass(frozen=True)
+class TilePreset:
+    name: str                                         # stored in {model}/.attrs['preset']
+    create_model: Callable[[], torch.nn.Module]       # fresh module; not moved to a device, not .eval()
+    norm_mean: tuple[float, float, float] = ImageNet mean
+    norm_std: tuple[float, float, float] = ImageNet std
+    extract_fn: Callable[[model, x], features] | None = None   # None -> forward_features(x)[:, 0]
 
-# Open WSI file (auto-detect engine)
-wsi = wt.create_wsi_file('input.ndpi', engine='auto')
+get_tile_preset(name: str) -> TilePreset      # built-in preset by name; ValueError lists PRESET_NAMES
+PRESET_NAMES: list[str]
+# ['uni', 'uni2', 'gigapath', 'gigapath-flash', 'virchow', 'virchow2', 'h-optimus-0',
+#  'conch15', 'conch15_768', 'midnight', 'phikon2']
 
-# Or use specific class
-wsi = wt.OpenSlideFile('input.ndpi')
+# Compatibility tables derived from the presets
+create_preset_model(name: str) -> torch.nn.Module      # == get_tile_preset(name).create_model()
+PRESET_NORMALIZATION: dict[str, (mean, std)]
+PRESET_EXTRACT_FN: dict[str, Callable]                  # only presets with a custom extract_fn
 
-# Get information
+# Slide-level aggregators (uv-only)
+SLIDE_PRESET_NAMES: list[str]                           # ['titan']
+SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[str, ...]]   # {'titan': ('conch15_768',)}
+create_slide_preset_model(name: str)
+```
+
+A custom model is a `TilePreset` you construct yourself; see [README.md](README.md#custom-models-tilepreset).
+
+## WSI files
+
+```python
+wt.create_wsi_file(path: str, engine: str = 'auto') -> WSIFile    # 'auto' | 'openslide' | 'tifffile' | 'standard'
+wt.find_wsi_for_h5(h5_path: str) -> str | None                      # xxx.h5 -> xxx.ndpi / .svs / ... in the same dir
+
+wt.WSIFile               # abstract base
+wt.PyramidalWSIFile      # base for multi-level files (needed by DziCommand)
+wt.OpenSlideFile         # openslide-backed
+wt.PyramidalTiffFile     # tifffile-backed (OME-TIFF etc.)
+wt.StandardImage         # plain PNG/JPEG treated as a single-level slide
+wt.NativeLevel           # one pyramid level (dimensions, downsample)
+```
+
+```python
+wsi = wt.create_wsi_file('input.ndpi')
 mpp = wsi.get_mpp()
 width, height = wsi.get_original_size()
-
-# Read region
-region = wsi.read_region((x, y, width, height))
-
-# Generate thumbnail
+region = wsi.read_region((x, y, w, h))
 thumb = wsi.generate_thumbnail(width=1000)
 ```
 
-## Available Presets
-
-Two registries: tile presets (per-patch feature extractors) and slide presets (slide-level aggregators).
+## Patch readers
 
 ```python
-import wsi_toolbox as wt
+wt.get_patch_reader(h5_path, wsi_path=None, patch_size=256, target_mpp=0.5, white_detector=None, prefetch=1) -> PatchReader
+wt.PatchReader          # base: iter_batches(batch_size) -> (batch, coords, desc), get_num_batches(batch_size),
+                        #       get_patch_by_coord(coord), patch_count, metadata
+wt.CachePatchReader     # reads cache/{patch_size}/ from the HDF5 file
+wt.WSIPatchReader       # reads and tiles the WSI on the fly
+wt.PrefetchReader       # wraps a reader with a background prefetch queue
+```
 
-# Tile presets
-print(wt.PRESET_NAMES)
-# ['uni', 'uni2', 'gigapath', 'gigapath-flash', 'virchow', 'virchow2',
-#  'h-optimus-0', 'conch15', 'conch15_768', 'midnight', 'phikon2']
-tile_model = wt.create_preset_model('uni')
+## Utilities
 
-# Slide presets
-print(wt.SLIDE_PRESET_NAMES)            # ['titan']
-print(wt.SLIDE_PRESET_TILE_SOURCES)     # {'titan': ('conch15_768',)}
-slide_model = wt.create_slide_preset_model('titan')
+```python
+wt.leiden_cluster(features: np.ndarray, resolution: float = 1.0, n_jobs: int = -1,
+                  reporter: Reporter | None = None) -> np.ndarray
+# phases on the reporter: "PCA" / "KNN" / "Building graph" / "Leiden clustering" / "Finalizing"
+wt.reorder_clusters_by_pca(clusters: np.ndarray, pca_values: np.ndarray) -> np.ndarray
+wt.rename_namespace(hdf5_path: str, old_namespace: str, new_namespace: str, model: str | None = None)
+wt.remove_namespace(hdf5_path: str, namespace: str, model: str | None = None) -> list[str]
 ```
 
 ## Notes
 
-### Dataset Writing Status
+### Dataset writing status
 
-Large datasets (`patches`, `features`, `latent_features`) have a `writing` attribute to detect incomplete data during sequential writes. See [README.md](README.md#dataset-writing-status) for details.
+Large datasets (`patches`, `features`, `latent_features`) carry a `writing` attribute (`True` while being
+written). See [README.md](README.md#writing-status).
 
-
-## Complete Example
+## Complete example
 
 ```python
+import logging
+import threading
 import wsi_toolbox as wt
 
-# Global configuration: register the foundation model preset
-wt.set_default_preset('uni')
-wt.set_default_device('cuda')
+PRESET = 'uni2'      # foundation model
+MODEL = 'uni2'       # HDF5 storage key (same as preset by default)
 
-PRESET = 'uni'      # foundation model
-MODEL = 'uni'       # h5 storage key (same as preset by default)
+sink = wt.MultiSink(wt.TqdmSink(), wt.LoggingSink(logging.getLogger('pipeline')))
+stop = threading.Event()
 
 # 1. Extract
-extract_cmd = wt.FeatureExtractionCommand(model=MODEL, preset=PRESET, batch_size=256)
-extract_result = extract_cmd('output.h5', wsi_path='input.ndpi')
+extract_cmd = wt.FeatureExtractionCommand(model=MODEL, preset=PRESET, device='cuda:0', batch_size=256)
+extract_result = extract_cmd('output.h5', wsi_path='input.ndpi', on_progress=sink, should_cancel=stop.is_set)
 print(f"Features: {extract_result.feature_dim}D")
 
-# 2. Clustering
-cluster_cmd = wt.ClusteringCommand(model=MODEL, resolution=1.0)
-cluster_result = cluster_cmd(['output.h5'])
-print(f"Clusters: {cluster_result.cluster_count}")
+# 2. UMAP + clustering with one progress stream
+pipeline = wt.ClusterWithUmapCommand(
+    umap_cmd=wt.UmapCommand(model=MODEL),
+    cluster_cmd=wt.ClusteringCommand(model=MODEL, resolution=1.0),
+)
+result = pipeline('output.h5', on_progress=sink, should_cancel=stop.is_set)
+print(f"Clusters: {result.cluster_count}")
 
-# 3. UMAP
-umap_cmd = wt.UmapCommand(model=MODEL)
-umap_cmd('output.h5')
+# 3. PCA
+wt.PCACommand(model=MODEL, n_components=1)('output.h5', on_progress=sink)
 
-# 4. PCA
-pca_cmd = wt.PCACommand(model=MODEL, n_components=1)
-pca_cmd('output.h5')
-
-# 5. Preview
-preview_cmd = wt.PreviewClustersCommand(model=MODEL, size=64)
-img = preview_cmd('output.h5', namespace='default')
+# 4. Preview
+img = wt.PreviewClustersCommand(model=MODEL, size=64)('output.h5', namespace='default', on_progress=sink)
 img.save('preview.jpg')
 ```

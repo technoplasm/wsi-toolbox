@@ -128,11 +128,11 @@ class Reporter:
 
     def phase(self, name: str, total: int | None = None, message: str = "") -> None:
         """Switch to a new phase (n resets to 0) and emit its first event."""
-        self.check_cancel()
         self._phase = name
         self._n = 0
         self._total = total
         self._message = message
+        self.check_cancel()
         self._emit()
 
     def advance(self, n: int = 1, message: str | None = None) -> None:
@@ -240,7 +240,12 @@ class TqdmSink(_PhasedSink):
     def _open(self, event: ProgressEvent) -> None:
         from tqdm import tqdm  # noqa: PLC0415
 
-        self._bar = tqdm(total=event.total, desc=event.phase, **self._kwargs)
+        kwargs = dict(self._kwargs)
+        if event.total is None:
+            # Unbounded phase (e.g. "Initializing model"): show only the name and elapsed time,
+            # not tqdm's "0it [00:00, ?it/s]" counter.
+            kwargs.setdefault("bar_format", "{desc} [{elapsed}]{postfix}")
+        self._bar = tqdm(total=event.total, desc=event.phase, **kwargs)
 
     def _update(self, event: ProgressEvent) -> None:
         bar = self._bar
