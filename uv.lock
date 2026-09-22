@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 4
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine == 'aarch64' and sys_platform == 'linux'",
@@ -3027,7 +3027,7 @@ wheels = [
 
 [[package]]
 name = "wsi-toolbox"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "einops" },
@@ -3094,69 +3094,6 @@ gigapath = [
     { name = "fairscale" },
     { name = "flash-attn" },
     { name = "gigapath" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "einops", specifier = ">=0.8.1" },
-    { name = "flash-attn", marker = "extra == 'compile'" },
-    { name = "h5py", specifier = ">=3.13.0" },
-    { name = "imagecodecs", specifier = ">=2024.12.30" },
-    { name = "joblib", specifier = ">=1.4.2" },
-    { name = "leidenalg", specifier = ">=0.10.2" },
-    { name = "matplotlib", specifier = ">=3.9.4" },
-    { name = "networkx", specifier = ">=3.3" },
-    { name = "numpy", specifier = "<2" },
-    { name = "opencv-python-headless", specifier = ">=4.11.0.86" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "openslide-python", specifier = ">=1.4.1" },
-    { name = "packaging", marker = "extra == 'build'" },
-    { name = "pandas", specifier = ">=2.2.3" },
-    { name = "pillow", specifier = ">=11.0.0" },
-    { name = "pydantic-autocli", specifier = ">=0.2.0" },
-    { name = "pyqt6", specifier = ">=6.8.1" },
-    { name = "python-igraph", specifier = ">=0.11.8" },
-    { name = "rich", specifier = ">=14.0.0" },
-    { name = "scikit-learn", specifier = ">=1.6.1" },
-    { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "setuptools", marker = "extra == 'build'" },
-    { name = "streamlit", specifier = ">=1.43.2" },
-    { name = "streamlit-aggrid", specifier = ">=0.3.4.post3" },
-    { name = "streamlit-antd-components", specifier = ">=0.3.2" },
-    { name = "taskipy", specifier = ">=1.14.1" },
-    { name = "tifffile", specifier = ">=2025.2.18" },
-    { name = "timm", specifier = ">=0.9.16" },
-    { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.5.1" },
-    { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "sys_platform == 'linux' and extra == 'build'", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "sys_platform != 'linux' and extra == 'build'" },
-    { name = "torchvision", marker = "sys_platform != 'linux'", specifier = ">=0.20.1" },
-    { name = "torchvision", marker = "sys_platform == 'linux'", specifier = ">=0.20.1", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "transformers", specifier = ">=4.40.0" },
-    { name = "umap-learn", specifier = ">=0.5.7" },
-    { name = "wheel", marker = "extra == 'build'" },
-    { name = "zarr", specifier = ">=3" },
-]
-provides-extras = ["build", "compile"]
-
-[package.metadata.requires-dev]
-build = [
-    { name = "build", specifier = ">=1.0.0" },
-    { name = "twine", specifier = ">=5.0.0" },
-]
-dev = [
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "ipython", specifier = ">=9.1.0" },
-    { name = "jupyterlab", specifier = ">=4.1.6" },
-    { name = "ruff", specifier = ">=0.8.0" },
-    { name = "taskipy", specifier = ">=1.14.1" },
-    { name = "uvicorn", specifier = ">=0.32.0" },
-]
-gigapath = [
-    { name = "einops", specifier = ">=0.8.1" },
-    { name = "fairscale", specifier = ">=0.4.13" },
-    { name = "flash-attn", specifier = ">=2.7.4" },
-    { name = "gigapath", git = "https://github.com/prov-gigapath/prov-gigapath.git?rev=5d77be0" },
 ]
 
 [[package]]
