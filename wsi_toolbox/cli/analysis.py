@@ -31,7 +31,7 @@ class AnalysisMixin:
         """Cluster patch features with Leiden (supports sub-clustering)."""
         input_paths = resolve_h5_paths(a.input_paths)
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
-        model = a.model if a.model else a.preset
+        model = a.model if a.model else self.preset
 
         cmd = commands.ClusteringCommand(
             model=model,
@@ -41,7 +41,7 @@ class AnalysisMixin:
             sort_clusters=not a.no_sort,
             overwrite=a.overwrite,
         )
-        result = cmd(input_paths)
+        result = cmd(input_paths, on_progress=self.sink)
 
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
@@ -68,7 +68,7 @@ class AnalysisMixin:
         """Compute a UMAP embedding of patch features."""
         input_paths = resolve_h5_paths(a.input_paths)
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
-        model = a.model if a.model else a.preset
+        model = a.model if a.model else self.preset
 
         cmd = commands.UmapCommand(
             model=model,
@@ -79,7 +79,7 @@ class AnalysisMixin:
             min_dist=a.min_dist,
             overwrite=a.overwrite,
         )
-        result = cmd(input_paths)
+        result = cmd(input_paths, on_progress=self.sink)
 
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
@@ -179,7 +179,7 @@ class AnalysisMixin:
         """Compute PCA of patch features."""
         input_paths = resolve_h5_paths(a.input_paths)
         parent_filters = [a.filter_ids] if len(a.filter_ids) > 0 else []
-        model = a.model if a.model else a.preset
+        model = a.model if a.model else self.preset
 
         cmd = commands.PCACommand(
             model=model,
@@ -189,7 +189,7 @@ class AnalysisMixin:
             scaler=a.scaler,
             overwrite=a.overwrite,
         )
-        result = cmd(input_paths)
+        result = cmd(input_paths, on_progress=self.sink)
 
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
@@ -299,7 +299,7 @@ class AnalysisMixin:
     def run_preview(self, a: PreviewArgs):
         """Render a cluster-colored preview overlay on the WSI thumbnail."""
         hdf5_path = resolve_h5_path(a.input_path)
-        model = a.model if a.model else a.preset
+        model = a.model if a.model else self.preset
 
         output_path = a.output_path
         filter_str = ""
@@ -313,7 +313,7 @@ class AnalysisMixin:
             output_path = build_output_path(hdf5_path, a.namespace, filename)
 
         cmd = commands.PreviewClustersCommand(model=model, size=a.size, rotate=a.rotate)
-        img = cmd(hdf5_path, namespace=a.namespace, filter_path=filter_str)
+        img = cmd(hdf5_path, namespace=a.namespace, filter_path=filter_str, on_progress=self.sink)
         img.save(output_path)
         print(f"wrote {output_path}")
 
@@ -336,7 +336,7 @@ class AnalysisMixin:
     def run_preview_score(self, a: PreviewScoreArgs):
         """Render a score-colored preview overlay on the WSI thumbnail."""
         hdf5_path = resolve_h5_path(a.input_path)
-        model = a.model if a.model else a.preset
+        model = a.model if a.model else self.preset
 
         output_path = a.output_path
         filter_str = ""
@@ -357,6 +357,7 @@ class AnalysisMixin:
             filter_path=filter_str,
             cmap_name=a.cmap,
             invert=a.invert,
+            on_progress=self.sink,
         )
         img.save(output_path)
         print(f"wrote {output_path}")

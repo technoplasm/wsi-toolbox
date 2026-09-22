@@ -100,7 +100,7 @@ class ToolsMixin:
             overlap=a.overlap,
             jpeg_quality=a.jpeg_quality,
         )
-        result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name)
+        result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name, on_progress=self.sink)
         print(f"Export completed: {result.dzi_path}")
 
     # ----- thumb -----

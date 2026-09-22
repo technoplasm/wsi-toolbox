@@ -1,16 +1,31 @@
 import argparse
+import logging
 import os
 import time
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+import h5py
 from rich.console import Console
 
 from . import commands
-from .common import set_default_device, set_default_preset, set_default_progress
+from .progress import LoggingSink, MultiSink, ProgressSink, TqdmSink
 from .utils.plot import plot_scatter_2d
 
 DEFAULT_PRESET = os.getenv("WT_PRESET", "uni2")
+DEVICE = os.getenv("WT_DEVICE", "cuda")
+PROGRESS_LOG_INTERVAL = 5.0  # seconds between progress lines in _ROBIEMON_LOG.txt
+
+
+class _TaskLogHandler(logging.Handler):
+    """logging.Handler that appends each record to the task's log file (file only; tqdm owns the terminal)."""
+
+    def __init__(self, task: "Task"):
+        super().__init__()
+        self._task = task
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._task.write_log(self.format(record))
 
 
 class Status:
@@ -45,8 +60,15 @@ class Task:
         self.wsi_files = list(folder.glob("**/*.ndpi")) + list(folder.glob("**/*.svs"))
         self.wsi_files.sort()
 
-        set_default_progress("tqdm")
-        set_default_preset(self.preset)
+        # Standalone logger (not registered in the logging tree) whose only
+        # handler appends to this task's log file. Fed by LoggingSink.
+        self.logger = logging.Logger(f"wsi_toolbox.watcher.task[{folder.name}]")
+        self.logger.propagate = False
+        self.logger.addHandler(_TaskLogHandler(self))
+
+    def make_sink(self) -> ProgressSink:
+        """Fresh progress sink per command: tqdm on the terminal + throttled lines in the log file."""
+        return MultiSink(TqdmSink(), LoggingSink(self.logger, every=PROGRESS_LOG_INTERVAL))
 
     def write_banner(self):
         """処理開始時のバナーをログに書き込み"""
@@ -81,30 +103,26 @@ class Task:
                     # HDF5変換（既存の場合はスキップ）
                     if not hdf5_file.exists():
                         self.append_log("Converting to HDF5...")
-                        # Use new command pattern
-                        set_default_progress("tqdm")
                         cmd = commands.CacheCommand()
-                        _ = cmd(str(wsi_file), str(hdf5_file))
+                        _ = cmd(str(wsi_file), str(hdf5_file), on_progress=self.make_sink())
                         self.append_log("HDF5 conversion completed.")
 
                     # 特徴量抽出（既存の場合はスキップ）
                     self.append_log("Extracting features...")
-                    # Use new command pattern
-                    set_default_device("cuda")
-                    emb_cmd = commands.FeatureExtractionCommand(model=self.preset, preset=self.preset)
-                    _ = emb_cmd(str(hdf5_file))
+                    emb_cmd = commands.FeatureExtractionCommand(model=self.preset, preset=self.preset, device=DEVICE)
+                    _ = emb_cmd(str(hdf5_file), on_progress=self.make_sink())
                     self.append_log("Feature extraction completed.")
 
                     # クラスタリング
                     self.append_log("Starting clustering ...")
                     cluster_cmd = commands.ClusteringCommand(model=self.preset, resolution=1.0)
-                    _ = cluster_cmd([hdf5_file])
+                    _ = cluster_cmd([hdf5_file], on_progress=self.make_sink())
                     self.append_log("Clustering completed.")
 
                     # UMAP計算
                     self.append_log("Computing UMAP...")
                     umap_cmd = commands.UmapCommand(model=self.preset)
-                    _ = umap_cmd(str(hdf5_file))
+                    _ = umap_cmd(str(hdf5_file), on_progress=self.make_sink())
                     self.append_log("UMAP computation completed.")
 
                     base = str(wsi_file.with_suffix(""))
@@ -113,8 +131,6 @@ class Task:
                     self.append_log("Starting UMAP plot generation...")
                     umap_path = Path(f"{base}_umap.png")
                     if not umap_path.exists():
-                        import h5py  # noqa: PLC0415
-
                         with h5py.File(hdf5_file, "r") as f:
                             umap_embs = f[f"{self.preset}/default/umap"][:]
                             clusters = f[f"{self.preset}/default/clusters"][:]
@@ -131,7 +147,7 @@ class Task:
                     thumb_path = Path(f"{base}_thumb.jpg")
                     if not thumb_path.exists():
                         preview_cmd = commands.PreviewClustersCommand(model=self.preset, size=64)
-                        img = preview_cmd(str(hdf5_file), namespace="default")
+                        img = preview_cmd(str(hdf5_file), namespace="default", on_progress=self.make_sink())
                         img.save(thumb_path)
                         self.append_log(f"Thumbnail generation completed. Saved to {thumb_path.name}")
                     else:
@@ -160,10 +176,15 @@ class Task:
         with open(self.folder / self.REQUEST_FILE, "w") as f:
             f.write(f"{status}\n")
 
-    def append_log(self, message: str):
+    def write_log(self, message: str):
+        """Append one line to the task's log file (no terminal output)."""
         with open(self.folder / self.LOG_FILE, "a") as f:
             f.write(message + "\n")
-            print(message)
+
+    def append_log(self, message: str):
+        """Append one line to the task's log file and echo it to the terminal."""
+        self.write_log(message)
+        print(message)
 
 
 class Watcher:

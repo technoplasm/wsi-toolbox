@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 from PIL import Image
 
 from wsi_toolbox import commands
-from wsi_toolbox.common import set_default_preset
+from wsi_toolbox.progress import StreamlitSink
 from wsi_toolbox.utils.hdf5_paths import build_namespace
 from wsi_toolbox.utils.plot import plot_scatter_2d
 
@@ -25,6 +25,7 @@ from ..config import (
     BATCH_SIZE,
     CLUSTER_RESOLUTION_STEP,
     DEFAULT_CLUSTER_RESOLUTION,
+    DEVICE,
     MAX_CLUSTER_RESOLUTION,
     MIN_CLUSTER_RESOLUTION,
     PREFETCH,
@@ -180,20 +181,18 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
             if not f.detail or not f.detail.has_features:
                 st.write(f"{f.name}の特徴量が未抽出なので、抽出を行います。")
                 logger.info(f"[FeatureExtraction] Start: {f.name} (model={st.session_state.model})")
-                set_default_preset(st.session_state.model)
                 with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
                     cmd = commands.FeatureExtractionCommand(
                         model=st.session_state.model,
                         preset=st.session_state.model,
+                        device=DEVICE,
                         batch_size=BATCH_SIZE,
                         overwrite=True,
                         prefetch=PREFETCH,
                     )
-                    result = cmd(f.path)
+                    result = cmd(f.path, on_progress=StreamlitSink(st.container()))
                 logger.info(f"[FeatureExtraction] Done: {result.summary()}")
                 st.write(f"{model_label}特徴量の抽出完了。")
-
-        set_default_preset(st.session_state.model)
 
         # UMAP + Clustering with unified progress
         cmd_namespace = None if namespace == default_namespace else namespace
@@ -224,7 +223,7 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
             suffix = f"_{subcluster_label}" if subcluster_filter else ""
             umap_path = build_output_path(selected_files[0].path, namespace, f"{base}{suffix}_umap.png")
 
-            result = combined_cmd([f.path for f in selected_files])
+            result = combined_cmd([f.path for f in selected_files], on_progress=StreamlitSink(st.container()))
 
             with h5py.File(selected_files[0].path, "r") as hf:
                 umap_embs = hf[result.umap_target_path][:]
@@ -258,7 +257,6 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
         t0 = time.perf_counter()
         with st.spinner("オーバービュー生成中...", show_time=True):
             for f in selected_files:
-                set_default_preset(st.session_state.model)
                 preview_cmd = commands.PreviewClustersCommand(
                     model=st.session_state.model, size=THUMBNAIL_SIZE, rotate=rotate_preview
                 )
@@ -275,7 +273,9 @@ def render_mode_hdf5(selected_files: List[FileEntry]):
                 else:
                     filter_path = ""
 
-                thumb = preview_cmd(f.path, namespace=ns, filter_path=filter_path)
+                thumb = preview_cmd(
+                    f.path, namespace=ns, filter_path=filter_path, on_progress=StreamlitSink(st.container())
+                )
                 thumb.save(thumb_path)
                 st.subheader("オーバービュー")
                 thumb_filename = os.path.basename(thumb_path)

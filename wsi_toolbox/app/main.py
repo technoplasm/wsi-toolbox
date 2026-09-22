@@ -18,12 +18,10 @@ import streamlit as st
 sys.path.append(str(P(__file__).parent.parent))
 __package__ = "wsi_toolbox.app"
 
-from ..common import set_default_device, set_default_progress, set_verbose
 from ..utils.hdf5_paths import list_namespaces
 from ..utils.st import st_horizontal
 from .ui.config import (
     BASE_DIR,
-    DEVICE,
     PRESET,
     PRESET_LABELS,
     PRESETS_BY_LABEL,
@@ -53,10 +51,6 @@ logging.basicConfig(
     format="[wsi-toolbox] %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-
-set_default_progress("streamlit")
-set_default_device(DEVICE)
-set_verbose(True)
 
 Image.MAX_IMAGE_PIXELS = 3_500_000_000
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic_autocli import AutoCLI, param
 
-from .. import common
+from ..progress import resolve_sink
 from ..utils.seed import fix_global_seed, get_global_seed
 
 logger = logging.getLogger(__name__)
@@ -20,11 +20,6 @@ warnings.filterwarnings(
 warnings.filterwarnings("ignore", category=UserWarning, message=".*cuda capability.*")
 
 DEFAULT_PRESET = os.getenv("WT_PRESET", "uni2")
-
-# Module-import-time defaults (preserved from original cli.py).
-common.set_default_progress("rich")
-common.set_default_preset(DEFAULT_PRESET)
-common.set_default_cluster_cmap("tab20")
 
 
 def build_output_path(input_path: str, namespace: str, filename: str) -> str:
@@ -56,7 +51,7 @@ class CommonArgs(BaseModel):
         s="-M",
         description="HDF5 storage key (free string; defaults to --preset)",
     )
-    progress: str = param("rich", choices=["rich", "tqdm"])
+    progress: str = param("rich", choices=["rich", "tqdm", "none"], description="Progress display")
     device: str = param("auto", s="-D", description="Device: auto, cpu, cuda:0, cuda:0,1")
     verbose: bool = param(False, s="-v")
 
@@ -71,11 +66,14 @@ class CLIBase(AutoCLI):
 
     def prepare(self, a: CommonArgs):
         fix_global_seed(a.seed)
-        # Preset is the only session-level model concept; the h5 storage key
-        # (a.model) is passed per-command to the respective Command.
-        common.set_default_preset(a.preset)
-        common.set_default_device(a.device)
-        common.set_default_progress(a.progress)
+        # Session-level settings are held here and passed explicitly to each
+        # Command (preset= / device= / on_progress=); the CLI never writes the
+        # process-wide defaults in wsi_toolbox.common.
+        # The h5 storage key (a.model) is passed per-command.
+        self.preset = a.preset
+        self.device = a.device
+        self.sink = resolve_sink(a.progress)
+        self.cluster_cmap = "tab20"
         logging.basicConfig(
             format="[wsi-toolbox] %(levelname)s - %(message)s",
             level=logging.DEBUG if a.verbose else logging.INFO,

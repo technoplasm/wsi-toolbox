@@ -14,12 +14,13 @@ import streamlit as st
 from matplotlib import pyplot as plt
 
 from wsi_toolbox import commands
-from wsi_toolbox.common import set_default_preset
+from wsi_toolbox.progress import StreamlitSink
 from wsi_toolbox.utils.plot import plot_scatter_2d
 
 from ..config import (
     BATCH_SIZE,
     DEFAULT_CLUSTER_RESOLUTION,
+    DEVICE,
     PATCH_SIZE,
     PREFETCH,
     PRESET_LABELS,
@@ -77,7 +78,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     else:
                         with st.spinner("WSIを分割しHDF5ファイルを構成しています...", show_time=True):
                             cmd = commands.CacheCommand(patch_size=PATCH_SIZE)
-                            _ = cmd(wsi_path, hdf5_path)
+                            _ = cmd(wsi_path, hdf5_path, on_progress=StreamlitSink(st.container()))
                         st.write("HDF5ファイルにキャッシュ完了。")
                 # else: キャッシュしない場合はFeatureExtractionCommandがWSIから直接読む
 
@@ -86,15 +87,15 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                 else:
                     logger.info(f"[FeatureExtraction] Start: {f.name} (model={st.session_state.model})")
                     with st.spinner(f"{model_label}特徴量を抽出中...", show_time=True):
-                        set_default_preset(st.session_state.model)
                         cmd = commands.FeatureExtractionCommand(
                             model=st.session_state.model,
                             preset=st.session_state.model,
+                            device=DEVICE,
                             batch_size=BATCH_SIZE,
                             overwrite=True,
                             prefetch=PREFETCH,
                         )
-                        result = cmd(hdf5_path, wsi_path=wsi_path)
+                        result = cmd(hdf5_path, wsi_path=wsi_path, on_progress=StreamlitSink(st.container()))
                     minutes, seconds = divmod(int(result.elapsed), 60)
                     logger.info(f"[FeatureExtraction] Done: {result.summary()}")
                     st.write(f"{model_label}特徴量の抽出完了（{minutes}分{seconds}秒）")
@@ -114,7 +115,6 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     logger.info(f"[Clustering] Start: {f.name}")
                     t0 = time.perf_counter()
                     with st.spinner("UMAP + クラスタリング中...", show_time=True):
-                        set_default_preset(st.session_state.model)
                         combined_cmd = commands.ClusterWithUmapCommand(
                             umap_cmd=commands.UmapCommand(model=st.session_state.model),
                             cluster_cmd=commands.ClusteringCommand(
@@ -123,7 +123,7 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                                 namespace="default",
                             ),
                         )
-                        result = combined_cmd([hdf5_path])
+                        result = combined_cmd([hdf5_path], on_progress=StreamlitSink(st.container()))
 
                         with h5py.File(hdf5_path, "r") as hf:
                             umap_embs = hf[result.umap_target_path][:]
@@ -148,11 +148,10 @@ def render_mode_wsi(files: List[FileEntry], selected_files: List[FileEntry]):
                     logger.info(f"[Preview] Start: {f.name}")
                     t0 = time.perf_counter()
                     with st.spinner("オーバービュー生成中", show_time=True):
-                        set_default_preset(st.session_state.model)
                         preview_cmd = commands.PreviewClustersCommand(
                             model=st.session_state.model, size=THUMBNAIL_SIZE, rotate=rotate_preview
                         )
-                        img = preview_cmd(hdf5_path, namespace="default")
+                        img = preview_cmd(hdf5_path, namespace="default", on_progress=StreamlitSink(st.container()))
                         img.save(thumb_path)
                     logger.info(f"[Preview] Done: {f.name} ({time.perf_counter() - t0:.1f}s)")
                     st.write(f"オーバービューを{os.path.basename(thumb_path)}に出力しました。")

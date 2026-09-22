@@ -62,7 +62,7 @@ class PipelineMixin:
             overwrite=a.overwrite,
             white_detector=white_detector,
         )
-        result = cmd(a.input_path, output_path)
+        result = cmd(a.input_path, output_path, on_progress=self.sink)
 
         if not result.skipped:
             print(f"done: {result.patch_count} patches (mpp={result.mpp:.4f}, level={result.level_used})")
@@ -91,10 +91,11 @@ class PipelineMixin:
             wsi_path = None
             h5_path = a.input_path
 
-        model = a.model if a.model else a.preset
+        model = a.model if a.model else self.preset
         cmd = commands.FeatureExtractionCommand(
             model=model,
-            preset=a.preset,
+            preset=self.preset,
+            device=self.device,
             batch_size=a.batch_size,
             with_latent=a.with_latent_features,
             overwrite=a.overwrite,
@@ -102,7 +103,7 @@ class PipelineMixin:
             target_mpp=a.target_mpp,
             prefetch=a.prefetch,
         )
-        result = cmd(h5_path, wsi_path=wsi_path)
+        result = cmd(h5_path, wsi_path=wsi_path, on_progress=self.sink)
 
         if not result.skipped:
             logger.info(f"Feature extraction complete: {result.summary()}")
@@ -128,9 +129,10 @@ class PipelineMixin:
         cmd = commands.AggregateCommand(
             slide_preset=a.slide_preset,
             tile_model=tile_model,
+            device=self.device,
             overwrite=a.overwrite,
         )
-        result = cmd(hdf5_path)
+        result = cmd(hdf5_path, on_progress=self.sink)
         if result.skipped:
             print(f"⊘ Skipped (already exists): {result.target_path}")
         else:
