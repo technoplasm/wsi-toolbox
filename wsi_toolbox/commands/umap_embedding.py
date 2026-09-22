@@ -3,14 +3,15 @@ UMAP embedding command for dimensionality reduction
 """
 
 import logging
+from collections.abc import Callable
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
-from ..utils.progress import BaseProgress
-from . import _progress
+from ._base import make_reporter
 from .data_loader import MultipleContext
 
 logger = logging.getLogger(__name__)
@@ -30,17 +31,19 @@ class UmapCommand:
     """
     Compute UMAP embeddings from features
 
+    Progress phases: "Loading features" -> "UMAP" -> "Writing".
+
     Usage:
         # Basic UMAP
-        cmd = UmapCommand()
+        cmd = UmapCommand(model='uni')
         result = cmd('data.h5')  # → uni/default/umap
 
         # Multi-file UMAP
-        cmd = UmapCommand()
+        cmd = UmapCommand(model='uni')
         result = cmd(['001.h5', '002.h5'])  # → uni/001+002/umap
 
         # UMAP for filtered data
-        cmd = UmapCommand(parent_filters=[[1,2,3]])
+        cmd = UmapCommand(model='uni', parent_filters=[[1,2,3]])
         result = cmd('data.h5')  # → uni/default/filter/1+2+3/umap
     """
 
@@ -81,14 +84,26 @@ class UmapCommand:
         self.hdf5_paths = []
         self.umap_embeddings = None
 
-    def __call__(self, hdf5_paths: str | list[str], progress: BaseProgress | None = None) -> UmapResult:
+    def __call__(
+        self,
+        hdf5_paths: str | list[str],
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> UmapResult:
         """
         Execute UMAP embedding
 
         Args:
             hdf5_paths: Single HDF5 path or list of paths
-            progress: Optional external progress bar. If None, creates own progress bar.
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled at phase boundaries; True raises ``Cancelled``.
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(hdf5_paths, reporter)
+
+    def _run(self, hdf5_paths: str | list[str], reporter: Reporter) -> UmapResult:
         import umap  # noqa: PLC0415 - lazy load, umap is slow to import
 
         # Normalize to list
@@ -120,39 +135,24 @@ class UmapCommand:
                         skipped=True,
                     )
 
-        # Progress bar handling: use external if provided, otherwise create own
-        own_progress = progress is None
-        if own_progress:
-            pbar = _progress(total=3, desc="UMAP", verbose=True)
-            pbar.__enter__()
-        else:
-            pbar = progress
+        # Load features
+        reporter.phase("Loading features")
+        ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
+        features = ctx.load_features(source="features")
 
-        try:
-            # Load features
-            pbar.set_description("Loading features")
-            ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
-            features = ctx.load_features(source="features")
-            pbar.update(1)
+        # Compute UMAP
+        reporter.phase("UMAP")
+        reducer = umap.UMAP(
+            n_components=self.n_components,
+            n_neighbors=self.n_neighbors,
+            min_dist=self.min_dist,
+            metric=self.metric,
+        )
+        self.umap_embeddings = reducer.fit_transform(features)
 
-            # Compute UMAP
-            pbar.set_description("Computing UMAP")
-            reducer = umap.UMAP(
-                n_components=self.n_components,
-                n_neighbors=self.n_neighbors,
-                min_dist=self.min_dist,
-                metric=self.metric,
-            )
-            self.umap_embeddings = reducer.fit_transform(features)
-            pbar.update(1)
-
-            # Write results
-            pbar.set_description("Writing UMAP results")
-            self._write_results(ctx, target_path)
-            pbar.update(1)
-        finally:
-            if own_progress:
-                pbar.__exit__(None, None, None)
+        # Write results
+        reporter.phase("Writing")
+        self._write_results(ctx, target_path)
 
         logger.debug(f"Computing UMAP: {len(features)} samples → {self.n_components}D")
         logger.info(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")

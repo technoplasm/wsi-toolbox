@@ -13,12 +13,16 @@ from .tile import (
     PRESET_EXTRACT_FN,
     PRESET_NAMES,
     PRESET_NORMALIZATION,
+    TilePreset,
     create_preset_model,
+    get_tile_preset,
 )
 
 __all__ = [
     # Tile
     "PRESET_NAMES",
+    "TilePreset",
+    "get_tile_preset",
     "PRESET_NORMALIZATION",
     "PRESET_EXTRACT_FN",
     "create_preset_model",

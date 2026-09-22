@@ -586,6 +586,17 @@ class StandardImage(WSIFile):
         x, y, w, h = xywh
         return self.image[y : y + h, x : x + w]
 
+    # Single-level pyramid interface so WSIPatchReader / find_best_level_for_mpp
+    # accept plain images (PNG/JPEG) the same way as pyramidal WSIs.
+    def _get_native_levels(self) -> list[NativeLevel]:
+        width, height = self.get_original_size()
+        return [NativeLevel(index=0, width=width, height=height, downsample=1.0)]
+
+    def _read_native_region(self, level_idx: int, x: int, y: int, w: int, h: int) -> np.ndarray:
+        if level_idx != 0:
+            raise ValueError(f"StandardImage has a single level, got level {level_idx}")
+        return self.read_region((x, y, w, h))
+
 
 def _is_pyramidal_tiff(path: str) -> bool:
     """Check if TIFF file has multiple resolution levels."""

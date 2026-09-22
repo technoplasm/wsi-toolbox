@@ -1,127 +1,100 @@
+"""Process-wide defaults for wsi-toolbox commands.
+
+Commands only *read* these (when an argument is None / not given); nothing in the
+library writes them. Notebook users set them once with ``set_default_*``; services
+should pass ``preset`` / ``device`` / ``on_progress`` explicitly instead.
 """
-Global configuration and settings for WSI-toolbox
-"""
+
+from __future__ import annotations
 
 import logging
-from functools import partial
-from typing import Callable
+from typing import Any
 
 from matplotlib import pyplot as plt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from .presets import PRESET_EXTRACT_FN, PRESET_NAMES, PRESET_NORMALIZATION, create_preset_model
-from .utils.progress import Progress
+from .presets.tile import PRESET_NAMES, TilePreset, get_tile_preset
+from .progress import SINK_NAMES, ProgressSink
 
 logger = logging.getLogger(__name__)
 
 
-# === Global Configuration (Pydantic) ===
-class Config(BaseModel):
-    """Global configuration for commands.
+class Defaults(BaseModel):
+    """Process-wide defaults. Read by commands, written only by ``set_default_*``."""
 
-    Note: only preset-related state is session-global. The h5 storage key
-    ("model") is per-command and never lives in this Config.
-    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    progress: str = Field(default="tqdm", description="Progress bar backend")
-    model_generator: Callable | None = Field(default=None, description="Preset model factory")
-    norm_mean: tuple[float, ...] = Field(default=(0.485, 0.456, 0.406), description="Normalization mean")
-    norm_std: tuple[float, ...] = Field(default=(0.229, 0.224, 0.225), description="Normalization std")
-    extract_fn: Callable | None = Field(default=None, description="Custom feature extraction function")
-    verbose: bool = Field(default=True, description="Verbose output")
-    device: str = Field(default="auto", description="Device for computation ('auto', 'cpu', 'cuda:0', 'cuda:0,1')")
+    preset: str | TilePreset | None = Field(
+        default=None, description="Tile preset used when a command gets preset=None"
+    )
+    device: str = Field(default="auto", description="Device spec ('auto', 'cpu', 'cuda:0', 'cuda:0,1')")
+    progress: str | ProgressSink | None = Field(default="tqdm", description="Progress sink name or callable")
     cluster_cmap: str = Field(default="tab20", description="Cluster colormap name")
-
-    class Config:
-        arbitrary_types_allowed = True
+    verbose: bool = Field(default=True, description="Verbose output")
 
 
-# Global config instance
-_config = Config()
+defaults = Defaults()
 
 
-def get_config() -> Config:
-    """Get global configuration instance"""
-    return _config
+def get_defaults() -> Defaults:
+    """Return the process-wide defaults instance."""
+    return defaults
 
 
-def set_default_progress(backend: str):
-    """Set global default progress backend ('tqdm', 'rich', 'streamlit', 'dummy')"""
-    _config.progress = backend
+def set_default_preset(preset: str | TilePreset) -> None:
+    """Set the default tile preset (a built-in name or a ``TilePreset``)."""
+    if isinstance(preset, str):
+        if preset not in PRESET_NAMES:
+            raise ValueError(f"Invalid preset: {preset}. Must be one of {PRESET_NAMES}")
+    elif not isinstance(preset, TilePreset):
+        raise TypeError(f"preset must be a preset name or TilePreset, got {type(preset).__name__}")
+    defaults.preset = preset
 
 
-def set_default_preset(preset: str):
-    """Activate one of the built-in tile presets as the default foundation model.
-
-    Sets the model generator, normalization, and extract function for the
-    selected preset. Does not touch any storage-key state (that lives per-call).
-
-    Args:
-        preset: One of PRESET_NAMES (e.g. 'uni', 'uni2', 'gigapath', ...).
-    """
-    if preset not in PRESET_NAMES:
-        raise ValueError(f"Invalid preset: {preset}. Must be one of {PRESET_NAMES}")
-
-    _config.model_generator = partial(create_preset_model, preset)
-    norm = PRESET_NORMALIZATION[preset]
-    _config.norm_mean = norm[0]
-    _config.norm_std = norm[1]
-    _config.extract_fn = PRESET_EXTRACT_FN.get(preset)
+def set_default_device(device: str) -> None:
+    """Set the default device ('auto', 'cpu', 'cuda', 'cuda:0', 'cuda:0,1', ...)."""
+    defaults.device = device
 
 
-def set_default_custom_preset(
-    generator: Callable,
-    norm_mean: tuple[float, ...] | None = None,
-    norm_std: tuple[float, ...] | None = None,
-    extract_fn: Callable | None = None,
-):
-    """Activate a user-supplied factory as the default foundation model.
-
-    Args:
-        generator: Callable returning a model instance (e.g. lambda: MyModel()).
-        norm_mean: Optional normalization mean (defaults to ImageNet).
-        norm_std: Optional normalization std (defaults to ImageNet).
-        extract_fn: Optional custom feature-extraction function used by
-            FeatureExtractionCommand for atypical model interfaces.
-    """
-    _config.model_generator = generator
-    if norm_mean is not None:
-        _config.norm_mean = norm_mean
-    if norm_std is not None:
-        _config.norm_std = norm_std
-    _config.extract_fn = extract_fn
+def set_default_progress(progress: str | ProgressSink | None) -> None:
+    """Set the default progress sink: a name ('tqdm', 'rich', 'streamlit', 'logging', 'none'), a callable, or None."""
+    if isinstance(progress, str) and progress not in SINK_NAMES:
+        raise ValueError(f"Unknown progress sink: {progress!r}. Available: {list(SINK_NAMES)}")
+    if progress is not None and not isinstance(progress, str) and not callable(progress):
+        raise TypeError(f"progress must be a sink name, a callable or None, got {type(progress).__name__}")
+    defaults.progress = progress
 
 
-def create_default_model():
-    """Create a new model instance using the registered generator.
+def set_default_cluster_cmap(cmap_name: str) -> None:
+    """Set the default cluster colormap ('tab20', 'tab10', 'Set1', ...)."""
+    defaults.cluster_cmap = cmap_name
 
-    Returns:
-        torch.nn.Module: Fresh model instance.
 
-    Raises:
-        RuntimeError: If no generator is registered.
+def set_verbose(verbose: bool) -> None:
+    """Set default verbosity."""
+    defaults.verbose = verbose
 
-    Example:
-        >>> set_default_preset('uni')
-        >>> model = create_default_model()
-    """
-    if _config.model_generator is None:
-        raise RuntimeError(
-            "No model generator registered. Call set_default_preset() or set_default_custom_preset() first."
+
+def resolve_preset(preset: str | TilePreset | None) -> TilePreset:
+    """Resolve a command's ``preset`` argument to a ``TilePreset`` (None -> defaults.preset)."""
+    if preset is None:
+        preset = defaults.preset
+    if preset is None:
+        raise ValueError(
+            "preset が指定されていません: pass preset= to the command or call wt.set_default_preset(...) first"
         )
-    return _config.model_generator()
-
-
-def set_default_device(device: str):
-    """Set global default device ('auto', 'cpu', 'cuda', 'cuda:0', 'cuda:0,1', etc.)"""
-    _config.device = device
+    if isinstance(preset, str):
+        return get_tile_preset(preset)
+    if isinstance(preset, TilePreset):
+        return preset
+    raise TypeError(f"preset must be a preset name or TilePreset, got {type(preset).__name__}")
 
 
 def resolve_devices(device: str | None = None) -> list[str]:
     """Resolve device specification to a list of torch device strings.
 
     Args:
-        device: Device specification. None uses global config.
+        device: Device specification. None uses ``defaults.device``.
             - "auto": detect GPUs, use all available (fallback to cpu)
             - "cpu": CPU only
             - "cuda": same as "cuda:0"
@@ -134,7 +107,7 @@ def resolve_devices(device: str | None = None) -> list[str]:
     import torch  # noqa: PLC0415
 
     if device is None:
-        device = _config.device
+        device = defaults.device
 
     if device == "cpu":
         return ["cpu"]
@@ -181,55 +154,22 @@ def resolve_devices(device: str | None = None) -> list[str]:
     return ["cpu"]
 
 
-def set_verbose(verbose: bool):
-    """Set global verbosity"""
-    _config.verbose = verbose
-
-
-def set_default_cluster_cmap(cmap_name: str):
-    """Set global cluster colormap ('tab20', 'tab10', 'Set1', etc.)"""
-    _config.cluster_cmap = cmap_name
-
-
-def _get_cluster_color(cluster_id: int):
-    """
-    Get color for cluster ID using global colormap
-
-    Args:
-        cluster_id: Cluster ID
-
-    Returns:
-        Color in matplotlib format (array or string)
-    """
-
-    cmap = plt.get_cmap(_config.cluster_cmap)
+def _get_cluster_color(cluster_id: int) -> Any:
+    """Color for a cluster ID using ``defaults.cluster_cmap`` (matplotlib color)."""
+    cmap = plt.get_cmap(defaults.cluster_cmap)
     return cmap(cluster_id % 20)  # Modulo to handle colormaps with limited colors
 
 
-def _get(key: str, value):
-    """Get value or fall back to global default"""
-    if value is not None:
-        return value
-    return getattr(_config, key)
-
-
-def _progress(iterable=None, total=None, desc="", **kwargs):
-    """Create a progress bar using global config backend"""
-    return Progress(iterable=iterable, backend=_config.progress, total=total, desc=desc, **kwargs)
-
-
 __all__ = [
-    "Config",
-    "get_config",
-    "set_default_progress",
+    "Defaults",
+    "defaults",
+    "get_defaults",
     "set_default_preset",
-    "set_default_custom_preset",
-    "create_default_model",
     "set_default_device",
-    "resolve_devices",
-    "set_verbose",
+    "set_default_progress",
     "set_default_cluster_cmap",
+    "set_verbose",
+    "resolve_preset",
+    "resolve_devices",
     "_get_cluster_color",
-    "_get",
-    "_progress",
 ]

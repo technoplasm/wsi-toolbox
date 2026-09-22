@@ -3,13 +3,15 @@ PCA scoring command for feature analysis
 """
 
 import logging
+from collections.abc import Callable
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
-from . import _progress
+from ._base import make_reporter
 from .data_loader import MultipleContext
 
 logger = logging.getLogger(__name__)
@@ -95,16 +97,29 @@ class PCACommand:
         self.hdf5_paths = []
         self.pca_scores = None
 
-    def __call__(self, hdf5_paths: str | list[str]) -> PCAResult:
+    def __call__(
+        self,
+        hdf5_paths: str | list[str],
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> PCAResult:
         """
         Execute PCA computation
 
         Args:
             hdf5_paths: Single HDF5 path or list of paths
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled at phase boundaries; True raises ``Cancelled``.
 
         Returns:
             PCAResult
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(hdf5_paths, reporter)
+
+    def _run(self, hdf5_paths: str | list[str], reporter: Reporter) -> PCAResult:
         # Normalize to list
         if isinstance(hdf5_paths, str):
             hdf5_paths = [hdf5_paths]
@@ -136,23 +151,18 @@ class PCACommand:
                         skipped=True,
                     )
 
-        # Execute with progress tracking
-        with _progress(total=3, desc="PCA") as pbar:
-            # Load data
-            pbar.set_description("Loading features")
-            ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
-            features = ctx.load_features(source="features")
-            pbar.update(1)
+        # Load data
+        reporter.phase("Loading features")
+        ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
+        features = ctx.load_features(source="features")
 
-            # Compute PCA
-            pbar.set_description("Computing PCA")
-            self.pca_scores = self._compute_pca(features)
-            pbar.update(1)
+        # Compute PCA
+        reporter.phase("PCA")
+        self.pca_scores = self._compute_pca(features)
 
-            # Write results
-            pbar.set_description("Writing results")
-            self._write_results(ctx, target_path)
-            pbar.update(1)
+        # Write results
+        reporter.phase("Writing")
+        self._write_results(ctx, target_path)
 
         logger.debug(f"Computed PCA: {len(features)} samples → {self.n_components}D")
         logger.info(f"Wrote {target_path} to {len(hdf5_paths)} file(s)")

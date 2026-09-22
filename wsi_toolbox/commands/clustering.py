@@ -5,16 +5,17 @@ Clustering command for WSI features
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils.analysis import leiden_cluster, reorder_clusters_by_pca
 from ..utils.hdf5_paths import build_cluster_path, build_namespace, ensure_groups
-from ..utils.progress import BaseProgress
-from . import _progress
+from ._base import make_reporter
 from .data_loader import MultipleContext
 
 if TYPE_CHECKING:
@@ -49,13 +50,16 @@ class ClusteringCommand:
         uni/default/filter/1+2+3/filter/4+5/clusters
             ↑ with attributes: resolution=1.0
 
+    Progress phases: "Loading features" -> "PCA" -> "KNN" -> "Building graph"
+    -> "Leiden clustering" -> "Finalizing" -> "Sorting clusters" -> "Writing".
+
     Usage:
         # Basic clustering
-        cmd = ClusteringCommand(resolution=1.0)
+        cmd = ClusteringCommand(model='uni', resolution=1.0)
         result = cmd('data.h5')  # → uni/default/clusters
 
         # Filtered clustering
-        cmd = ClusteringCommand(parent_filters=[[1,2,3], [4,5]])
+        cmd = ClusteringCommand(model='uni', parent_filters=[[1,2,3], [4,5]])
         result = cmd('data.h5')  # → uni/default/filter/1+2+3/filter/4+5/clusters
     """
 
@@ -88,17 +92,29 @@ class ClusteringCommand:
         self.hdf5_paths = []
         self.clusters = None
 
-    def __call__(self, hdf5_paths: str | list[str], progress: BaseProgress | None = None) -> ClusteringResult:
+    def __call__(
+        self,
+        hdf5_paths: str | list[str],
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> ClusteringResult:
         """
         Execute clustering
 
         Args:
             hdf5_paths: Single HDF5 path or list of paths
-            progress: Optional external progress bar. If None, creates own progress bar.
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled at phase boundaries; True raises ``Cancelled``.
 
         Returns:
             ClusteringResult
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(hdf5_paths, reporter)
+
+    def _run(self, hdf5_paths: str | list[str], reporter: Reporter) -> ClusteringResult:
         # Normalize to list
         if isinstance(hdf5_paths, str):
             hdf5_paths = [hdf5_paths]
@@ -127,51 +143,28 @@ class ClusteringCommand:
                         skipped=True,
                     )
 
-        # Progress bar handling: use external if provided, otherwise create own
-        # Total: 1 (load) + 5 (clustering steps) + 1 (write) = 7
-        own_progress = progress is None
-        if own_progress:
-            pbar = _progress(total=7, desc="Clustering", verbose=True)
-            pbar.__enter__()
-        else:
-            pbar = progress
+        # Load data (always from features)
+        reporter.phase("Loading features")
+        ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
+        data = ctx.load_features(source="features")
 
-        try:
-            # Load data (always from features)
-            pbar.set_description("Loading features")
-            ctx = MultipleContext(hdf5_paths, self.model, self.namespace, self.parent_filters)
-            data = ctx.load_features(source="features")
-            pbar.update(1)
+        # Perform clustering using analysis module (phases: PCA / KNN / Building graph / Leiden clustering / Finalizing)
+        self.clusters = leiden_cluster(data, resolution=self.resolution, reporter=reporter)
 
-            # Perform clustering using analysis module
-            def on_progress(msg: str):
-                pbar.set_description(msg)
-                pbar.update(1)
+        # Reorder cluster IDs by PCA distribution for consistent visualization
+        if self.sort_clusters:
+            reporter.phase("Sorting clusters")
+            from sklearn.decomposition import PCA  # noqa: PLC0415
 
-            self.clusters = leiden_cluster(
-                data,
-                resolution=self.resolution,
-                on_progress=on_progress,
-            )
+            pca = PCA(n_components=1)
+            pca1 = pca.fit_transform(data).flatten()
+            self.clusters = reorder_clusters_by_pca(self.clusters, pca1)
 
-            # Reorder cluster IDs by PCA distribution for consistent visualization
-            if self.sort_clusters:
-                pbar.set_description("Sorting clusters")
-                from sklearn.decomposition import PCA  # noqa: PLC0415
+        cluster_count = len(set(self.clusters))
 
-                pca = PCA(n_components=1)
-                pca1 = pca.fit_transform(data).flatten()
-                self.clusters = reorder_clusters_by_pca(self.clusters, pca1)
-
-            cluster_count = len(set(self.clusters))
-
-            # Write results
-            pbar.set_description("Writing cluster results")
-            self._write_results(ctx, target_path)
-            pbar.update(1)
-        finally:
-            if own_progress:
-                pbar.__exit__(None, None, None)
+        # Write results
+        reporter.phase("Writing")
+        self._write_results(ctx, target_path)
 
         logger.debug(f"Loaded {len(data)} samples from features")
         logger.debug(f"Found {cluster_count} clusters")
@@ -212,59 +205,54 @@ class ClusterWithUmapResult(BaseModel):
 
 class ClusterWithUmapCommand:
     """
-    UMAP + Clustering with unified progress bar
+    UMAP + Clustering with one unified progress stream
 
-    This command runs both UMAP and clustering operations with a single combined
-    progress bar for better user experience.
+    Runs UmapCommand then ClusteringCommand, feeding both the same Reporter so the
+    caller sees one continuous sequence of phases.
 
     Usage:
-        # Basic usage with defaults
-        cmd = ClusterWithUmapCommand()
-        result = cmd(['data.h5'])
-
-        # With custom parameters
         cmd = ClusterWithUmapCommand(
-            umap_cmd=UmapCommand(n_neighbors=30, min_dist=0.05),
-            cluster_cmd=ClusteringCommand(resolution=0.5),
+            umap_cmd=UmapCommand(model='uni', n_neighbors=30, min_dist=0.05),
+            cluster_cmd=ClusteringCommand(model='uni', resolution=0.5),
         )
         result = cmd(paths)
     """
 
     def __init__(
         self,
-        umap_cmd: UmapCommand | None = None,
-        cluster_cmd: ClusteringCommand | None = None,
+        umap_cmd: UmapCommand,
+        cluster_cmd: ClusteringCommand,
     ):
         """
-        Initialize the combined command
-
         Args:
-            umap_cmd: UmapCommand instance (created with defaults if None)
-            cluster_cmd: ClusteringCommand instance (created with defaults if None)
+            umap_cmd: UmapCommand instance
+            cluster_cmd: ClusteringCommand instance
         """
-        if umap_cmd is not None:
-            self.umap_cmd = umap_cmd
-        else:
-            # Import here to avoid circular import at module level
-            from .umap_embedding import UmapCommand as _UmapCommand  # noqa: PLC0415
+        self.umap_cmd = umap_cmd
+        self.cluster_cmd = cluster_cmd
 
-            self.umap_cmd = _UmapCommand()
-        self.cluster_cmd = cluster_cmd if cluster_cmd is not None else ClusteringCommand()
-
-    def __call__(self, hdf5_paths: str | list[str]) -> ClusterWithUmapResult:
+    def __call__(
+        self,
+        hdf5_paths: str | list[str],
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> ClusterWithUmapResult:
         """
         Execute UMAP + Clustering with unified progress
 
         Args:
             hdf5_paths: Single HDF5 path or list of paths
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled at phase boundaries; True raises ``Cancelled``.
 
         Returns:
             ClusterWithUmapResult with paths and statistics
         """
-        # Total steps: UMAP (3) + Clustering (7) = 10
-        with _progress(total=10, desc="UMAP + Clustering", verbose=True) as pbar:
-            umap_result = self.umap_cmd(hdf5_paths, progress=pbar)
-            cluster_result = self.cluster_cmd(hdf5_paths, progress=pbar)
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            umap_result = self.umap_cmd._run(hdf5_paths, reporter)
+            cluster_result = self.cluster_cmd._run(hdf5_paths, reporter)
 
         return ClusterWithUmapResult(
             umap_target_path=umap_result.target_path,

@@ -3,13 +3,15 @@ DZI export command for Deep Zoom Image format
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from PIL import Image
 from pydantic import BaseModel
 
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..wsi_files import PyramidalWSIFile, WSIFile, create_wsi_file
-from . import _progress
+from ._base import make_reporter
 
 logger = logging.getLogger(__name__)
 
@@ -65,19 +67,38 @@ class DziCommand:
         wsi_file: WSIFile | None = None,
         output_dir: str = ".",
         name: str = "slide",
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> DziResult:
         """
         Export WSI to DZI format
+
+        Progress phase: "Generating tiles" (one step per tile, message = "Level L: row r/R").
 
         Args:
             wsi_path: Path to WSI file (either this or wsi_file required)
             wsi_file: WSIFile instance (either this or wsi_path required)
             output_dir: Output directory
             name: Base name for DZI files
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled after every tile; True raises ``Cancelled``.
 
         Returns:
             DziResult: Export metadata
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(wsi_path, wsi_file, output_dir, name, reporter)
+
+    def _run(
+        self,
+        wsi_path: str | None,
+        wsi_file: WSIFile | None,
+        output_dir: str,
+        name: str,
+        reporter: Reporter,
+    ) -> DziResult:
         # Get or create WSIFile
         if wsi_file is None:
             if wsi_path is None:
@@ -115,13 +136,10 @@ class DziCommand:
             level_infos[level] = (level_width, level_height, cols, rows)
             total_tiles += cols * rows
 
-        # Generate all levels with single progress bar
-        progress = _progress(total=total_tiles, desc="Generating tiles")
-        try:
-            for level in range(max_level, -1, -1):
-                self._generate_level(wsi_file, files_dir, level, level_infos[level], progress)
-        finally:
-            progress.close()
+        # Generate all levels as a single phase
+        reporter.phase("Generating tiles", total=total_tiles)
+        for level in range(max_level, -1, -1):
+            self._generate_level(wsi_file, files_dir, level, level_infos[level], reporter)
 
         # Write DZI XML
         dzi_xml = wsi_file.get_dzi_xml(self.tile_size, self.overlap, self.format)
@@ -145,7 +163,7 @@ class DziCommand:
         files_dir: Path,
         level: int,
         level_info: tuple,
-        progress,
+        reporter: Reporter,
     ):
         """Generate all tiles for a single level."""
         level_dir = files_dir / str(level)
@@ -158,7 +176,7 @@ class DziCommand:
         ext = "png" if self.format == "png" else "jpeg"
 
         for row in range(rows):
-            progress.set_description(f"Level {level}: row {row + 1}/{rows}")
+            reporter.set_message(f"Level {level}: row {row + 1}/{rows}")
             for col in range(cols):
                 tile_path = level_dir / f"{col}_{row}.{ext}"
 
@@ -171,4 +189,4 @@ class DziCommand:
                     img.save(tile_path, "PNG")
                 else:
                     img.save(tile_path, "JPEG", quality=self.jpeg_quality)
-                progress.update(1)
+                reporter.advance(1)

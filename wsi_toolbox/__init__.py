@@ -6,10 +6,12 @@ A comprehensive toolkit for WSI processing, feature extraction, and clustering.
 Basic Usage:
     >>> import wsi_toolbox as wt
     >>>
-    >>> # Extract features directly from WSI (no cache needed)
-    >>> wt.set_default_preset('uni')
+    >>> # Process-wide defaults (optional; commands also take preset= / device= directly)
+    >>> wt.set_default_preset('uni2')
     >>> wt.set_default_device('cuda')
-    >>> cmd = wt.FeatureExtractionCommand(model='uni', preset='uni', batch_size=256)
+    >>>
+    >>> # Extract features directly from WSI (no cache needed)
+    >>> cmd = wt.FeatureExtractionCommand(model='uni2', preset='uni2', batch_size=256)
     >>> result = cmd('output.h5', wsi_path='input.ndpi')
     >>>
     >>> # Or create cache first for faster repeated access
@@ -17,50 +19,53 @@ Basic Usage:
     >>> cache_cmd('input.ndpi', 'output.h5')
     >>> result = cmd('output.h5')  # Uses cache automatically
     >>>
-    >>> # Clustering
-    >>> cluster_cmd = wt.ClusteringCommand(resolution=1.0)
-    >>> cluster_result = cluster_cmd(['output.h5'])
+    >>> # Clustering / UMAP
+    >>> cluster_result = wt.ClusteringCommand(model='uni2', resolution=1.0)('output.h5')
+    >>> umap_result = wt.UmapCommand(model='uni2')('output.h5')
     >>>
-    >>> # UMAP
-    >>> umap_cmd = wt.UmapCommand()
-    >>> umap_result = umap_cmd('output.h5')
+    >>> # Progress goes to a sink (tqdm by default); cancellation via should_cancel
+    >>> result = cmd('output.h5', on_progress=wt.RichSink(), should_cancel=lambda: stop_flag.is_set())
 """
 
-# Version info
 from importlib.metadata import version
 
-__version__ = version("wsi-toolbox")
-
-# Configuration
 # Commands
 from .commands import (
     AggregateCommand,
+    AggregateResult,
+    BasePreviewCommand,
     CacheCommand,
+    CacheResult,
     ClusteringCommand,
+    ClusteringResult,
+    ClusterWithUmapCommand,
+    ClusterWithUmapResult,
     DziCommand,
+    DziResult,
     FeatureExtractionCommand,
+    FeatureExtractResult,
+    PCACommand,
+    PCAResult,
     PreviewClustersCommand,
     PreviewLatentClusterCommand,
     PreviewLatentPCACommand,
     PreviewScoresCommand,
     ShowCommand,
+    ShowResult,
+    UmapCommand,
+    UmapResult,
     Wsi2HDF5Command,
+    Wsi2HDF5Result,
 )
-from .commands.aggregate import AggregateResult
 
-# Command result types
-from .commands.cache import (
-    CacheResult,
-    Wsi2HDF5Result,  # Deprecated alias
-)
-from .commands.clustering import ClusteringResult
-from .commands.feature_extraction import FeatureExtractResult
-from .commands.pca import PCACommand
-from .commands.umap_embedding import UmapCommand
+# Defaults
 from .common import (
-    create_default_model,
-    get_config,
-    set_default_custom_preset,
+    Defaults,
+    defaults,
+    get_defaults,
+    resolve_devices,
+    resolve_preset,
+    set_default_cluster_cmap,
     set_default_device,
     set_default_preset,
     set_default_progress,
@@ -80,16 +85,34 @@ from .patch_reader import (
 from .presets import (
     PRESET_EXTRACT_FN,
     PRESET_NAMES,
+    PRESET_NORMALIZATION,
     SLIDE_PRESET_NAMES,
     SLIDE_PRESET_TILE_SOURCES,
+    TilePreset,
     create_preset_model,
     create_slide_preset_model,
+    get_tile_preset,
+)
+
+# Progress
+from .progress import (
+    UNSET,
+    Cancelled,
+    LoggingSink,
+    MultiSink,
+    NullSink,
+    ProgressEvent,
+    ProgressSink,
+    Reporter,
+    RichSink,
+    StreamlitSink,
+    TqdmSink,
+    resolve_sink,
 )
 
 # Utility functions
 from .utils.analysis import leiden_cluster, reorder_clusters_by_pca
 from .utils.hdf5_paths import remove_namespace, rename_namespace
-from .utils.progress import BaseProgress, register_progress
 
 # WSI file classes
 from .wsi_files import (
@@ -103,26 +126,45 @@ from .wsi_files import (
     find_wsi_for_h5,
 )
 
+__version__ = version("wsi-toolbox")
+
 __all__ = [
     # Version
     "__version__",
-    # Configuration functions
-    "get_config",
-    "set_default_progress",
-    "set_default_custom_preset",
+    # Defaults
+    "Defaults",
+    "defaults",
+    "get_defaults",
     "set_default_preset",
-    "create_default_model",
     "set_default_device",
+    "set_default_progress",
+    "set_default_cluster_cmap",
     "set_verbose",
+    "resolve_preset",
+    "resolve_devices",
+    # Progress
+    "ProgressEvent",
+    "ProgressSink",
+    "Reporter",
+    "Cancelled",
+    "UNSET",
+    "TqdmSink",
+    "RichSink",
+    "StreamlitSink",
+    "LoggingSink",
+    "MultiSink",
+    "NullSink",
+    "resolve_sink",
     # Commands
     "CacheCommand",
     "Wsi2HDF5Command",  # Deprecated alias
     "FeatureExtractionCommand",
     "AggregateCommand",
-    "AggregateResult",
     "ClusteringCommand",
+    "ClusterWithUmapCommand",
     "UmapCommand",
     "PCACommand",
+    "BasePreviewCommand",
     "PreviewClustersCommand",
     "PreviewScoresCommand",
     "PreviewLatentPCACommand",
@@ -133,7 +175,13 @@ __all__ = [
     "CacheResult",
     "Wsi2HDF5Result",  # Deprecated alias
     "FeatureExtractResult",
+    "AggregateResult",
     "ClusteringResult",
+    "ClusterWithUmapResult",
+    "UmapResult",
+    "PCAResult",
+    "ShowResult",
+    "DziResult",
     # WSI files
     "WSIFile",
     "PyramidalWSIFile",
@@ -150,18 +198,18 @@ __all__ = [
     "PrefetchReader",
     "get_patch_reader",
     # Presets
-    "PRESET_EXTRACT_FN",
+    "TilePreset",
+    "get_tile_preset",
     "PRESET_NAMES",
+    "PRESET_NORMALIZATION",
+    "PRESET_EXTRACT_FN",
+    "create_preset_model",
     "SLIDE_PRESET_NAMES",
     "SLIDE_PRESET_TILE_SOURCES",
-    "create_preset_model",
     "create_slide_preset_model",
     # Utilities
     "leiden_cluster",
     "reorder_clusters_by_pca",
     "rename_namespace",
     "remove_namespace",
-    # Progress
-    "BaseProgress",
-    "register_progress",
 ]

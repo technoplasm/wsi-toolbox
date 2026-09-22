@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wsi-toolbox"
-version = "0.5.1"
+version = "1.0.0"
 description = "A comprehensive toolkit for Whole Slide Image processing, feature extraction, and clustering analysis"
 readme = "README.md"
 requires-python = "==3.12.*"
@@ -114,6 +114,7 @@ clean = "rm -rf build/ dist/ *.egg-info/ __pycache__/ && find . -name '*.pyc' -d
 build = "python -m build"
 check = "python -m twine check dist/*"
 lint = "ruff check . --extend-ignore F401"
+test = "pytest -q"
 lint-strict = "ruff check ."
 fix = "ruff check --fix . && ruff format ."
 
@@ -140,6 +141,7 @@ dev = [
     "fastapi>=0.115.0",
     "ipython>=9.1.0",
     "jupyterlab>=4.1.6",
+    "pytest>=8",
     "ruff>=0.8.0",
     "taskipy>=1.14.1",
     "uvicorn>=0.32.0",
@@ -187,8 +189,12 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 # Optional/heavy imports that need lazy loading
 "wsi_toolbox/app/main.py" = ["E402", "PLC0415"]  # Streamlit app with special import patterns
-"wsi_toolbox/utils/progress.py" = ["PLC0415"]  # Optional dependency (streamlit) lazy loading
+"wsi_toolbox/progress.py" = ["PLC0415"]  # Optional dependencies (tqdm/rich/streamlit) lazy loading
 "wsi_toolbox/commands/umap_embedding.py" = ["PLC0415"]  # Heavy import (umap) lazy loading
 
 [tool.ruff.lint.isort]
 known-first-party = ["wsi_toolbox"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]

@@ -8,19 +8,21 @@ Supports multi-GPU parallel inference.
 import gc
 import logging
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..common import create_default_model, get_config, resolve_devices
+from ..common import resolve_devices, resolve_preset
 from ..patch_reader import get_patch_reader
+from ..presets.tile import TilePreset
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils import safe_del
 from ..utils.hdf5_paths import write_root_metadata
 from ..utils.white import create_white_detector
-from . import _get, _progress
+from ._base import make_reporter
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ class FeatureExtractResult(BaseModel):
             f"filtered={filtered}, "
             f"{self.total_batches} batches, "
             f"{m}m{s}s elapsed "
-            f"({self.batch_time_mean:.2f}\u00b1{self.batch_time_std:.2f}s/batch), "
+            f"({self.batch_time_mean:.2f}±{self.batch_time_std:.2f}s/batch), "
             f"model={self.model}, dim={self.feature_dim}"
         )
 
@@ -91,11 +93,11 @@ class _GPUWorker:
         with torch.inference_mode(), torch.autocast(device_type=self.device_type, dtype=self.autocast_dtype):
             if self.extract_fn is not None:
                 features = self.extract_fn(self.model, x)
-                result_features = features.cpu().numpy()
+                result_features = features.float().cpu().numpy()
                 result_latent = None
             else:
                 h_tensor = self.model.forward_features(x)
-                h = h_tensor.cpu().detach().numpy()
+                h = h_tensor.float().cpu().detach().numpy()
                 del h_tensor
                 latent_index = h.shape[1] - self.latent_size**2
                 result_features = h[:, 0, ...].copy()
@@ -127,19 +129,21 @@ class FeatureExtractionCommand:
     1. cache/{patch_size}/ if available
     2. Otherwise WSI (auto-discover or specified)
 
+    Progress phases: "Initializing model" -> "Processing patches" -> "Writing".
+
     Usage:
-        cmd = FeatureExtractionCommand(batch_size=256)
-        result = cmd(hdf5_path='data.h5')
+        cmd = FeatureExtractionCommand(model='uni2', preset='uni2', batch_size=256)
+        result = cmd('data.h5', on_progress=TqdmSink())
     """
 
     def __init__(
         self,
         model: str,
-        preset: str,
+        preset: str | TilePreset | None = None,
+        device: str | None = None,
         batch_size: int = 256,
         with_latent: bool = False,
         overwrite: bool = False,
-        device: str | None = None,
         patch_size: int = 256,
         target_mpp: float = 0.5,
         prefetch: int = 1,
@@ -152,13 +156,12 @@ class FeatureExtractionCommand:
             model: HDF5 storage key for this embedding series. Free string;
                 use distinct names like 'uni_224' / 'uni_256' to keep runs of
                 the same foundation model with different settings separate.
-            preset: Foundation model preset (e.g., 'uni', 'conch15_768').
-                Drives which model is loaded.
+            preset: Foundation model preset name (e.g. 'uni2') or a ``TilePreset``.
+                None uses ``defaults.preset`` (ValueError if that is unset too).
+            device: Device spec ('auto', 'cpu', 'cuda:0', 'cuda:0,1'). None uses ``defaults.device``.
             batch_size: Batch size for inference
             with_latent: Whether to extract latent features
             overwrite: Whether to overwrite existing features
-            device: Device spec (None to use global default).
-                'auto', 'cpu', 'cuda:0', 'cuda:0,1', etc.
             patch_size: Patch size (default: 256)
             target_mpp: Target microns per pixel (default: 0.5)
             prefetch: Number of batches to prefetch (0 to disable, default: 1)
@@ -166,10 +169,10 @@ class FeatureExtractionCommand:
         """
         self.model = model
         self.preset = preset
+        self.device = device
         self.batch_size = batch_size
         self.with_latent = with_latent
         self.overwrite = overwrite
-        self.device = _get("device", device)
         self.patch_size = patch_size
         self.target_mpp = target_mpp
         self.prefetch = prefetch
@@ -185,17 +188,31 @@ class FeatureExtractionCommand:
         self.coordinates_name = f"{self.model}/coordinates"
         self.latent_feature_name = f"{self.model}/latent_features"
 
-    def __call__(self, hdf5_path: str, wsi_path: str | None = None) -> FeatureExtractResult:
+    def __call__(
+        self,
+        hdf5_path: str,
+        wsi_path: str | None = None,
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> FeatureExtractResult:
         """
         Execute feature extraction.
 
         Args:
             hdf5_path: Path to HDF5 file
             wsi_path: Path to WSI file (None to auto-discover)
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled after every batch; True raises ``Cancelled`` (partial data is removed).
 
         Returns:
             FeatureExtractResult: Result metadata
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(hdf5_path, wsi_path, reporter)
+
+    def _run(self, hdf5_path: str, wsi_path: str | None, reporter: Reporter) -> FeatureExtractResult:
         import copy  # noqa: PLC0415
 
         import torch  # noqa: PLC0415
@@ -210,7 +227,7 @@ class FeatureExtractionCommand:
         except FileNotFoundError:
             pass  # File doesn't exist yet
 
-        # Resolve devices
+        tile_preset = resolve_preset(self.preset)
         devices = resolve_devices(self.device)
         num_gpus = len(devices)
         use_parallel = num_gpus > 1
@@ -219,6 +236,8 @@ class FeatureExtractionCommand:
             logger.info(f"Using {num_gpus} GPUs for parallel inference: {devices}")
         else:
             logger.info(f"Using device: {devices[0]}")
+
+        reporter.phase("Initializing model")
 
         # Get patch reader (cache or WSI)
         reader = get_patch_reader(
@@ -229,9 +248,7 @@ class FeatureExtractionCommand:
             white_detector=self.white_detector,
             prefetch=self.prefetch,
         )
-        # Progress bar (iteration-based)
         total_batches = reader.get_num_batches(self.batch_size)
-        progress = _progress(total=total_batches, desc="Initializing model", verbose=True)
 
         workers: list[_GPUWorker] = []
         executor: ThreadPoolExecutor | None = None
@@ -240,22 +257,19 @@ class FeatureExtractionCommand:
         batch_times: list[float] = []
 
         try:
-            cfg = get_config()
-            extract_fn = cfg.extract_fn
-            mean = torch.tensor(cfg.norm_mean).view(1, 3, 1, 1)
-            std = torch.tensor(cfg.norm_std).view(1, 3, 1, 1)
+            extract_fn = tile_preset.extract_fn
+            mean = torch.tensor(tile_preset.norm_mean).view(1, 3, 1, 1)
+            std = torch.tensor(tile_preset.norm_std).view(1, 3, 1, 1)
 
             if self.with_latent and extract_fn is not None:
                 logger.warning("with_latent is not supported with custom extract_fn, skipping latent extraction")
 
             # Create workers (one per device)
-            base_model = create_default_model().eval()
+            base_model = tile_preset.create_model().eval()
             workers.append(_GPUWorker(base_model, devices[0], mean.clone(), std.clone(), extract_fn, self.with_latent))
             for dev in devices[1:]:
                 model_copy = copy.deepcopy(base_model)
                 workers.append(_GPUWorker(model_copy, dev, mean.clone(), std.clone(), extract_fn, self.with_latent))
-
-            progress.set_description("Preparing")
 
             # Collect all features and coordinates
             all_features = []
@@ -265,12 +279,12 @@ class FeatureExtractionCommand:
             if use_parallel:
                 executor = ThreadPoolExecutor(max_workers=num_gpus)
 
-            for batch, coords, desc in reader.iter_batches(self.batch_size):
-                progress.set_description(f"Processing patches: {desc}")
+            reporter.phase("Processing patches", total=total_batches)
 
+            for batch, coords, desc in reader.iter_batches(self.batch_size):
                 # Skip empty batches
                 if len(batch) == 0:
-                    progress.update(1)
+                    reporter.advance(1, message=desc)
                     continue
 
                 t_batch = time.perf_counter()
@@ -297,13 +311,13 @@ class FeatureExtractionCommand:
 
                 batch_times.append(time.perf_counter() - t_batch)
                 all_coords.extend(coords)
-                progress.update(1)
+                reporter.advance(1, message=desc)
 
-            progress.close()
+            reporter.phase("Writing")
 
             # Concatenate results
             all_features = np.concatenate(all_features, axis=0)
-            if self.with_latent:
+            if all_latent is not None:
                 all_latent = np.concatenate(all_latent, axis=0)
 
             patch_count = len(all_coords)
@@ -330,7 +344,7 @@ class FeatureExtractionCommand:
                 f.create_dataset(self.coordinates_name, data=all_coords)
 
                 # Save latent features
-                if self.with_latent:
+                if all_latent is not None:
                     ds_latent = f.create_dataset(self.latent_feature_name, data=all_latent)
                     ds_latent.attrs["writing"] = False
 
@@ -339,7 +353,7 @@ class FeatureExtractionCommand:
                 for key, value in reader.metadata.items():
                     grp.attrs[key] = value
                 grp.attrs["patch_count"] = patch_count
-                grp.attrs["preset"] = self.preset
+                grp.attrs["preset"] = tile_preset.name
 
                 # Also write to root attrs (if not already present)
                 write_root_metadata(f, reader.metadata, patch_count)
@@ -356,13 +370,10 @@ class FeatureExtractionCommand:
                 batch_time_mean=float(bt.mean()),
                 batch_time_std=float(bt.std()),
                 model=self.model,
-                with_latent=self.with_latent and extract_fn is None,
+                with_latent=all_latent is not None,
             )
 
         finally:
-            import torch  # noqa: PLC0415
-
-            progress.close()
             if executor is not None:
                 executor.shutdown(wait=True)
             for worker in workers:

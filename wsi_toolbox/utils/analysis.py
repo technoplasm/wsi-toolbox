@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import multiprocessing
-from typing import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..progress import Reporter
 
 
 def reorder_clusters_by_pca(clusters: np.ndarray, pca_values: np.ndarray) -> np.ndarray:
@@ -105,7 +110,7 @@ def leiden_cluster(
     features: np.ndarray,
     resolution: float = 1.0,
     n_jobs: int = -1,
-    on_progress: Callable[[str], None] | None = None,
+    reporter: Reporter | None = None,
 ) -> np.ndarray:
     """
     Perform Leiden clustering on feature embeddings.
@@ -114,7 +119,8 @@ def leiden_cluster(
         features: Feature matrix (n_samples, n_features)
         resolution: Leiden clustering resolution parameter
         n_jobs: Number of parallel jobs (-1 = all CPUs)
-        on_progress: Optional callback for progress updates, receives message string
+        reporter: Optional progress Reporter. Phases: "PCA" / "KNN" / "Building graph" /
+            "Leiden clustering" / "Finalizing"
 
     Returns:
         np.ndarray: Cluster labels for each sample
@@ -130,23 +136,23 @@ def leiden_cluster(
         n_jobs = multiprocessing.cpu_count()
     n_samples = features.shape[0]
 
-    def _progress(msg: str):
-        if on_progress:
-            on_progress(msg)
+    def _phase(name: str):
+        if reporter is not None:
+            reporter.phase(name)
 
     # 1. PCA
-    _progress("Processing PCA")
+    _phase("PCA")
     n_components, pca = find_optimal_components(features)
     target_features = pca.transform(features)[:, :n_components]
 
     # 2. KNN
-    _progress("Processing KNN")
+    _phase("KNN")
     k = int(np.sqrt(len(target_features)))
     nn = NearestNeighbors(n_neighbors=k).fit(target_features)
     distances, indices = nn.kneighbors(target_features)
 
     # 3. Build graph
-    _progress("Building graph")
+    _phase("Building graph")
     G = nx.Graph()
     G.add_nodes_from(range(n_samples))
 
@@ -161,7 +167,7 @@ def leiden_cluster(
             G.add_edge(i, j, weight=weight)
 
     # 4. Leiden clustering
-    _progress("Leiden clustering")
+    _phase("Leiden clustering")
     edges = list(G.edges())
     weights = [G[u][v]["weight"] for u, v in edges]
     ig_graph = ig.Graph(n=n_samples, edges=edges, edge_attrs={"weight": weights})
@@ -174,7 +180,7 @@ def leiden_cluster(
     )
 
     # 5. Finalize
-    _progress("Finalizing")
+    _phase("Finalizing")
     clusters = np.full(n_samples, -1)
     for i, community in enumerate(partition):
         for node in community:

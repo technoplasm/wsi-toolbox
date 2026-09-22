@@ -3,6 +3,7 @@ Preview generation commands using Template Method Pattern
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import h5py
@@ -11,10 +12,12 @@ from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from PIL import Image, ImageFont
 
+from ..common import _get_cluster_color
 from ..patch_reader import get_patch_reader
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils import create_frame, get_platform_font
 from ..utils.hdf5_paths import build_cluster_path
-from . import _get_cluster_color, _progress
+from ._base import make_reporter
 
 logger = logging.getLogger(__name__)
 
@@ -128,17 +131,33 @@ class BasePreviewCommand:
         self.rotate = rotate
         self.patch_size = patch_size
 
-    def __call__(self, hdf5_path: str, **kwargs) -> Image.Image:
+    def __call__(
+        self,
+        hdf5_path: str,
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+        **kwargs,
+    ) -> Image.Image:
         """
         Template method - common workflow for all preview commands
 
+        Progress phase: "Rendering patches" (one step per patch).
+
         Args:
             hdf5_path: Path to HDF5 file
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled after every patch; True raises ``Cancelled``.
             **kwargs: Subclass-specific arguments
 
         Returns:
             PIL.Image: Thumbnail image
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(hdf5_path, reporter, **kwargs)
+
+    def _run(self, hdf5_path: str, reporter: Reporter, **kwargs) -> Image.Image:
         S = self.size
 
         with h5py.File(hdf5_path, "r") as f:
@@ -155,34 +174,30 @@ class BasePreviewCommand:
             # Create canvas
             canvas = Image.new("RGB", (cols * S, rows * S), (0, 0, 0))
 
+            reporter.phase("Rendering patches", total=patch_count)
+
             if info.use_wsi:
                 # WSI on-demand: read each patch by coordinate
                 source = get_patch_reader(h5_path=hdf5_path, patch_size=src_patch_size, target_mpp=0.5)
                 coords = f[info.coords_path][:]
 
-                tq = _progress(range(patch_count), desc="Rendering patches")
                 try:
-                    for i in tq:
+                    for i in reporter.iter(range(patch_count)):
                         coord = tuple(coords[i])
                         patch_array = source.get_patch_by_coord(coord)
                         frame = self._get_frame(i, data, f)
                         self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
                 finally:
-                    tq.close()
                     if hasattr(source, "close"):
                         source.close()
             else:
                 # H5 cached: iterate by index
                 coords = f[info.coords_path][:]
-                tq = _progress(range(patch_count), desc="Rendering patches")
-                try:
-                    for i in tq:
-                        coord = coords[i]
-                        patch_array = f[info.patches_path][i]
-                        frame = self._get_frame(i, data, f)
-                        self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
-                finally:
-                    tq.close()
+                for i in reporter.iter(range(patch_count)):
+                    coord = coords[i]
+                    patch_array = f[info.patches_path][i]
+                    frame = self._get_frame(i, data, f)
+                    self._render_patch(canvas, patch_array, coord, frame, S, src_patch_size, cols, rows)
 
         return canvas
 

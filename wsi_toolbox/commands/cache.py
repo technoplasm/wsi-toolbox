@@ -6,18 +6,19 @@ Creates cache/{patch_size}/ structure with patches and coordinates.
 
 import logging
 import os
-from typing import Callable
+from collections.abc import Callable
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
 from ..patch_reader import WSIPatchReader
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils import safe_del
 from ..utils.hdf5_paths import write_root_metadata
 from ..utils.white import create_white_detector
 from ..wsi_files import create_wsi_file
-from . import _progress
+from ._base import make_reporter
 
 logger = logging.getLogger(__name__)
 
@@ -89,17 +90,33 @@ class CacheCommand:
         self.cache_patches = f"{self.cache_group}/patches"
         self.cache_coordinates = f"{self.cache_group}/coordinates"
 
-    def __call__(self, input_path: str, output_path: str) -> CacheResult:
+    def __call__(
+        self,
+        input_path: str,
+        output_path: str,
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> CacheResult:
         """
         Execute cache creation.
+
+        Progress phase: "Caching patches" (one step per row strip, message = reader desc).
 
         Args:
             input_path: Path to input WSI file
             output_path: Path to output HDF5 file
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled after every row strip; True raises ``Cancelled`` (partial cache is removed).
 
         Returns:
             CacheResult: Metadata including mpp, patch_count, etc.
         """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(input_path, output_path, reporter)
+
+    def _run(self, input_path: str, output_path: str, reporter: Reporter) -> CacheResult:
         # Check if file existed before (for cleanup decision)
         file_existed = os.path.exists(output_path)
 
@@ -181,15 +198,9 @@ class CacheCommand:
                 )
                 ds_coords.attrs["writing"] = True
 
-                progress = _progress(total=total_iters, desc="Reading patches")
-                try:
-                    for patches, coords, desc in reader.iter_rows(self.rows_per_read):
-                        progress.set_description(f"Caching: {desc}")
-                        progress.update(1)
-
-                        if not patches:
-                            continue
-
+                reporter.phase("Caching patches", total=total_iters)
+                for patches, coords, desc in reader.iter_rows(self.rows_per_read):
+                    if patches:
                         batch_len = len(patches)
                         old_size = patch_count
                         new_size = patch_count + batch_len
@@ -202,8 +213,8 @@ class CacheCommand:
                         ds_coords[old_size:new_size] = np.array(coords, dtype=np.int32)
 
                         patch_count = new_size
-                finally:
-                    progress.close()
+
+                    reporter.advance(1, message=desc)
 
                 # Save metadata as attrs on cache group
                 cache_grp.attrs["mpp"] = reader.actual_mpp

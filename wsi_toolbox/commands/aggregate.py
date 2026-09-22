@@ -7,15 +7,18 @@ aggregator (TITAN, etc.) to produce one vector per WSI. Writes the result to:
 """
 
 import logging
+from collections.abc import Callable
 
 import h5py
 import numpy as np
 import torch
 from pydantic import BaseModel
 
+from ..common import resolve_devices
 from ..presets.slide import SLIDE_PRESET_NAMES, create_slide_preset_model
+from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils import safe_del
-from . import _get
+from ._base import make_reporter
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +55,33 @@ class AggregateCommand:
             raise ValueError(f"Unknown slide preset: {slide_preset}. Must be one of {SLIDE_PRESET_NAMES}")
         self.slide_preset = slide_preset
         self.tile_model = tile_model
-        self.device = _get("device", device)
+        self.device = device
         self.overwrite = overwrite
 
-    def __call__(self, hdf5_path: str) -> AggregateResult:
+    def __call__(
+        self,
+        hdf5_path: str,
+        *,
+        on_progress: ProgressSink | None | Unset = UNSET,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> AggregateResult:
+        """
+        Progress phases: "Loading features" -> "Initializing model" -> "Aggregating" -> "Writing".
+
+        Args:
+            hdf5_path: Path to HDF5 file
+            on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
+            should_cancel: Polled at phase boundaries; True raises ``Cancelled``.
+        """
+        reporter = make_reporter(on_progress, should_cancel)
+        with reporter:
+            return self._run(hdf5_path, reporter)
+
+    def _run(self, hdf5_path: str, reporter: Reporter) -> AggregateResult:
         target_path = f"{self.tile_model}/aggregates/{self.slide_preset}/feature"
 
         # 1. Load inputs and check skip
+        reporter.phase("Loading features")
         with h5py.File(hdf5_path, "r") as f:
             tile_grp = f.get(self.tile_model)
             if tile_grp is None or "features" not in tile_grp:
@@ -85,17 +108,15 @@ class AggregateCommand:
             f"with slide preset '{self.slide_preset}', patch_size_lv0={patch_size_lv0}"
         )
 
-        # 2. Load slide aggregator
-        device_spec = self.device or "auto"
-        if device_spec == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            device = device_spec
+        # 2. Load slide aggregator (single device; multi-GPU spec uses the first)
+        reporter.phase("Initializing model")
+        device = resolve_devices(self.device)[0]
         logger.info(f"Using device: {device}")
 
         model = create_slide_preset_model(self.slide_preset).to(device).eval()
 
         # 3. Run aggregation
+        reporter.phase("Aggregating")
         feat_t = torch.from_numpy(features).float().unsqueeze(0).to(device)
         coord_t = torch.from_numpy(coords).long().unsqueeze(0).to(device)
 
@@ -109,6 +130,7 @@ class AggregateCommand:
             torch.cuda.empty_cache()
 
         # 5. Write
+        reporter.phase("Writing")
         with h5py.File(hdf5_path, "a") as f:
             if self.overwrite:
                 safe_del(f, target_path)

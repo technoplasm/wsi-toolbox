@@ -1,8 +1,5 @@
 """Command-based processors for WSI analysis pipeline."""
 
-from ..common import _get as _get
-from ..common import _get_cluster_color as _get_cluster_color
-from ..common import _progress as _progress
 from .aggregate import AggregateCommand as AggregateCommand
 from .aggregate import AggregateResult as AggregateResult
 from .cache import CacheCommand as CacheCommand
@@ -10,15 +7,21 @@ from .cache import CacheResult as CacheResult
 from .cache import Wsi2HDF5Command as Wsi2HDF5Command
 from .cache import Wsi2HDF5Result as Wsi2HDF5Result
 from .clustering import ClusteringCommand as ClusteringCommand
+from .clustering import ClusteringResult as ClusteringResult
 from .clustering import ClusterWithUmapCommand as ClusterWithUmapCommand
 from .clustering import ClusterWithUmapResult as ClusterWithUmapResult
 from .dzi import DziCommand as DziCommand
+from .dzi import DziResult as DziResult
 from .feature_extraction import FeatureExtractionCommand as FeatureExtractionCommand
+from .feature_extraction import FeatureExtractResult as FeatureExtractResult
 from .pca import PCACommand as PCACommand
+from .pca import PCAResult as PCAResult
 from .preview import BasePreviewCommand as BasePreviewCommand
 from .preview import PreviewClustersCommand as PreviewClustersCommand
 from .preview import PreviewLatentClusterCommand as PreviewLatentClusterCommand
 from .preview import PreviewLatentPCACommand as PreviewLatentPCACommand
 from .preview import PreviewScoresCommand as PreviewScoresCommand
 from .show import ShowCommand as ShowCommand
+from .show import ShowResult as ShowResult
 from .umap_embedding import UmapCommand as UmapCommand
+from .umap_embedding import UmapResult as UmapResult
