@@ -5,6 +5,7 @@ PRESET_NAMES = [
     "uni",
     "uni2",
     "gigapath",
+    "gigapath-flash",
     "virchow",
     "virchow2",
     "h-optimus-0",
@@ -22,6 +23,7 @@ PRESET_NORMALIZATION: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "uni": (_IMAGENET_MEAN, _IMAGENET_STD),
     "uni2": (_IMAGENET_MEAN, _IMAGENET_STD),
     "gigapath": (_IMAGENET_MEAN, _IMAGENET_STD),
+    "gigapath-flash": (_IMAGENET_MEAN, _IMAGENET_STD),
     "virchow": (_IMAGENET_MEAN, _IMAGENET_STD),
     "virchow2": (_IMAGENET_MEAN, _IMAGENET_STD),
     "h-optimus-0": ((0.707223, 0.578729, 0.703617), (0.211883, 0.230117, 0.177517)),
@@ -46,8 +48,8 @@ def create_preset_model(preset: str):
     Create a tile-level foundation model instance by preset name.
 
     Args:
-        preset: One of 'uni', 'uni2', 'gigapath', 'virchow', 'virchow2',
-                'h-optimus-0', 'conch15', 'conch15_768', 'midnight',
+        preset: One of 'uni', 'uni2', 'gigapath', 'gigapath-flash', 'virchow',
+                'virchow2', 'h-optimus-0', 'conch15', 'conch15_768', 'midnight',
                 'phikon2'
 
     Returns:
@@ -95,6 +97,11 @@ def create_preset_model(preset: str):
         return timm.create_model(
             "hf_hub:prov-gigapath/prov-gigapath", pretrained=True, dynamic_img_size=True, dynamic_img_pad=True
         )
+
+    if preset == "gigapath-flash":
+        from .gigapath_flash import create_gigapath_flash_model  # noqa: PLC0415
+
+        return create_gigapath_flash_model()
 
     if preset == "h-optimus-0":
         return timm.create_model(

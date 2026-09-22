@@ -304,8 +304,8 @@ import wsi_toolbox as wt
 
 # Tile presets
 print(wt.PRESET_NAMES)
-# ['uni', 'uni2', 'gigapath', 'virchow', 'virchow2', 'h-optimus-0',
-#  'conch15', 'conch15_768', 'midnight', 'phikon2']
+# ['uni', 'uni2', 'gigapath', 'gigapath-flash', 'virchow', 'virchow2',
+#  'h-optimus-0', 'conch15', 'conch15_768', 'midnight', 'phikon2']
 tile_model = wt.create_preset_model('uni')
 
 # Slide presets

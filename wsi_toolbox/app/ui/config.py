@@ -15,6 +15,7 @@ PRESET_LABELS = {
     "uni2": "UNI2-h",
     "uni": "UNI",
     "gigapath": "Prov-GigaPath",
+    "gigapath-flash": "GigaPath-Flash",
     "conch15": "Conch V1.5",
     "h-optimus-0": "H-optimus-0",
 }
