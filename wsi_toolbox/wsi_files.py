@@ -374,6 +374,11 @@ class PyramidalTiffFile(PyramidalWSIFile):
 
     Supports multi-resolution TIFF files (e.g., .ndpi).
     For single-level TIFF, use StandardImage instead.
+
+    Thread safety: one instance must be used by **one thread at a time**. All reads go
+    through the single ``TiffFile`` file handle (seek + read), and the per-level caches
+    below are plain dicts. For parallel reads open one instance per thread (e.g. a
+    small pool of handles per slide, as vision's compute-tiles does).
     """
 
     def __init__(self, path):
@@ -383,9 +388,10 @@ class PyramidalTiffFile(PyramidalWSIFile):
         # Build pyramid info
         self._levels = self._build_level_info()
 
-        # Zarr store for level 0 (for efficient tiled reading)
-        store = self.tif.pages[0].aszarr()
-        self._zarr_level0 = zarr.open(store, mode="r")
+        # Per-level caches (page index -> object). Building ``page.aszarr()`` + ``zarr.open()``
+        # costs ~0.2 ms, which used to be paid on every _read_native_region call.
+        self._pages: dict[int, tifffile.TiffPage] = {}
+        self._zarr: dict[int, zarr.Array] = {}
 
     def _build_level_info(self) -> list[NativeLevel]:
         """Build pyramid level information from TIFF pages."""
@@ -448,7 +454,7 @@ class PyramidalTiffFile(PyramidalWSIFile):
 
     def read_region(self, xywh):
         x, y, width, height = xywh
-        page = self.tif.pages[0]
+        page = self._page(0)
 
         full_width = page.shape[1]
         full_height = page.shape[0]
@@ -458,13 +464,7 @@ class PyramidalTiffFile(PyramidalWSIFile):
         width = min(width, full_width - x)
         height = min(height, full_height - y)
 
-        if page.is_tiled:
-            region = self._zarr_level0[y : y + height, x : x + width]
-        else:
-            full_image = page.asarray()
-            region = full_image[y : y + height, x : x + width]
-
-        return self._normalize_color(region)
+        return self._normalize_color(self._read_page_region(0, x, y, width, height))
 
     # === PyramidalWSIFile abstract methods ===
 
@@ -474,7 +474,6 @@ class PyramidalTiffFile(PyramidalWSIFile):
     def _read_native_region(self, level_idx: int, x: int, y: int, w: int, h: int) -> np.ndarray:
         """Read a region from a specific TIFF level."""
         level = self._levels[level_idx]
-        page = self.tif.pages[level.index]
 
         # Clamp to bounds
         x = max(0, min(x, level.width - 1))
@@ -482,15 +481,62 @@ class PyramidalTiffFile(PyramidalWSIFile):
         w = min(w, level.width - x)
         h = min(h, level.height - y)
 
-        if page.is_tiled:
-            store = page.aszarr()
-            zarr_data = zarr.open(store, mode="r")
-            region = zarr_data[y : y + h, x : x + w]
-        else:
-            full_image = page.asarray()
-            region = full_image[y : y + h, x : x + w]
+        return self._normalize_color(self._read_page_region(level.index, x, y, w, h))
 
-        return self._normalize_color(region)
+    # === page reading ===
+
+    def _page(self, page_index: int) -> tifffile.TiffPage:
+        page = self._pages.get(page_index)
+        if page is None:
+            page = self._pages[page_index] = self.tif.pages[page_index]
+        return page
+
+    def _read_page_region(self, page_index: int, x: int, y: int, w: int, h: int) -> np.ndarray:
+        """Read ``[y:y+h, x:x+w]`` of a page (already clamped to its bounds).
+
+        Plain 2D tiled pages (what ``vips tiffsave --tile`` writes, and most pyramidal TIFFs)
+        are read tile by tile straight from the file: seek + read + ``page.decode`` for each
+        tile that intersects the region, the same decode call tifffile's zarr store makes, so
+        the pixels are identical but without zarr's per-call overhead. Anything else
+        (strips, volumetric / planar-separate tiles) goes through a per-level cached zarr array,
+        or ``page.asarray()`` for untiled pages.
+        """
+        page = self._page(page_index)
+        if not page.is_tiled:
+            return page.asarray()[y : y + h, x : x + w]
+        if page.tiledepth == 1 and page.planarconfig == 1 and len(page.shape) in (2, 3):
+            return self._read_tiles_direct(page, x, y, w, h)
+        z = self._zarr.get(page_index)
+        if z is None:
+            z = self._zarr[page_index] = zarr.open(page.aszarr(), mode="r")
+        return z[y : y + h, x : x + w]
+
+    def _read_tiles_direct(self, page: tifffile.TiffPage, x: int, y: int, w: int, h: int) -> np.ndarray:
+        th, tw = page.tilelength, page.tilewidth
+        tail = page.shape[2:]  # () for grayscale, (samples,) otherwise
+        out = np.zeros((max(h, 0), max(w, 0), *tail), dtype=page.dtype)  # missing tiles read as 0, like zarr
+        if w <= 0 or h <= 0:
+            return out
+        tiles_across = -(-page.shape[1] // tw)
+        fh = self.tif.filehandle
+        decode = page.decode
+        offsets, counts = page.dataoffsets, page.databytecounts
+        for ty in range(y // th, (y + h - 1) // th + 1):
+            y0 = ty * th
+            sy0, sy1 = max(y, y0), min(y + h, y0 + th)
+            for tx in range(x // tw, (x + w - 1) // tw + 1):
+                idx = ty * tiles_across + tx
+                offset, count = offsets[idx], counts[idx]
+                if not offset or not count:
+                    continue
+                fh.seek(offset)
+                data = fh.read(count)
+                tile = decode(data, idx, jpegtables=page.jpegtables, jpegheader=page.jpegheader, _fullsize=True)[0]
+                tile = tile.reshape(th, tw, *tail)
+                x0 = tx * tw
+                sx0, sx1 = max(x, x0), min(x + w, x0 + tw)
+                out[sy0 - y : sy1 - y, sx0 - x : sx1 - x] = tile[sy0 - y0 : sy1 - y0, sx0 - x0 : sx1 - x0]
+        return out
 
     def _normalize_color(self, region: np.ndarray) -> np.ndarray:
         """Normalize color to RGB (H, W, 3) with uint8 dtype."""

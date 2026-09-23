@@ -5,6 +5,7 @@ No GPU, no model downloads.
 
 import numpy as np
 import pytest
+import tifffile
 from PIL import Image
 
 import wsi_toolbox as wt
@@ -89,3 +90,36 @@ def png_path(tmp_path) -> str:
 @pytest.fixture
 def collect() -> CollectSink:
     return CollectSink()
+
+
+PYRAMID_SIZE = (1000, 700)  # (width, height): not a multiple of the tile size on purpose
+PYRAMID_TILE = 128
+
+
+def _smooth_rgb(width: int, height: int) -> np.ndarray:
+    """Deterministic smooth RGB image (JPEG-friendly, so lossy comparisons stay tight)."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    r = 128 + 100 * np.sin(xx / 37.0)
+    g = 128 + 100 * np.cos(yy / 23.0)
+    b = 128 + 60 * np.sin((xx + yy) / 51.0)
+    return np.stack([r, g, b], axis=-1).clip(0, 255).astype(np.uint8)
+
+
+@pytest.fixture
+def pyramid_tiff(tmp_path) -> str:
+    """A small tiled, JPEG-compressed, 3-level pyramidal TIFF (one page per level, 2x steps)."""
+    path = tmp_path / "pyramid.tif"
+    base = _smooth_rgb(*PYRAMID_SIZE)
+    with tifffile.TiffWriter(path) as tw:
+        level = base
+        for _ in range(3):
+            tw.write(
+                level,
+                tile=(PYRAMID_TILE, PYRAMID_TILE),
+                compression="jpeg",
+                photometric="rgb",
+                resolution=(1e4 / 0.5, 1e4 / 0.5),
+                resolutionunit="CENTIMETER",
+            )
+            level = np.asarray(Image.fromarray(level).reduce(2))
+    return str(path)
