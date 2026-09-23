@@ -147,6 +147,7 @@ class FeatureExtractionCommand:
         target_mpp: float = 0.5,
         prefetch: int = 1,
         white_detector: Callable[[np.ndarray], bool] | None = None,
+        read_workers: int | None = None,
     ):
         """
         Initialize feature extractor.
@@ -165,6 +166,8 @@ class FeatureExtractionCommand:
             target_mpp: Target microns per pixel (default: 0.5)
             prefetch: Number of batches to prefetch (0 to disable, default: 1)
             white_detector: Function (patch) -> bool, True if white.
+            read_workers: Threads reading the WSI in parallel (``WSIPatchReader``); None = min(4, CPUs / 2),
+                1 = no extra threads. Patches and features are the same for any value.
         """
         self.model = model
         self.preset = preset
@@ -175,6 +178,7 @@ class FeatureExtractionCommand:
         self.patch_size = patch_size
         self.target_mpp = target_mpp
         self.prefetch = prefetch
+        self.read_workers = read_workers
 
         # White detector
         if white_detector is None:
@@ -246,6 +250,7 @@ class FeatureExtractionCommand:
             target_mpp=self.target_mpp,
             white_detector=self.white_detector,
             prefetch=self.prefetch,
+            read_workers=self.read_workers,
         )
         total_batches = reader.get_num_batches(self.batch_size)
 

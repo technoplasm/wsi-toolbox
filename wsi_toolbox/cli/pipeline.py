@@ -77,6 +77,9 @@ class PipelineMixin:
         patch_size: int = param(256, s="-S", description="Patch size")
         target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
         prefetch: int = param(2, l="--prefetch", description="Batches to prefetch (0 to disable)")
+        read_workers: int = param(
+            0, l="--read-workers", description="WSI read threads (0 = min(4, CPUs/2), 1 = single-threaded)"
+        )
 
     def run_extract(self, a: ExtractArgs):
         """Extract patch features with a foundation model preset."""
@@ -102,6 +105,7 @@ class PipelineMixin:
             patch_size=a.patch_size,
             target_mpp=a.target_mpp,
             prefetch=a.prefetch,
+            read_workers=a.read_workers or None,
         )
         result = cmd(h5_path, wsi_path=wsi_path, on_progress=self.sink)
 

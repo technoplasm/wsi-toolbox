@@ -50,6 +50,10 @@ toolbox のコミット・マシンを添えて §9.1 の後に節（§10〜）�
   読み手の CPU を 30 % 減らすが、pyramid.tif の extract はもう GPU と釣り合っているので速度の伸びは小さい。
   GPU 側の前処理（CPU での float 化・全トークンの転送）を直して `infer` が 1.7 倍になった方が効いた。
   原本と pyramid.tif の特徴量はコサイン 0.97（k-means のクラスタ割り当ては 93 % 一致）。
+- **読み手の並列化（§11）で原本 NDPI の extract も GPU 律速になった。** `WSIPatchReader` が行の帯を 4 スレッド
+  （スレッドごとの openslide ハンドル）で読み、白判定もそこでやる。原本 NDPI の extract が 2.3〜2.4 倍
+  （24mumnvq 37.8 s → 16.6 s、7akahdcu 12.5 → 5.2 s）で、pyramid.tif（13.5 s）との差はほぼ消えた。
+  パッチ・採否・特徴量はビット一致なので、**速さのために extract の入力を pyramid.tif に替える理由は無くなった**。
 - **4 スレッド**: 1 ハンドル + ロックでは 1 スレッドと同値。スレッドごとにハンドルを貸すプールで原本（openslide）は
   約 3.2〜3.5 倍、pyramid.tif は改善前 1.6〜1.8 倍（GIL）→ 改善後 3.5 倍（§6、§7）。
 - **変換コスト**: `VIPS_CONCURRENCY=8` で **約 10 秒 / GB**（1.0 GB NDPI 10.4 s、3.4 GB NDPI 35 s）。
@@ -512,17 +516,85 @@ NDPI（8 px）・256 px タイルの SVS は割り切れるので何もしない
    43〜54 s → 39〜41 s、pyramid.tif で 28〜29 s → 17〜20 s。
 4. 原本 NDPI の extract をさらに速くする次の手は**読み手の並列化**（帯を横に分けてスレッドごとの openslide ハンドルで
    読む。openslide は GIL を離すので §6 のプールと同じく 3 倍前後が見込める）と、白判定・RGBA→RGB 変換を読み手
-   スレッドから外すこと。どちらも未実装（予定なら toolbox の `WSIPatchReader` に入れる）。
+   スレッドから外すこと。→ **§11 で実装した**（原本 NDPI の extract が 2.3 倍、GPU 律速になった）。
 
 再実行:
 
 ```bash
-# 読み手（整列あり / なし）・GPU・end-to-end。e2e は data/bench/extract/<ファイル名>.h5 に書く
+# 読み手（整列あり / なし）・GPU・end-to-end。e2e は data/bench/extract/<ファイル名>.w<ワーカー数>.h5 に書く
 uv run python scripts/bench_pyramid.py extract a.ndpi a.pyramid.tif --parts reader,model,e2e --budget 30
 # 原本と pyramid.tif の特徴量の比較
-uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.ndpi.h5 data/bench/extract/a.pyramid.tif.h5
+uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.ndpi.w4.h5 data/bench/extract/a.pyramid.tif.w4.h5
 # 整列読みのビット一致（実スライド）
 WT_TEST_WSI=a.ndpi:a.pyramid.tif uv run pytest tests/test_patch_reader.py -k real
+```
+
+## 11. 読み手の並列化（read workers、2026-09-24）
+
+§10.5 の 4 を実装した。`WSIPatchReader(read_workers=N)`（既定 `min(4, CPU 数 / 2)`、この機械では 4。
+`1` は従来どおり呼び出しスレッドで読むだけでスレッドを作らない）。
+
+- **仕組み**: バッチ（= 行の帯）を N 本のワーカースレッドに順番に渡し、結果は投げた順に取り出す（行の順番は
+  そのまま）。各ワーカーは自分専用のハンドル（`wsi.reopen()` で開き直した openslide / tifffile）を持つ。
+  openslide も tifffile もデコード中は GIL を離すので本当に並列に走る。帯の読み出し・RGBA→RGB・パッチへの
+  切り分け・白判定・バッチの `np.array` 化まで全部ワーカー側でやり、消費側（GPU に渡すスレッド）は受け取るだけ。
+  整列読み（§10.3）で同じタイル行にかかるバッチは同じワーカーにまとめて渡すので、タイル行のデコードは 1 回のまま。
+- **メモリ**: 同時に抱えるのは「ワーカー数 + 2」グループまで（先読み 2）。1 グループ ≈ 全幅の帯 1 本（整列時は
+  タイル行ぶん）とそのパッチ。256 px の帯は幅 70,000 px のスライドで約 54 MB なので、4 ワーカーで数百 MB 程度。
+  加えてワーカーごとに openslide ハンドル（とそのタイルキャッシュ）が 1 つずつ。
+- **止め方**: キャンセル（`should_cancel` → `Cancelled`）・例外・途中で `break` したときは、まだ始まっていない
+  読みを取り消し、読み中のもの（ワーカーごとに最大 1 グループ）を待ってからスレッドを畳みハンドルを閉じる。
+  ワーカーで起きた例外はその行の順番で消費側に上がる。ついでに `PrefetchReader` も、消費側が途中でやめると
+  生産スレッドが満杯のキューで止まったまま中の読み手を閉じなかったのを直した。
+- **同一性**: パッチ・座標（= 白判定の採否）・進捗メッセージが 1 スレッドと同じことをテストで確かめた（合成
+  ピラミッド × パッチ 64/48/128 × バッチ 16/45/200 × ワーカー 2/4、`iter_rows`、PNG）。実スライドは
+  **全スライド**を 1 / 4 ワーカーで読み比べて一致（`WT_TEST_WSI`: 7akahdcu.ndpi、24mumnvq.ndpi、CMU-1.svs、
+  7akahdcu.pyramid.tif）。extract の特徴量（gigapath-flash、GPU）も 1 / 2 / 4 ワーカーで**ビット一致**
+  （7akahdcu 4,210 × 384、24mumnvq 27,483 × 384、pyramid.tif 2 本も一致）。
+
+条件は §10 と同じ（RTX 3090、Ryzen 9 5950X 16 コア 32 スレッド、SSD warm、gigapath-flash、バッチ 256、ptp 白判定、
+`prefetch=1`、整列あり）。計測中 GPU は他に使われていない（`nvidia-smi`、vision の compute-jobs は待機中）。
+
+読み手だけ（格子パッチ/s = 白で捨てた分も含む。7akahdcu は全スライド、24mumnvq は 15 s で打ち切り）:
+
+| ワーカー | 7akahdcu NDPI | 24mumnvq NDPI | 7akahdcu pyramid | 24mumnvq pyramid |
+|---:|---:|---:|---:|---:|
+| 1 | 1,568（CPU 12.2 s） | 1,365 | 3,570 | 3,259 |
+| 2 | 2,547 | 2,160 | 5,723 | 5,172 |
+| 4 | **3,597**（CPU 16.7 s） | **3,083** | 7,466 | 6,960 |
+| 6 / 8 | 4,085 / 4,278 | | | |
+
+end-to-end（`FeatureExtractionCommand`、パッチ処理フェーズの秒数。GPU の時間は `infer` の合計）:
+
+| | ワーカー 1 | 2 | 4 | うち GPU（4 のとき） |
+|---|---:|---:|---:|---:|
+| 7akahdcu NDPI（残 4,210） | 12.5 s | 7.5 s | **5.2 s** | 4.1 s |
+| 24mumnvq NDPI（残 27,483） | 37.8 s | 24.5 s | **16.6 s** | 15.8 s |
+| 7akahdcu pyramid（残 4,216） | 5.8 s | | **2.9 s** | 2.7 s |
+| 24mumnvq pyramid（残 27,456） | 17.3 s | | **13.5 s** | ≈ 14 s |
+
+結論（平たく）:
+
+- **原本 NDPI の extract は 2.3〜2.4 倍速くなり、GPU が律速になった。** 24mumnvq は 16.6 s のうち 15.8 s GPU が
+  働いている（以前は 38 s 中 15 s）。これ以上速くするには GPU 側（モデル・バッチ・GPU 数）を触るしかない。
+- 読み手だけなら 4 ワーカーで 2.3 倍。openslide のデコードが素直に並列化した。CPU 時間の合計は 12 → 17 s と
+  少し増える（スレッド間の受け渡しとハンドルごとのキャッシュ）。6〜8 ワーカーでも 1.1〜1.2 倍しか伸びず、
+  GPU の 2,370 パッチ/s はもう超えているので既定は 4 で十分。
+- **pyramid.tif との差はほぼ消えた**（24mumnvq: 原本 16.6 s vs pyramid 13.5 s。以前は 38 vs 17 s）。extract を
+  速くするためだけに入力を pyramid.tif に替える必要は無い（特徴量が変わる §10.4 の欠点だけが残る）。
+- CPU はワーカー数ぶん使う。vision の compute のように配信（タイル）と同じ機械で extract を回すときは
+  `read_workers` を下げれば従来と同じ負荷に戻せる（結果は変わらない）。
+
+再実行:
+
+```bash
+# 読み手（ワーカー数ごと）と end-to-end（GPU。先に nvidia-smi で空きを確認）
+uv run python scripts/bench_pyramid.py extract a.ndpi a.pyramid.tif --parts reader --align on --read-workers 1,2,4 --budget 15
+uv run python scripts/bench_pyramid.py extract a.ndpi --parts e2e --read-workers 1,4 --budget 60
+# 特徴量の一致（bit_identical）
+uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.ndpi.w1.h5 data/bench/extract/a.ndpi.w4.h5
+# 全スライドのパッチ一致（1 vs 4 ワーカー）
+WT_TEST_WSI=a.ndpi:b.svs uv run pytest tests/test_patch_reader.py -k parallel_reads_match_on_real
 ```
 
 ## 付録: 全結果（2026-09-24、vision の旧スクリプトの `report` 出力）

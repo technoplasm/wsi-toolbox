@@ -28,10 +28,11 @@ Feature extraction (GPU, separate from ``run``; check ``nvidia-smi`` first -- no
 using the GPU) splits ``FeatureExtractionCommand`` into its two halves and the whole:
 
 - extract --parts reader  ``get_patch_reader`` (prefetch thread + ptp white check) alone, patches/s,
-                          with and without tile-aligned strip reads (``--align both``)
+                          with and without tile-aligned strip reads (``--align both``), per
+                          ``--read-workers`` (WSIPatchReader read threads, e.g. 1,2,4)
 - extract --parts model   ``_GPUWorker.infer`` on synthetic uint8 batches (H2D + normalise + forward
                           + D2H) and the bare forward pass
-- extract --parts e2e     ``FeatureExtractionCommand`` itself (cancelled after ``--budget`` s), with
+- extract --parts e2e     ``FeatureExtractionCommand`` itself per ``--read-workers`` (cancelled after ``--budget`` s), with
                           the time spent inside ``infer`` ("GPU busy") vs the patch-processing phase
 - extract-compare A.h5 B.h5   cosine similarity of the features of the same coordinates (e.g. the
                           original vs its pyramid.tif) and k-means(10) cluster agreement
@@ -52,10 +53,10 @@ Usage (repository root)::
     uv run python scripts/bench_pyramid.py info data/bench/src/Aperio_CMU-1.svs
     uv run python scripts/bench_pyramid.py report data/bench/results.jsonl [--run RUN_ID]
 
-    # feature extraction: reader vs GPU vs end-to-end (writes data/bench/extract/<name>.h5)
+    # feature extraction: reader vs GPU vs end-to-end (writes data/bench/extract/<name>.w<N>.h5)
     uv run python scripts/bench_pyramid.py extract slide.ndpi slide.pyramid.tif --parts reader,model,e2e
-    uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/slide.ndpi.h5 \\
-        data/bench/extract/slide.pyramid.tif.h5
+    uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/slide.ndpi.w4.h5 \\
+        data/bench/extract/slide.pyramid.tif.w4.h5
 """
 
 from __future__ import annotations
@@ -494,7 +495,7 @@ def cmd_patches(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _extract_reader(path: Path, align: bool, budget: float) -> dict:
+def _extract_reader(path: Path, align: bool, budget: float, workers: int) -> dict:
     """The patch reader exactly as FeatureExtractionCommand builds it, consumed as fast as possible."""
     reader = get_patch_reader(
         h5_path=str(BENCH_DIR / "extract" / "none.h5"),  # never exists: forces the WSI reader
@@ -503,6 +504,7 @@ def _extract_reader(path: Path, align: bool, budget: float) -> dict:
         target_mpp=TARGET_MPP,
         white_detector=create_white_detector("ptp"),
         prefetch=1,
+        read_workers=workers,
     )
     inner = reader.reader
     if not align:
@@ -522,6 +524,7 @@ def _extract_reader(path: Path, align: bool, budget: float) -> dict:
         "reader": type(inner.wsi).__name__,
         "tile_h": inner._native_tile_height(),
         "align": inner._align,
+        "read_workers": inner.read_workers,
         "grid_done": grid,
         "grid_total": inner.total_patches,
         "kept": kept,
@@ -579,24 +582,27 @@ def _extract_model(preset: str, device: str, budget: float) -> list[dict]:
     return out
 
 
-def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: Path) -> dict:
+def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: Path, workers: int) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
-    h5 = out_dir / f"{path.name}.h5"
+    h5 = out_dir / f"{path.name}.w{workers}.h5"
     marks: dict[str, float] = {}
     t0 = time.perf_counter()
 
     def sink(ev) -> None:
         marks.setdefault(ev.phase, time.perf_counter())
 
-    cmd = FeatureExtractionCommand(model=preset, preset=preset, device=device, batch_size=BATCH_SIZE, overwrite=True)
+    cmd = FeatureExtractionCommand(
+        model=preset, preset=preset, device=device, batch_size=BATCH_SIZE, overwrite=True, read_workers=workers
+    )
     try:
         res = cmd(str(h5), str(path), on_progress=sink, should_cancel=lambda: time.perf_counter() - t0 > budget)
     except Cancelled:
-        return {"part": "e2e", "file": str(path), "cancelled_after_s": budget}
+        return {"part": "e2e", "file": str(path), "read_workers": workers, "cancelled_after_s": budget}
     proc = marks["Writing"] - marks["Processing patches"]
     return {
         "part": "e2e",
         "h5": str(h5),
+        "read_workers": workers,
         "kept": res.patch_count,
         "grid": res.total_patches,
         "init_s": round(marks["Processing patches"] - marks.get("Initializing model", t0), 2),
@@ -609,21 +615,21 @@ def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: P
 
 def cmd_extract(args) -> None:
     parts = set(args.parts.split(","))
+    workers_list = [int(w) for w in args.read_workers.split(",")]
     if "model" in parts:
         for rec in _extract_model(args.preset, args.device, args.budget):
             print(json.dumps(rec), flush=True)
     for f in args.files:
         path = Path(f)
         if "reader" in parts:
-            for align in {"both": (False, True), "on": (True,), "off": (False,)}[args.align]:
-                print(json.dumps({"file": path.name, **_extract_reader(path, align, args.budget)}), flush=True)
+            for workers in workers_list:
+                for align in {"both": (False, True), "on": (True,), "off": (False,)}[args.align]:
+                    rec = _extract_reader(path, align, args.budget, workers)
+                    print(json.dumps({"file": path.name, **rec}), flush=True)
         if "e2e" in parts:
-            print(
-                json.dumps(
-                    {"file": path.name, **_extract_e2e(path, args.preset, args.device, args.budget, Path(args.out))}
-                ),
-                flush=True,
-            )
+            for workers in workers_list:
+                rec = _extract_e2e(path, args.preset, args.device, args.budget, Path(args.out), workers)
+                print(json.dumps({"file": path.name, **rec}), flush=True)
 
 
 def cmd_extract_compare(args) -> None:
@@ -659,6 +665,7 @@ def cmd_extract_compare(args) -> None:
                 "kept_a": len(coords[0]),
                 "kept_b": len(coords[1]),
                 "common": len(pairs),
+                "bit_identical": coords[0] == coords[1] and np.array_equal(feats[0], feats[1]),
                 "cos_mean": round(float(cos.mean()), 4),
                 "cos_min": round(float(q[0]), 4),
                 "cos_p1": round(float(q[1]), 4),
@@ -1004,7 +1011,8 @@ def main() -> None:
     a.add_argument("--preset", default="gigapath-flash")
     a.add_argument("--device", default="cuda:0")
     a.add_argument("--budget", type=float, default=30.0, help="seconds per part and file")
-    a.add_argument("--out", default=str(BENCH_DIR / "extract"), help="e2e writes <out>/<file name>.h5")
+    a.add_argument("--out", default=str(BENCH_DIR / "extract"), help="e2e writes <out>/<file name>.w<N>.h5")
+    a.add_argument("--read-workers", default="1,4", help="WSIPatchReader read threads to compare, e.g. 1,2,4")
     a.set_defaults(fn=cmd_extract)
 
     a = sp.add_parser("extract-compare", help="feature similarity of two extract H5s at the same coordinates")

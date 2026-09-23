@@ -9,9 +9,13 @@ Provides unified interface for reading patches regardless of source:
 """
 
 import logging
+import os
+import threading
 import time
-from queue import Queue
-from threading import Thread
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from queue import Empty, Queue
+from threading import Event, Thread
 from typing import Iterator, Protocol, runtime_checkable
 
 import h5py
@@ -23,6 +27,27 @@ logger = logging.getLogger(__name__)
 
 # Largest native tile height WSIPatchReader aligns its strip reads to (see align_reads).
 MAX_ALIGN_ROWS = 2048
+# Row groups WSIPatchReader keeps read ahead of the consumer beyond one per worker (see read_workers).
+READ_AHEAD = 2
+
+
+def default_read_workers() -> int:
+    """Read worker threads WSIPatchReader uses when not told: half the CPUs, at most 4."""
+    return max(1, min(4, (os.cpu_count() or 2) // 2))
+
+
+def _can_reopen(wsi) -> bool:
+    fn = getattr(type(wsi), "reopen", None)
+    return fn is not None and fn is not PyramidalWSIFile.reopen
+
+
+class _StripCache:
+    """The last tile-aligned strip one reading thread decoded: (y0, y1, pixels) or None."""
+
+    __slots__ = ("strip",)
+
+    def __init__(self):
+        self.strip: tuple[int, int, np.ndarray] | None = None
 
 
 @runtime_checkable
@@ -94,6 +119,7 @@ class WSIPatchReader:
         target_mpp: float = 0.5,
         white_detector=None,
         align_reads: bool = True,
+        read_workers: int | None = None,
     ):
         """
         Initialize patch reader.
@@ -107,12 +133,25 @@ class WSIPatchReader:
                 last one, so a tile taller than a patch row (512 px tiles of a pyramid.tif vs
                 256 px patches) is decoded once instead of once per patch row. The patches are
                 the same either way; False reads exactly the requested rows (for comparison).
+            read_workers: Threads that read, split and white-check row strips in parallel, each
+                with its own file handle (``wsi.reopen()``); openslide / tifffile decode without
+                the GIL, so an NDPI original (decoded on one thread by openslide) reads several
+                times faster. Rows are still yielded in order, and the patches, coordinates and
+                keep/drop decisions are exactly those of one thread. At most ``read_workers +
+                READ_AHEAD`` row groups are in flight (a group is one iteration chunk, or the
+                chunks sharing a native tile row), so memory stays bounded at roughly that many
+                full-width strips plus their patches (a 256 px strip of a 70,000 px wide slide
+                is ~54 MB). None = ``default_read_workers()`` (min(4, CPUs / 2)); 1 = read on
+                the consuming thread with no extra threads (the old behaviour). Files that cannot
+                be reopened fall back to 1.
         """
         self.wsi = wsi
         self.patch_size = patch_size
         self.target_mpp = target_mpp
         self.white_detector = white_detector
         self.align_reads = align_reads
+        workers = default_read_workers() if read_workers is None else max(1, int(read_workers))
+        self.read_workers = workers if workers == 1 or _can_reopen(wsi) else 1
 
         # Find best level for target mpp
         self.level = find_best_level_for_mpp(wsi, target_mpp)
@@ -133,18 +172,21 @@ class WSIPatchReader:
         # pathological layout (one strip for the whole level) cannot make the cached strip huge.
         tile_h = self._native_tile_height()
         self._align = tile_h if align_reads and patch_size % tile_h != 0 and tile_h <= MAX_ALIGN_ROWS else 1
-        self._strip: tuple[int, int, np.ndarray] | None = None  # (y0, y1, pixels) of the last aligned read
+        self._cache = _StripCache()  # the last aligned read of the single-threaded path
 
         logger.debug(
             f"WSIPatchReader: level={self.level.index}, mpp={self.actual_mpp:.4f}, "
-            f"grid={self.cols}x{self.rows}, patch_size={patch_size}, tile_h={tile_h}, align={self._align}"
+            f"grid={self.cols}x{self.rows}, patch_size={patch_size}, tile_h={tile_h}, align={self._align}, "
+            f"read_workers={self.read_workers}"
         )
 
     def _native_tile_height(self) -> int:
         fn = getattr(self.wsi, "native_tile_height", None)  # absent on StandardImage
         return max(1, int(fn(self.level.index))) if fn is not None else 1
 
-    def _read_row_strip(self, start_row: int, num_rows: int) -> np.ndarray:
+    def _read_row_strip(
+        self, start_row: int, num_rows: int, wsi: PyramidalWSIFile | None = None, cache: _StripCache | None = None
+    ) -> np.ndarray:
         """
         Read a horizontal strip of rows from WSI.
 
@@ -155,6 +197,8 @@ class WSIPatchReader:
         Args:
             start_row: Starting row index
             num_rows: Number of rows to read
+            wsi: Handle to read with (a read worker's own); None = ``self.wsi``
+            cache: Aligned-strip cache of the reading thread; None = the single-threaded one
 
         Returns:
             np.ndarray: Image strip (H, W, 3)
@@ -166,18 +210,20 @@ class WSIPatchReader:
         # Clamp height to bounds
         h = min(h, self.height - y)
 
+        wsi = self.wsi if wsi is None else wsi
+        cache = self._cache if cache is None else cache
         A = self._align
         if A <= 1:
-            return self.wsi._read_native_region(self.level.index, x=0, y=y, w=self.width, h=h)
+            return wsi._read_native_region(self.level.index, x=0, y=y, w=self.width, h=h)
 
-        cached = self._strip
+        cached = cache.strip
         if cached is None or not (cached[0] <= y and y + h <= cached[1]):
             y0 = y // A * A
             y1 = min(-(-(y + h) // A) * A, self.level.height)
-            cached = self._strip = (
+            cached = cache.strip = (
                 y0,
                 y1,
-                self.wsi._read_native_region(self.level.index, x=0, y=y0, w=self.width, h=y1 - y0),
+                wsi._read_native_region(self.level.index, x=0, y=y0, w=self.width, h=y1 - y0),
             )
         return cached[2][y - cached[0] : y - cached[0] + h]
 
@@ -231,20 +277,7 @@ class WSIPatchReader:
         Yields:
             (batch, coords, desc)
         """
-        rows_per_batch = max(1, batch_size // self.cols)
-        patches_per_batch = self.cols * rows_per_batch
-
-        row = 0
-        while row < self.rows:
-            num_rows = min(rows_per_batch, self.rows - row)
-            strip = self._read_row_strip(row, num_rows)
-            patches, coords = self._strip_to_patches(strip, row)
-            row += num_rows
-
-            # Always yield (empty batch has shape (0, H, W, 3))
-            batch = np.array(patches) if patches else np.empty((0, self.patch_size, self.patch_size, 3), dtype=np.uint8)
-            desc = f"{len(patches)}/{patches_per_batch}"
-            yield batch, coords, desc
+        yield from self._iter_chunks(max(1, batch_size // self.cols), stack=True)
 
     def iter_rows(self, rows_per_read: int = 1) -> Iterator[tuple[list[np.ndarray], list[tuple[int, int]], str]]:
         """
@@ -256,17 +289,87 @@ class WSIPatchReader:
         Yields:
             (patches, coords, desc)
         """
-        patches_per_iter = self.cols * rows_per_read
+        yield from self._iter_chunks(rows_per_read, stack=False)
 
-        row = 0
-        while row < self.rows:
-            num_rows = min(rows_per_read, self.rows - row)
-            strip = self._read_row_strip(row, num_rows)
-            patches, coords = self._strip_to_patches(strip, row)
-            row += num_rows
+    def _read_chunk(self, row: int, num_rows: int, rows_per_chunk: int, stack: bool, wsi, cache: _StripCache):
+        """Read, split and white-check one chunk of patch rows (runs on a read worker when parallel)."""
+        strip = self._read_row_strip(row, num_rows, wsi, cache)
+        patches, coords = self._strip_to_patches(strip, row)
+        desc = f"{len(patches)}/{self.cols * rows_per_chunk}"
+        if not stack:
+            return patches, coords, desc
+        # Always a batch (empty batch has shape (0, H, W, 3))
+        batch = np.array(patches) if patches else np.empty((0, self.patch_size, self.patch_size, 3), dtype=np.uint8)
+        return batch, coords, desc
 
-            desc = f"{len(patches)}/{patches_per_iter}"
-            yield patches, coords, desc
+    def _group_chunks(self, chunks: list[tuple[int, int]]) -> list[list[tuple[int, int]]]:
+        """Group consecutive chunks that share a native tile row, so one worker decodes that row once.
+
+        Without alignment every chunk is its own group. The chain is capped at the chunks one
+        aligned read spans (plus one); splitting a longer chain only costs a re-decode.
+        """
+        A = self._align
+        if A <= 1:
+            return [[c] for c in chunks]
+        S = self.patch_size
+        cap = -(-A // (chunks[0][1] * S)) + 1 if chunks else 1
+        groups: list[list[tuple[int, int]]] = []
+        prev_last_tile_row = -1
+        for row, n in chunks:
+            y, y_end = row * S, (row + n) * S
+            if groups and y // A == prev_last_tile_row and len(groups[-1]) < cap:
+                groups[-1].append((row, n))
+            else:
+                groups.append([(row, n)])
+            prev_last_tile_row = (y_end - 1) // A
+        return groups
+
+    def _iter_chunks(self, rows_per_chunk: int, stack: bool):
+        chunks = [(r, min(rows_per_chunk, self.rows - r)) for r in range(0, self.rows, rows_per_chunk)]
+        if self.read_workers <= 1:
+            for row, n in chunks:
+                yield self._read_chunk(row, n, rows_per_chunk, stack, self.wsi, self._cache)
+            return
+
+        # Parallel: each group of chunks is read by one worker thread with that thread's own handle;
+        # results are taken in submission order, so rows come out in order.
+        local = threading.local()
+        handles: list = []
+        lock = threading.Lock()
+
+        def work(group):
+            wsi = getattr(local, "wsi", None)
+            if wsi is None:
+                wsi = local.wsi = self.wsi.reopen()
+                with lock:
+                    handles.append(wsi)
+            cache = _StripCache()
+            return [self._read_chunk(row, n, rows_per_chunk, stack, wsi, cache) for row, n in group]
+
+        groups = iter(self._group_chunks(chunks))
+        in_flight = self.read_workers + READ_AHEAD
+        executor = ThreadPoolExecutor(max_workers=self.read_workers, thread_name_prefix="wt-read")
+        pending: deque = deque()
+        try:
+            for group in groups:
+                pending.append(executor.submit(work, group))
+                if len(pending) >= in_flight:
+                    break
+            while pending:
+                results = pending.popleft().result()  # re-raises a worker's exception here
+                group = next(groups, None)
+                if group is not None:
+                    pending.append(executor.submit(work, group))
+                yield from results
+        finally:
+            # Stopped early (consumer gone, cancelled, error): drop what has not started and wait
+            # for the reads in progress (at most one group per worker), then close the handles.
+            for f in pending:
+                f.cancel()
+            executor.shutdown(wait=True)
+            for h in handles:
+                if h is not self.wsi:
+                    h.close()
 
     def get_patch_at(self, col: int, row: int) -> np.ndarray:
         """
@@ -477,27 +580,34 @@ class PrefetchReader:
         """
         queue: Queue = Queue(maxsize=self.prefetch)
         sentinel = object()
-        error_holder: list[Exception] = []
+        error_holder: list[BaseException] = []
+        stop = Event()
 
         logger.debug(f"PrefetchReader: queue_size={self.prefetch}, batch_size={batch_size}")
 
         def producer():
+            items = self.reader.iter_batches(batch_size)
             try:
-                for batch_idx, item in enumerate(self.reader.iter_batches(batch_size)):
+                for batch_idx, item in enumerate(items):
                     t0 = time.perf_counter()
                     queue.put(item)
+                    if stop.is_set():
+                        break
                     wait_ms = (time.perf_counter() - t0) * 1000
                     patches = len(item[1])
                     logger.debug(
                         f"prefetch: put batch {batch_idx} ({patches} patches), "
                         f"queue={queue.qsize()}/{self.prefetch}, wait={wait_ms:.1f}ms"
                     )
-            except Exception as e:
+            except BaseException as e:
                 error_holder.append(e)
             finally:
+                # Close the inner reader here, on the thread that iterates it, so its own worker
+                # threads and file handles are released even when the consumer stops early.
+                items.close()
                 queue.put(sentinel)
 
-        thread = Thread(target=producer, daemon=True)
+        thread = Thread(target=producer, daemon=True, name="wt-prefetch")
         thread.start()
 
         batch_idx = 0
@@ -517,7 +627,15 @@ class PrefetchReader:
                 batch_idx += 1
                 yield batch, coords, desc
         finally:
-            thread.join(timeout=1)
+            # Consumer done or gone (cancel / exception): tell the producer to stop and keep the
+            # queue drained so its blocking put returns; it then closes the inner reader.
+            stop.set()
+            while thread.is_alive():
+                try:
+                    queue.get(timeout=0.1)
+                except Empty:
+                    pass
+            thread.join()
 
         # Re-raise any error from producer thread
         if error_holder:
@@ -531,6 +649,7 @@ def get_patch_reader(
     target_mpp: float = 0.5,
     white_detector=None,
     prefetch: int = 1,
+    read_workers: int | None = None,
 ) -> PatchReader:
     """
     Get appropriate patch reader (cache or WSI).
@@ -547,6 +666,7 @@ def get_patch_reader(
         target_mpp: Target mpp (default: 0.5)
         white_detector: White detector function for WSI
         prefetch: Number of batches to prefetch (0 to disable, default: 1)
+        read_workers: WSIPatchReader read threads (None = ``default_read_workers()``, 1 = none)
 
     Returns:
         PatchReader: CachePatchReader, WSIPatchReader, or PrefetchReader wrapper
@@ -574,6 +694,7 @@ def get_patch_reader(
             patch_size=patch_size,
             target_mpp=target_mpp,
             white_detector=white_detector,
+            read_workers=read_workers,
         )
 
     # Wrap with prefetching if enabled

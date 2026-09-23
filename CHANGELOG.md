@@ -56,8 +56,18 @@ Breaking release: progress, preset and device become command arguments. Migratio
 - `FeatureExtractionCommand` uploads the uint8 batch and scales / normalises it on the device, and copies only the
   CLS token back (all tokens only with `with_latent`). Features are bit-identical; `infer` for GigaPath-Flash on an
   RTX 3090 goes from 1,370 to 2,370 patches/s (the CPU float conversion cost as much as the forward pass).
+- `WSIPatchReader` reads row strips on a small pool of worker threads (`read_workers=`, default
+  `min(4, CPUs // 2)`, `1` = the old single-threaded path), each with its own file handle (new
+  `PyramidalWSIFile.reopen()` / `close()`); splitting, the white check and batch stacking run on the workers too.
+  Rows still come out in order, at most `read_workers + 2` row groups in flight. Same patches, keep/drop decisions
+  and features bit for bit. Extract on NDPI originals is no longer reader-bound: reader 1,370-1,570 -> 3,080-3,600
+  grid patches/s, extract of a 55k-patch NDPI 37.8 s -> 16.6 s (GPU-bound). Also on `get_patch_reader`,
+  `FeatureExtractionCommand` and CLI `extract --read-workers`.
 
 ### Fixed
+
+- `PrefetchReader` stopped early (cancel, exception) now stops its producer thread and closes the inner reader
+  instead of leaving it blocked on a full queue.
 
 - DZI tiles always have the spec's size. Native levels whose downsample is only approximately 2^k (SVS 4.0001, odd
   sizes) gave 255 px and short edge tiles; overview levels read past the coarsest native level and came out

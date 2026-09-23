@@ -240,6 +240,17 @@ class PyramidalWSIFile(WSIFile):
         """
         return 1
 
+    def reopen(self) -> "PyramidalWSIFile":
+        """A new, independent instance on the same file (its own file handle and caches).
+
+        For reading one slide from several threads: an instance is used by one thread at a
+        time, so each thread opens its own (``WSIPatchReader`` read workers do this).
+        """
+        raise NotImplementedError(f"{type(self).__name__} cannot be reopened")
+
+    def close(self) -> None:
+        """Release the file handle (the instance must not be used afterwards)."""
+
     # DZI geometry and tiles live in wsi_toolbox.dzi; these methods are thin wrappers.
 
     def get_dzi_max_level(self) -> int:
@@ -432,6 +443,12 @@ class PyramidalTiffFile(PyramidalWSIFile):
         page = self._page(self._levels[level_idx].index)
         return page.tilelength if page.is_tiled else 1
 
+    def reopen(self) -> "PyramidalTiffFile":
+        return PyramidalTiffFile(self.path)
+
+    def close(self) -> None:
+        self.tif.close()
+
     # === page reading ===
 
     def _page(self, page_index: int) -> tifffile.TiffPage:
@@ -521,6 +538,7 @@ class OpenSlideFile(PyramidalWSIFile):
     """OpenSlide compatible file reader"""
 
     def __init__(self, path):
+        self.path = path
         self.wsi = OpenSlide(path)
         self.prop = dict(self.wsi.properties)
 
@@ -540,6 +558,12 @@ class OpenSlideFile(PyramidalWSIFile):
             return max(1, int(self.prop[f"openslide.level[{level_idx}].tile-height"]))
         except (KeyError, ValueError):
             return 1
+
+    def reopen(self) -> "OpenSlideFile":
+        return OpenSlideFile(self.path)
+
+    def close(self) -> None:
+        self.wsi.close()
 
     def get_mpp(self):
         return float(self.prop["openslide.mpp-x"])
@@ -607,6 +631,13 @@ class StandardImage(WSIFile):
         if level_idx != 0:
             raise ValueError(f"StandardImage has a single level, got level {level_idx}")
         return self.read_region((x, y, w, h))
+
+    def reopen(self) -> "StandardImage":
+        """The image is an in-memory array that is only sliced, so threads can share it."""
+        return self
+
+    def close(self) -> None:
+        pass
 
 
 def _is_pyramidal_tiff(path: str) -> bool:
