@@ -24,6 +24,18 @@ The page cache is prepared by the parent before each child:
 No GPU, no model. Results are appended to a JSONL file and printed as Markdown tables.
 Methodology and past results: ``_docs/benchmark-pyramid-dzi.md``.
 
+Feature extraction (GPU, separate from ``run``; check ``nvidia-smi`` first -- nothing else should be
+using the GPU) splits ``FeatureExtractionCommand`` into its two halves and the whole:
+
+- extract --parts reader  ``get_patch_reader`` (prefetch thread + ptp white check) alone, patches/s,
+                          with and without tile-aligned strip reads (``--align both``)
+- extract --parts model   ``_GPUWorker.infer`` on synthetic uint8 batches (H2D + normalise + forward
+                          + D2H) and the bare forward pass
+- extract --parts e2e     ``FeatureExtractionCommand`` itself (cancelled after ``--budget`` s), with
+                          the time spent inside ``infer`` ("GPU busy") vs the patch-processing phase
+- extract-compare A.h5 B.h5   cosine similarity of the features of the same coordinates (e.g. the
+                          original vs its pyramid.tif) and k-means(10) cluster agreement
+
 Usage (repository root)::
 
     # OpenSlide public test slides -> data/bench/src (1.8 GB for all; --only to pick)
@@ -39,6 +51,11 @@ Usage (repository root)::
 
     uv run python scripts/bench_pyramid.py info data/bench/src/Aperio_CMU-1.svs
     uv run python scripts/bench_pyramid.py report data/bench/results.jsonl [--run RUN_ID]
+
+    # feature extraction: reader vs GPU vs end-to-end (writes data/bench/extract/<name>.h5)
+    uv run python scripts/bench_pyramid.py extract slide.ndpi slide.pyramid.tif --parts reader,model,e2e
+    uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/slide.ndpi.h5 \\
+        data/bench/extract/slide.pyramid.tif.h5
 """
 
 from __future__ import annotations
@@ -62,13 +79,22 @@ import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
+import h5py
+import numpy as np
 import openslide
 import tifffile
+import torch
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 import wsi_toolbox
+from wsi_toolbox.commands import FeatureExtractionCommand
+from wsi_toolbox.commands.feature_extraction import _GPUWorker
 from wsi_toolbox.commands.pyramid import DEFAULT_CONCURRENCY, PyramidCommand, read_pyramid_info
 from wsi_toolbox.dzi import DziGenerator, encode_tile
-from wsi_toolbox.patch_reader import WSIPatchReader
+from wsi_toolbox.patch_reader import WSIPatchReader, get_patch_reader
+from wsi_toolbox.presets.tile import get_tile_preset
+from wsi_toolbox.progress import Cancelled
 from wsi_toolbox.utils.white import create_white_detector
 from wsi_toolbox.wsi_files import create_wsi_file
 
@@ -464,6 +490,189 @@ def cmd_patches(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# extract: reader vs GPU vs end-to-end (GPU; not part of `run`)
+# ---------------------------------------------------------------------------
+
+
+def _extract_reader(path: Path, align: bool, budget: float) -> dict:
+    """The patch reader exactly as FeatureExtractionCommand builds it, consumed as fast as possible."""
+    reader = get_patch_reader(
+        h5_path=str(BENCH_DIR / "extract" / "none.h5"),  # never exists: forces the WSI reader
+        wsi_path=str(path),
+        patch_size=PATCH_SIZE,
+        target_mpp=TARGET_MPP,
+        white_detector=create_white_detector("ptp"),
+        prefetch=1,
+    )
+    inner = reader.reader
+    if not align:
+        inner._align = 1
+    rows_per_batch = max(1, BATCH_SIZE // inner.cols)
+    deadline = time.perf_counter() + budget
+    grid = kept = 0
+    with Meter(path) as m:
+        for _batch, coords, _desc in reader.iter_batches(BATCH_SIZE):
+            grid += inner.cols * rows_per_batch
+            kept += len(coords)
+            if time.perf_counter() > deadline:
+                break
+    grid = min(grid, inner.total_patches)
+    return {
+        "part": "reader",
+        "reader": type(inner.wsi).__name__,
+        "tile_h": inner._native_tile_height(),
+        "align": inner._align,
+        "grid_done": grid,
+        "grid_total": inner.total_patches,
+        "kept": kept,
+        "grid_per_s": round(grid / m.wall, 1),
+        "kept_per_s": round(kept / m.wall, 1),
+        **m.as_dict(),
+    }
+
+
+def _extract_model(preset: str, device: str, budget: float) -> list[dict]:
+    tp = get_tile_preset(preset)
+    mean = torch.tensor(tp.norm_mean).view(1, 3, 1, 1)
+    std = torch.tensor(tp.norm_std).view(1, 3, 1, 1)
+    worker = _GPUWorker(tp.create_model().eval(), device, mean, std, tp.extract_fn, False)
+    rng = np.random.default_rng(0)
+    out = []
+    try:
+        for bs in (128, BATCH_SIZE):
+            batch = rng.integers(0, 256, (bs, PATCH_SIZE, PATCH_SIZE, 3), dtype=np.uint8)
+            for _ in range(3):
+                worker.infer(batch)
+            n, t0 = 0, time.perf_counter()
+            while time.perf_counter() - t0 < budget / 4:
+                worker.infer(batch)
+                n += bs
+            infer_s = time.perf_counter() - t0
+            x = torch.randn(bs, 3, PATCH_SIZE, PATCH_SIZE, device=device).contiguous(memory_format=torch.channels_last)
+            with torch.inference_mode(), torch.autocast(device_type=worker.device_type, dtype=worker.autocast_dtype):
+                fwd = (
+                    (lambda: worker.model.forward_features(x))
+                    if tp.extract_fn is None
+                    else (lambda: tp.extract_fn(worker.model, x))
+                )
+                for _ in range(3):
+                    fwd()
+                torch.cuda.synchronize()
+                k, t1 = 0, time.perf_counter()
+                while time.perf_counter() - t1 < budget / 4:
+                    fwd()
+                    k += bs
+                torch.cuda.synchronize()
+                fwd_s = time.perf_counter() - t1
+            out.append(
+                {
+                    "part": "model",
+                    "preset": preset,
+                    "device": torch.cuda.get_device_name(device) if device.startswith("cuda") else device,
+                    "batch": bs,
+                    "infer_per_s": round(n / infer_s, 1),
+                    "forward_per_s": round(k / fwd_s, 1),
+                }
+            )
+    finally:
+        worker.cleanup()
+    return out
+
+
+def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: Path) -> dict:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    h5 = out_dir / f"{path.name}.h5"
+    marks: dict[str, float] = {}
+    t0 = time.perf_counter()
+
+    def sink(ev) -> None:
+        marks.setdefault(ev.phase, time.perf_counter())
+
+    cmd = FeatureExtractionCommand(model=preset, preset=preset, device=device, batch_size=BATCH_SIZE, overwrite=True)
+    try:
+        res = cmd(str(h5), str(path), on_progress=sink, should_cancel=lambda: time.perf_counter() - t0 > budget)
+    except Cancelled:
+        return {"part": "e2e", "file": str(path), "cancelled_after_s": budget}
+    proc = marks["Writing"] - marks["Processing patches"]
+    return {
+        "part": "e2e",
+        "h5": str(h5),
+        "kept": res.patch_count,
+        "grid": res.total_patches,
+        "init_s": round(marks["Processing patches"] - marks.get("Initializing model", t0), 2),
+        "processing_s": round(proc, 2),
+        "gpu_busy_s": round(res.batch_time_mean * res.total_batches, 2),
+        "kept_per_s": round(res.patch_count / proc, 1),
+        "grid_per_s": round(res.total_patches / proc, 1),
+    }
+
+
+def cmd_extract(args) -> None:
+    parts = set(args.parts.split(","))
+    if "model" in parts:
+        for rec in _extract_model(args.preset, args.device, args.budget):
+            print(json.dumps(rec), flush=True)
+    for f in args.files:
+        path = Path(f)
+        if "reader" in parts:
+            for align in {"both": (False, True), "on": (True,), "off": (False,)}[args.align]:
+                print(json.dumps({"file": path.name, **_extract_reader(path, align, args.budget)}), flush=True)
+        if "e2e" in parts:
+            print(
+                json.dumps(
+                    {"file": path.name, **_extract_e2e(path, args.preset, args.device, args.budget, Path(args.out))}
+                ),
+                flush=True,
+            )
+
+
+def cmd_extract_compare(args) -> None:
+    feats, coords = [], []
+    for f in (args.a, args.b):
+        with h5py.File(f, "r") as h:
+            feats.append(h[f"{args.model}/features"][:])
+            coords.append([tuple(c) for c in h[f"{args.model}/coordinates"][:]])
+    index_b = {c: i for i, c in enumerate(coords[1])}
+    pairs = [(i, index_b[c]) for i, c in enumerate(coords[0]) if c in index_b]
+    ia = np.array([i for i, _ in pairs])
+    ib = np.array([j for _, j in pairs])
+    fa, fb = feats[0][ia], feats[1][ib]
+    na = fa / np.linalg.norm(fa, axis=1, keepdims=True)
+    nb = fb / np.linalg.norm(fb, axis=1, keepdims=True)
+    cos = (na * nb).sum(1)
+    # scale: how close is the nearest *other* patch of A, and does B's feature still find its own patch in A
+    rng = np.random.default_rng(0)
+    sample = rng.choice(len(na), min(500, len(na)), replace=False)
+    sim = na[sample] @ na.T
+    sim[np.arange(len(sample)), sample] = -1
+    self_nn = float((np.argmax(nb[sample] @ na.T, axis=1) == sample).mean())
+    scaler = StandardScaler().fit(fa)
+    km = KMeans(10, n_init=4, random_state=0).fit(scaler.transform(fa))
+    agree = float((km.labels_ == km.predict(scaler.transform(fb))).mean())
+    q = np.percentile(cos, [0, 1, 5, 50])
+    print(
+        json.dumps(
+            {
+                "kind": "extract-compare",
+                "a": args.a,
+                "b": args.b,
+                "kept_a": len(coords[0]),
+                "kept_b": len(coords[1]),
+                "common": len(pairs),
+                "cos_mean": round(float(cos.mean()), 4),
+                "cos_min": round(float(q[0]), 4),
+                "cos_p1": round(float(q[1]), 4),
+                "cos_p5": round(float(q[2]), 4),
+                "cos_median": round(float(q[3]), 4),
+                "nearest_other_patch_cos_median": round(float(np.median(sim.max(1))), 4),
+                "b_nearest_is_same_patch": round(self_nn, 4),
+                "kmeans10_same_cluster": round(agree, 4),
+            }
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # run (parent): inputs -> pyramids -> cases -> JSONL + tables
 # ---------------------------------------------------------------------------
 
@@ -785,6 +994,24 @@ def main() -> None:
     a.add_argument("--no-white", action="store_true")
     a.add_argument("--engine", default="auto")
     a.set_defaults(fn=cmd_patches)
+
+    a = sp.add_parser("extract", help="feature extraction: reader / model / end-to-end (GPU)")
+    a.add_argument("files", nargs="*")
+    a.add_argument("--parts", default="reader,model,e2e")
+    a.add_argument(
+        "--align", choices=["both", "on", "off"], default="both", help="tile-aligned strip reads (reader part)"
+    )
+    a.add_argument("--preset", default="gigapath-flash")
+    a.add_argument("--device", default="cuda:0")
+    a.add_argument("--budget", type=float, default=30.0, help="seconds per part and file")
+    a.add_argument("--out", default=str(BENCH_DIR / "extract"), help="e2e writes <out>/<file name>.h5")
+    a.set_defaults(fn=cmd_extract)
+
+    a = sp.add_parser("extract-compare", help="feature similarity of two extract H5s at the same coordinates")
+    a.add_argument("a")
+    a.add_argument("b")
+    a.add_argument("--model", default="gigapath-flash", help="H5 storage key")
+    a.set_defaults(fn=cmd_extract_compare)
 
     args = p.parse_args()
     args.fn(args)

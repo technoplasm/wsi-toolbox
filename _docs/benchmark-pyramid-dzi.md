@@ -45,6 +45,11 @@ toolbox のコミット・マシンを添えて §9.1 の後に節（§10〜）�
   （約 1.6〜2 ms/パッチ）。白判定を速くした後（§7）は NDPI 1,491 / pyramid.tif 2,976 パッチ/s。白判定なしでは
   原本 1,800〜1,950 → pyramid 6,300 パッチ/s だが、パッチあたりの CPU は同じで、差は tifffile が 512 px タイルを
   並列デコードすることによる。
+- **特徴量抽出（extract）全体では pyramid.tif で約 2 倍**（§10）。NDPI 原本の extract は読み手（openslide の
+  1 スレッドデコード）律速で GPU が半分以上遊んでいる。512 px タイルへの整列読み（実装済み、パッチはビット一致）は
+  読み手の CPU を 30 % 減らすが、pyramid.tif の extract はもう GPU と釣り合っているので速度の伸びは小さい。
+  GPU 側の前処理（CPU での float 化・全トークンの転送）を直して `infer` が 1.7 倍になった方が効いた。
+  原本と pyramid.tif の特徴量はコサイン 0.97（k-means のクラスタ割り当ては 93 % 一致）。
 - **4 スレッド**: 1 ハンドル + ロックでは 1 スレッドと同値。スレッドごとにハンドルを貸すプールで原本（openslide）は
   約 3.2〜3.5 倍、pyramid.tif は改善前 1.6〜1.8 倍（GIL）→ 改善後 3.5 倍（§6、§7）。
 - **変換コスト**: `VIPS_CONCURRENCY=8` で **約 10 秒 / GB**（1.0 GB NDPI 10.4 s、3.4 GB NDPI 35 s）。
@@ -338,10 +343,11 @@ Playwright で負荷が揺れていたので、旧パッチ分割は負荷の低
 | NDPI の低・中倍率 | 同等 | 原本も 2 倍刻みのレベルを持つ |
 | 256 px タイルの Generic TIFF、MIRAX | 同等〜やや遅い | 元々タイル化されている / MIRAX は疎で空白は I/O 無し |
 | パッチ分割（extract の読み出し） | 1.1〜2 倍（白判定込み） | CPU 律速。ストレージは効かない |
+| extract 全体（GigaPath-Flash、RTX 3090） | 約 2 倍 | 原本 NDPI は読み手律速、pyramid.tif は GPU と釣り合う（§10） |
 | pyramid.tif を NFS に置く | 効果が落ちる | rsize / readahead 単位で読まれ読み出しバイトが 20〜35 倍 |
 
 - 配信用には「原本はどこに置いてもよい、pyramid.tif はローカル SSD」。変換は約 10 s/GB を 1 回払うだけ。
-- extract の入力は原本のまま（JPEG Q85 再圧縮で特徴量が変わる、速度の得が小さい）。
+- extract の入力は原本のまま（JPEG Q85 再圧縮で特徴量が変わる。速度は約 2 倍になるので切り替えは ken の判断、§10.5）。
 
 ## 9. 再実行（`scripts/bench_pyramid.py`）
 
@@ -404,6 +410,120 @@ uv run python scripts/bench_pyramid.py report data/bench/results.jsonl [--run 20
 |---|---:|---:|---:|---:|---:|---:|
 | Aperio_CMU-1 | 1.33 ms | 0.72 ms | 15 | 5 | 2,134 / 2,954 | 832 / 6,220 |
 | Hamamatsu_CMU-1 | 5.82 ms | 0.64 ms | 77 | 4 | 622 / 2,999 | 1,839 / 6,397 |
+
+## 10. 特徴量抽出（extract）: どこが律速か、pyramid.tif とタイル整列読み（2026-09-24）
+
+問い（ken）: extract は pyramid.tif で速くなるか。パッチ読みを 512 px のピラミッドタイルに揃える（256 px の
+パッチ 2 行を一度に読む / 512 タイルを丸ごと読んで割る）べきか。その最適化は予定にあるか。
+
+条件: RTX 3090（24 GB、計測中は他の GPU 利用なしを `nvidia-smi` で確認）、Ryzen 9 5950X、SSD warm、
+プリセット `gigapath-flash`（ViT-S/16、384 次元、256 px 入力のまま = 256 トークン + CLS）、vision と同じ
+`batch_size=256` / `target_mpp=0.5` / ptp 白判定 / `prefetch=1`。スライドは本番 NDPI 2 本（§3）とその pyramid.tif。
+`scripts/bench_pyramid.py extract` / `extract-compare`（§10.5）。別エージェントの作業で負荷が揺れていたので、
+旧 / 新の比較は交互に流した回の値。
+
+### 10.1 extract の中身（読み出し側）
+
+- **リサンプリングは無い。** `find_best_level_for_mpp` が target 0.5 に最も近いネイティブレベルを選び、そのまま
+  256 px に切る（0.4527 mpp の NDPI は level 0、40x の 0.22 mpp は level 1 = 0.44）。pyramid.tif も同じレベル・同じ
+  mpp・同じ格子になる。
+- **読み出しはもともとパッチ単位ではなく行単位。** `WSIPatchReader.iter_batches` は 1 バッチ = 全幅 × `256 // cols`
+  行（幅が 256 パッチ以上なら 1 行 = 256 px の帯）を 1 回の `_read_native_region` で読み、白判定して詰める。
+  なので「タイルを 4 回デコード」ではなく、512 px タイルの pyramid.tif で**各タイルを 2 回**（上半分の行と下半分の行で
+  1 回ずつ）デコードしていた。NDPI（openslide の `tile-height` 8 = 再開マーカの帯）と 256 px タイルの SVS は
+  256 px の帯にもともと揃っていて無駄は無い。
+- 読み手は 1 スレッド（prefetch スレッド 1 本、キュー 1 バッチ）で、GPU 推論（メインスレッド）と重なる。
+  白判定は読み手のスレッドでパッチごとに約 0.2 ms。
+
+### 10.2 分けて測った結果（新コード）
+
+| 部分 | 7akahdcu NDPI | 7akahdcu pyramid | 24mumnvq NDPI | 24mumnvq pyramid |
+|---|---:|---:|---:|---:|
+| 読み手だけ、格子パッチ/s（白で捨てた分も含む） | 1,714 | 3,061 → 3,468（整列） | 1,341 | 2,913 → 3,215（整列） |
+| 同、残るパッチ/s（組織率 22 % / 50 %） | 377 | 674 → 763 | 649 | 1,449 → 1,599 |
+| 読み手の CPU/wall | 1.0 | 2.0 → 1.6 | 0.97 | 2.2 → 1.7 |
+| end-to-end、パッチ処理フェーズ | 11.3 s | 5.6 s | 38.6〜40.6 s | 17.3〜20.2 s |
+| うち GPU（`infer`）の時間 | 3.0 s | 2.6 s | 14.5〜14.9 s | 14.1〜14.4 s |
+
+GPU 側（合成 uint8 バッチ、`_GPUWorker.infer` = H2D + 正規化 + forward + D2H）:
+
+| | バッチ 128 | バッチ 256 |
+|---|---:|---:|
+| forward だけ（bf16 autocast） | 2,431 パッチ/s | 2,511 |
+| `infer` 旧（CPU で float 化・全トークンを CPU へ） | 1,280 | 1,372 |
+| `infer` 新（uint8 のまま転送、GPU で正規化、CLS だけ戻す） | 2,301 | 2,371 |
+
+- **NDPI 原本は読み手律速。** openslide の NDPI デコードは 1 スレッド（CPU/wall 1.0）で格子 1,300〜1,700 パッチ/s、
+  組織 50 % のスライドで残るのは 650〜710 パッチ/s。GPU は 2,370 パッチ/s 出せるので 24mumnvq では GPU が 40 s 中
+  15 s しか働いていない。帯 1 本（272 パッチ）の内訳は `read_region` 99 ms、RGBA→RGB 変換 57 ms、白判定 58 ms。
+- **pyramid.tif は GPU とほぼ釣り合う。** 読み手が 2 倍以上速い（tifffile が 512 px タイルを並列デコード）ので、
+  24mumnvq で処理 17〜20 s のうち GPU 14 s。
+- **GPU 側にもう 1 つ律速があった（直した）。** 旧 `infer` は `torch.from_numpy(batch) / 255` を CPU でやって
+  float32（uint8 の 4 倍）を転送し、`forward_features` の全トークン（256×257×384）を CPU に戻してから CLS を
+  取っていた。ViT-S では forward と同じくらいの時間がそこに消えていた（1,372 vs 2,511 パッチ/s）。GPU で正規化
+  して CLS だけ戻すようにして 2,371 パッチ/s。**特徴量はビット一致**（4 本の全パッチで `np.array_equal`）。
+
+### 10.3 タイル整列読み（実装した）
+
+`WSIPatchReader(align_reads=True)`（既定）: レベルのネイティブタイル高さ（`native_tile_height`: tifffile は
+`page.tilelength`、openslide は `openslide.level[i].tile-height`）がパッチサイズを割り切らないとき、行の帯を
+タイル行の境界まで広げて読み、最後の 1 本を持っておく。512 px タイル × 256 px パッチなら、偶数行で 512 px の帯を
+読んで次の奇数行はメモリから切るだけになり、各タイルのデコードは 1 回。保持するのは直近の帯 1 本（全幅 × 512 px。
+24mumnvq で 107 MB、40x の 119,040 px 幅で 183 MB）。タイル高さが 2,048 px を超える異常なレイアウトでは揃えない。
+NDPI（8 px）・256 px タイルの SVS は割り切れるので何もしない。
+
+- **パッチはビット一致**: 合成ピラミッド（タイル 128、パッチ 64 / 48 / 128、バッチ 16 / 45 / 200）で全バッチの
+  配列と座標（= 採否）が一致するテスト、実スライド（`WT_TEST_WSI=a:b:...`、先頭約 4,000 パッチ）で 7akahdcu の
+  NDPI・pyramid.tif、Philips の pyramid.tif、CMU-1.svs が一致。24mumnvq.pyramid.tif は全スライドを extract して
+  座標 27,456 個と特徴量が整列あり / なしでビット一致。
+- **効果**: 読み手の CPU が約 30 % 減（24mumnvq 42 → 29 CPU 秒、7akahdcu 12.6 → 8.8）、読み手だけのスループットは
+  +10〜13 %。デコードが半分になっても、1 スレッドの白判定と帯の切り出し・コピーが残るので wall は伸びにくい。
+  end-to-end では pyramid.tif がもう GPU とほぼ釣り合っているので、効くのは主に CPU の空き（並列 extract や
+  配信と同居するとき）。
+
+### 10.4 原本と pyramid.tif の特徴量の違い（JPEG Q85 再圧縮の影響）
+
+同じ座標のパッチを原本と pyramid.tif から読んで GigaPath-Flash に通した（全パッチ）:
+
+| | 7akahdcu | 24mumnvq |
+|---|---:|---:|
+| 残ったパッチ 原本 / pyramid / 共通 | 4,210 / 4,216 / 4,210 | 27,483 / 27,456 / 27,454 |
+| コサイン類似度 平均 / 中央値 | 0.974 / 0.975 | 0.967 / 0.970 |
+| 同 p5 / p1 / 最小 | 0.959 / 0.951 / 0.930 | 0.937 / 0.919 / 0.865 |
+| 参考: 原本内で「最も近い別のパッチ」とのコサイン（中央値） | 0.930 | 0.938 |
+| pyramid の特徴量で原本を最近傍検索して自分自身が出る割合 | 100 % | 99.8 % |
+| 原本で k-means(10) → pyramid の特徴量を同じ中心に割り当てて同じクラスタ | 93.9 % | 92.6 % |
+
+- 白判定の採否も 0.1 % ほど変わる（境界のパッチ）。
+- 特徴量のずれ（1 − cos ≈ 0.03）は隣のパッチとの差（≈ 0.07）の半分ほど。検索（類似パッチ）ではほぼ効かないが、
+  クラスタ割り当ては 6〜7 % 動く。原本由来の既存 H5 と混ぜる・比べるなら入力は揃える必要がある。
+
+### 10.5 答え（ken の問い）
+
+1. **extract は pyramid.tif で約 2 倍速くなる**（24mumnvq: 処理 39〜41 s → 17〜20 s、7akahdcu: 11.3 → 5.6 s）。
+   理由は NDPI 原本の extract が読み手（openslide の 1 スレッドデコード）律速で、GPU が半分以上遊んでいるため。
+   pyramid.tif では読み手が 2 倍以上速く、GPU とほぼ釣り合う。ただし特徴量は §10.4 のとおり変わるので、
+   extract の入力を切り替えるかは別判断（vision は原本のまま、未切り替え）。
+2. **512 px タイルへの整列はやった**（§10.3）。もともと行単位で読んでいたので無駄は「4 回」ではなく「2 回」で、
+   整列で読み手の CPU は 30 % 減るが、pyramid.tif の end-to-end はもう GPU 側で決まるので速度の伸びは小さい。
+   NDPI 原本はもともと揃っていて効果は無い。
+3. **もっと効いたのは GPU 側の前処理**（§10.2）。`infer` の CPU 正規化と全トークンの D2H をやめて GPU の実効
+   スループットが 1.7 倍（1,372 → 2,371 パッチ/s）、特徴量はビット一致。これで原本 NDPI の extract も 24mumnvq で
+   43〜54 s → 39〜41 s、pyramid.tif で 28〜29 s → 17〜20 s。
+4. 原本 NDPI の extract をさらに速くする次の手は**読み手の並列化**（帯を横に分けてスレッドごとの openslide ハンドルで
+   読む。openslide は GIL を離すので §6 のプールと同じく 3 倍前後が見込める）と、白判定・RGBA→RGB 変換を読み手
+   スレッドから外すこと。どちらも未実装（予定なら toolbox の `WSIPatchReader` に入れる）。
+
+再実行:
+
+```bash
+# 読み手（整列あり / なし）・GPU・end-to-end。e2e は data/bench/extract/<ファイル名>.h5 に書く
+uv run python scripts/bench_pyramid.py extract a.ndpi a.pyramid.tif --parts reader,model,e2e --budget 30
+# 原本と pyramid.tif の特徴量の比較
+uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.ndpi.h5 data/bench/extract/a.pyramid.tif.h5
+# 整列読みのビット一致（実スライド）
+WT_TEST_WSI=a.ndpi:a.pyramid.tif uv run pytest tests/test_patch_reader.py -k real
+```
 
 ## 付録: 全結果（2026-09-24、vision の旧スクリプトの `report` 出力）
 

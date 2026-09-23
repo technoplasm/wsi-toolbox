@@ -32,6 +32,8 @@ Breaking release: progress, preset and device become command arguments. Migratio
 - `scripts/bench_pyramid.py` and [`_docs/benchmark-pyramid-dzi.md`](_docs/benchmark-pyramid-dzi.md): pyramid TIFF vs
   original WSI benchmark (conversion, DZI tile latency per level, 1 vs N threads with a handle pool, patch reading
   with / without the white check, CPU vs I/O, cold / warm cache) with the 2026-09-24 results; moved from vision.
+  `extract` / `extract-compare` modes: feature extraction split into reader / model / end-to-end, and feature
+  similarity of two H5s at the same coordinates (original vs pyramid.tif).
 
 ### Changed
 
@@ -46,6 +48,14 @@ Breaking release: progress, preset and device become command arguments. Migratio
   per thread (documented).
 - ptp white detection counts the channel range with `np.maximum` / `np.minimum` instead of `np.ptp(axis=2)`:
   about 9x faster, same decisions.
+- `WSIPatchReader` aligns its row-strip reads to the level's native tile height (`align_reads=True`, new
+  `native_tile_height(level)` on `PyramidalTiffFile` / `OpenSlideFile`) and keeps the last strip, so a 512 px tile
+  of a pyramid.tif is decoded once instead of once per 256 px patch row. Same patches bit for bit (tests on the
+  synthetic pyramid and, with `WT_TEST_WSI`, on real slides); a no-op where the tile height divides the patch size
+  (NDPI 8 px rows, 256 px SVS tiles). Reader CPU -30 % on pyramid.tif.
+- `FeatureExtractionCommand` uploads the uint8 batch and scales / normalises it on the device, and copies only the
+  CLS token back (all tokens only with `with_latent`). Features are bit-identical; `infer` for GigaPath-Flash on an
+  RTX 3090 goes from 1,370 to 2,370 patches/s (the CPU float conversion cost as much as the forward pass).
 
 ### Fixed
 
