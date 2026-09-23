@@ -8,6 +8,24 @@ import cv2
 import numpy as np
 
 
+def _count_low_range_pixels(patch: np.ndarray, rgb_range_threshold) -> int:
+    """Number of pixels whose channel range (max - min) is below ``rgb_range_threshold``.
+
+    Same count as ``np.sum(np.ptp(patch, axis=2) < rgb_range_threshold)``, but for the usual
+    uint8 RGB patch it takes the max / min over three channel views with element-wise
+    ``np.maximum`` / ``np.minimum`` instead of a reduction over a length-3 axis, which is
+    several times faster (the ptp check used to cap patch splitting). ``max - min`` cannot
+    wrap in uint8 because ``max >= min``.
+    """
+    if patch.dtype == np.uint8 and patch.ndim == 3 and patch.shape[2] == 3:
+        r, g, b = patch[:, :, 0], patch[:, :, 1], patch[:, :, 2]
+        hi = np.maximum(np.maximum(r, g), b)
+        lo = np.minimum(np.minimum(r, g), b)
+        np.subtract(hi, lo, out=hi)
+        return int(np.count_nonzero(hi < rgb_range_threshold))
+    return int(np.sum(np.ptp(patch, axis=2) < rgb_range_threshold))
+
+
 def is_white_patch_ptp(patch, white_ratio_threshold=0.9, rgb_range_threshold=20):
     """
     Check if a patch is mostly white/blank using PTP (peak-to-peak) method
@@ -21,8 +39,7 @@ def is_white_patch_ptp(patch, white_ratio_threshold=0.9, rgb_range_threshold=20)
         bool: True if patch is considered white/blank
     """
     # white: RGB range (max-min) < rgb_range_threshold
-    rgb_range = np.ptp(patch, axis=2)
-    white_pixels = np.sum(rgb_range < rgb_range_threshold)
+    white_pixels = _count_low_range_pixels(patch, rgb_range_threshold)
     total_pixels = patch.shape[0] * patch.shape[1]
     white_ratio_calculated = white_pixels / total_pixels
     return white_ratio_calculated > white_ratio_threshold
