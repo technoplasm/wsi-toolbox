@@ -86,8 +86,10 @@ class _GPUWorker:
         """Run inference on a batch. Returns (features, latent_or_None)."""
         import torch  # noqa: PLC0415
 
-        x = (torch.from_numpy(batch) / 255).permute(0, 3, 1, 2)  # BHWC->BCHW
-        x = x.to(self.device, memory_format=torch.channels_last)
+        # Upload uint8 and scale / normalise on the device: converting to float32 on the CPU first
+        # cost as much as the forward pass of a small model (ViT-S) and moved 4x the bytes.
+        x = torch.from_numpy(batch).to(self.device).permute(0, 3, 1, 2)  # BHWC->BCHW (a channels_last view)
+        x = x.float().div_(255).contiguous(memory_format=torch.channels_last)
         x = (x - self.mean) / self.std
 
         with torch.inference_mode(), torch.autocast(device_type=self.device_type, dtype=self.autocast_dtype):
@@ -97,17 +99,14 @@ class _GPUWorker:
                 result_latent = None
             else:
                 h_tensor = self.model.forward_features(x)
-                h = h_tensor.float().cpu().detach().numpy()
-                del h_tensor
-                latent_index = h.shape[1] - self.latent_size**2
-                result_features = h[:, 0, ...].copy()
-
+                # Only the CLS token leaves the device unless the latent tokens are wanted
+                result_features = h_tensor[:, 0, ...].float().cpu().numpy()
                 if self.with_latent:
-                    result_latent = h[:, latent_index:, ...].astype(np.float16)
+                    latent_index = h_tensor.shape[1] - self.latent_size**2
+                    result_latent = h_tensor[:, latent_index:, ...].float().cpu().numpy().astype(np.float16)
                 else:
                     result_latent = None
-
-                del h
+                del h_tensor
 
         del x
         return result_features, result_latent
