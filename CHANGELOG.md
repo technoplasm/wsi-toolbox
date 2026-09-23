@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0
+## Unreleased (0.6.0)
 
 Breaking release: progress, preset and device become command arguments. Migration guide:
 [`_docs/migration-0.6.md`](_docs/migration-0.6.md). Design: [`_docs/design-progress-events.md`](_docs/design-progress-events.md).
