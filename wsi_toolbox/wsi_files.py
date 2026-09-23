@@ -232,6 +232,14 @@ class PyramidalWSIFile(WSIFile):
         """
         pass
 
+    def native_tile_height(self, level_idx: int) -> int:
+        """Height in pixels of the unit a native level is decoded in (its tile or strip row).
+
+        Readers that walk a level top to bottom (``WSIPatchReader``) align their reads to it
+        so that each tile is decoded once. 1 means unknown / no alignment needed.
+        """
+        return 1
+
     # DZI geometry and tiles live in wsi_toolbox.dzi; these methods are thin wrappers.
 
     def get_dzi_max_level(self) -> int:
@@ -419,6 +427,11 @@ class PyramidalTiffFile(PyramidalWSIFile):
 
         return self._normalize_color(self._read_page_region(level.index, x, y, w, h))
 
+    def native_tile_height(self, level_idx: int) -> int:
+        """Tile height of a tiled page (512 for vips' pyramid.tif, 8 for NDPI's restart-marker rows)."""
+        page = self._page(self._levels[level_idx].index)
+        return page.tilelength if page.is_tiled else 1
+
     # === page reading ===
 
     def _page(self, page_index: int) -> tifffile.TiffPage:
@@ -520,6 +533,13 @@ class OpenSlideFile(PyramidalWSIFile):
         for i, (dim, downsample) in enumerate(zip(self.wsi.level_dimensions, self.wsi.level_downsamples)):
             levels.append(NativeLevel(index=i, width=dim[0], height=dim[1], downsample=downsample))
         return levels
+
+    def native_tile_height(self, level_idx: int) -> int:
+        """``openslide.level[i].tile-height`` (256 / 512 for SVS, 8 for NDPI), 1 if absent."""
+        try:
+            return max(1, int(self.prop[f"openslide.level[{level_idx}].tile-height"]))
+        except (KeyError, ValueError):
+            return 1
 
     def get_mpp(self):
         return float(self.prop["openslide.mpp-x"])

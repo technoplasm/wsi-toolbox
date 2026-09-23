@@ -21,6 +21,9 @@ from .wsi_files import PyramidalWSIFile, create_wsi_file, find_best_level_for_mp
 
 logger = logging.getLogger(__name__)
 
+# Largest native tile height WSIPatchReader aligns its strip reads to (see align_reads).
+MAX_ALIGN_ROWS = 2048
+
 
 @runtime_checkable
 class PatchReader(Protocol):
@@ -90,6 +93,7 @@ class WSIPatchReader:
         patch_size: int = 256,
         target_mpp: float = 0.5,
         white_detector=None,
+        align_reads: bool = True,
     ):
         """
         Initialize patch reader.
@@ -99,11 +103,16 @@ class WSIPatchReader:
             patch_size: Output patch size (default: 256)
             target_mpp: Target microns per pixel (default: 0.5)
             white_detector: Function (patch) -> bool, True if white (skip)
+            align_reads: Read row strips aligned to the level's native tile rows and keep the
+                last one, so a tile taller than a patch row (512 px tiles of a pyramid.tif vs
+                256 px patches) is decoded once instead of once per patch row. The patches are
+                the same either way; False reads exactly the requested rows (for comparison).
         """
         self.wsi = wsi
         self.patch_size = patch_size
         self.target_mpp = target_mpp
         self.white_detector = white_detector
+        self.align_reads = align_reads
 
         # Find best level for target mpp
         self.level = find_best_level_for_mpp(wsi, target_mpp)
@@ -118,14 +127,30 @@ class WSIPatchReader:
         self.width = self.cols * patch_size  # Aligned width
         self.height = self.rows * patch_size  # Aligned height
 
+        # Row alignment of strip reads: the native tile height when it does not divide the patch
+        # size (a 512 px tile spans two 256 px patch rows). Tile heights that already divide it
+        # (NDPI's 8 px restart-marker rows, 256 px SVS tiles) need nothing. Capped so a
+        # pathological layout (one strip for the whole level) cannot make the cached strip huge.
+        tile_h = self._native_tile_height()
+        self._align = tile_h if align_reads and patch_size % tile_h != 0 and tile_h <= MAX_ALIGN_ROWS else 1
+        self._strip: tuple[int, int, np.ndarray] | None = None  # (y0, y1, pixels) of the last aligned read
+
         logger.debug(
             f"WSIPatchReader: level={self.level.index}, mpp={self.actual_mpp:.4f}, "
-            f"grid={self.cols}x{self.rows}, patch_size={patch_size}"
+            f"grid={self.cols}x{self.rows}, patch_size={patch_size}, tile_h={tile_h}, align={self._align}"
         )
+
+    def _native_tile_height(self) -> int:
+        fn = getattr(self.wsi, "native_tile_height", None)  # absent on StandardImage
+        return max(1, int(fn(self.level.index))) if fn is not None else 1
 
     def _read_row_strip(self, start_row: int, num_rows: int) -> np.ndarray:
         """
         Read a horizontal strip of rows from WSI.
+
+        With alignment on, the read is widened to whole native tile rows and the result kept, so
+        the next patch row inside the same tile row is sliced from memory instead of decoding the
+        tiles again. Only the last aligned strip is kept (full width x a few tile rows).
 
         Args:
             start_row: Starting row index
@@ -141,16 +166,20 @@ class WSIPatchReader:
         # Clamp height to bounds
         h = min(h, self.height - y)
 
-        # Read from native level
-        region = self.wsi._read_native_region(
-            self.level.index,
-            x=0,
-            y=y,
-            w=self.width,
-            h=h,
-        )
+        A = self._align
+        if A <= 1:
+            return self.wsi._read_native_region(self.level.index, x=0, y=y, w=self.width, h=h)
 
-        return region
+        cached = self._strip
+        if cached is None or not (cached[0] <= y and y + h <= cached[1]):
+            y0 = y // A * A
+            y1 = min(-(-(y + h) // A) * A, self.level.height)
+            cached = self._strip = (
+                y0,
+                y1,
+                self.wsi._read_native_region(self.level.index, x=0, y=y0, w=self.width, h=y1 - y0),
+            )
+        return cached[2][y - cached[0] : y - cached[0] + h]
 
     def _strip_to_patches(self, strip: np.ndarray, start_row: int) -> tuple[list, list]:
         """

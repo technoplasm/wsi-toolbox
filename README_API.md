@@ -379,7 +379,7 @@ wt.get_patch_reader(h5_path, wsi_path=None, patch_size=256, target_mpp=0.5, whit
 wt.PatchReader          # base: iter_batches(batch_size) -> (batch, coords, desc), get_num_batches(batch_size),
                         #       get_patch_by_coord(coord), patch_count, metadata
 wt.CachePatchReader     # reads cache/{patch_size}/ from the HDF5 file
-wt.WSIPatchReader       # reads and tiles the WSI on the fly
+wt.WSIPatchReader       # reads and tiles the WSI on the fly (row strips aligned to native tile rows: align_reads=True)
 wt.PrefetchReader       # wraps a reader with a background prefetch queue
 ```
 
