@@ -9,6 +9,7 @@ from pathlib import Path
 from PIL import Image
 from pydantic import BaseModel
 
+from ..dzi import DziGenerator
 from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..wsi_files import PyramidalWSIFile, WSIFile, create_wsi_file
 from ._base import make_reporter
@@ -116,8 +117,9 @@ class DziCommand:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Get dimensions
-        width, height = wsi_file.get_original_size()
-        max_level = wsi_file.get_dzi_max_level()
+        dzi = DziGenerator(wsi_file, self.tile_size, self.overlap, self.format)
+        width, height = dzi.layout.width, dzi.layout.height
+        max_level = dzi.max_level
 
         logger.debug(f"Original size: {width}x{height}")
         logger.debug(f"Tile size: {self.tile_size}, Overlap: {self.overlap}")
@@ -132,17 +134,17 @@ class DziCommand:
         total_tiles = 0
         level_infos = {}
         for level in range(max_level, -1, -1):
-            level_width, level_height, cols, rows = wsi_file.get_dzi_level_info(level, self.tile_size)
-            level_infos[level] = (level_width, level_height, cols, rows)
+            level_infos[level] = (*dzi.layout.level_size(level), *dzi.layout.grid(level))
+            _, _, cols, rows = level_infos[level]
             total_tiles += cols * rows
 
         # Generate all levels as a single phase
         reporter.phase("Generating tiles", total=total_tiles)
         for level in range(max_level, -1, -1):
-            self._generate_level(wsi_file, files_dir, level, level_infos[level], reporter)
+            self._generate_level(dzi, files_dir, level, level_infos[level], reporter)
 
         # Write DZI XML
-        dzi_xml = wsi_file.get_dzi_xml(self.tile_size, self.overlap, self.format)
+        dzi_xml = dzi.xml()
         with open(dzi_path, "w", encoding="utf-8") as f:
             f.write(dzi_xml)
 
@@ -159,7 +161,7 @@ class DziCommand:
 
     def _generate_level(
         self,
-        wsi_file: PyramidalWSIFile,
+        dzi: DziGenerator,
         files_dir: Path,
         level: int,
         level_info: tuple,
@@ -181,7 +183,7 @@ class DziCommand:
                 tile_path = level_dir / f"{col}_{row}.{ext}"
 
                 # Get tile from WSIFile
-                tile_array = wsi_file.get_dzi_tile(level, col, row, self.tile_size, self.overlap)
+                tile_array = dzi.tile(level, col, row)
 
                 # Save tile
                 img = Image.fromarray(tile_array)

@@ -105,21 +105,31 @@ def _smooth_rgb(width: int, height: int) -> np.ndarray:
     return np.stack([r, g, b], axis=-1).clip(0, 255).astype(np.uint8)
 
 
-@pytest.fixture
-def pyramid_tiff(tmp_path) -> str:
-    """A small tiled, JPEG-compressed, 3-level pyramidal TIFF (one page per level, 2x steps)."""
-    path = tmp_path / "pyramid.tif"
-    base = _smooth_rgb(*PYRAMID_SIZE)
+def write_pyramid_tiff(path, width: int, height: int, levels: int = 3, tile: int = PYRAMID_TILE) -> str:
+    """Tiled JPEG pyramidal TIFF, one page per 2x level. Level sizes use floor (like libvips)."""
+    base = _smooth_rgb(width, height)
     with tifffile.TiffWriter(path) as tw:
-        level = base
-        for _ in range(3):
+        for i in range(levels):
+            size = (max(1, width >> i), max(1, height >> i))
+            level = base if i == 0 else np.asarray(Image.fromarray(base).resize(size, Image.Resampling.BOX))
             tw.write(
                 level,
-                tile=(PYRAMID_TILE, PYRAMID_TILE),
+                tile=(tile, tile),
                 compression="jpeg",
                 photometric="rgb",
                 resolution=(1e4 / 0.5, 1e4 / 0.5),
                 resolutionunit="CENTIMETER",
             )
-            level = np.asarray(Image.fromarray(level).reduce(2))
     return str(path)
+
+
+@pytest.fixture
+def pyramid_tiff(tmp_path) -> str:
+    """A small tiled, JPEG-compressed, 3-level pyramidal TIFF (1000 x 700, 2x steps)."""
+    return write_pyramid_tiff(tmp_path / "pyramid.tif", *PYRAMID_SIZE)
+
+
+@pytest.fixture
+def odd_pyramid_tiff(tmp_path) -> str:
+    """Odd-sized pyramid: native levels are a pixel short of the DZI levels (floor vs ceil)."""
+    return write_pyramid_tiff(tmp_path / "odd.tif", 1001, 699, levels=4)

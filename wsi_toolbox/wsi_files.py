@@ -15,7 +15,6 @@ Class hierarchy:
 """
 
 import logging
-import math
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -27,6 +26,8 @@ import tifffile
 import zarr
 from openslide import OpenSlide
 from PIL import Image
+
+from .dzi import DziGenerator, DziLayout
 
 logger = logging.getLogger(__name__)
 
@@ -88,13 +89,7 @@ class WSIFile(ABC):
             DZI XML string
         """
         width, height = self.get_original_size()
-        return f'''<?xml version="1.0" encoding="utf-8"?>
-<Image xmlns="http://schemas.microsoft.com/deepzoom/2008"
-       Format="{format}"
-       Overlap="{overlap}"
-       TileSize="{tile_size}">
-  <Size Width="{width}" Height="{height}"/>
-</Image>'''
+        return DziLayout(width, height, tile_size, overlap).xml(format)
 
     def get_dzi_level_info(self, level: int, tile_size: int = 256) -> tuple[int, int, int, int]:
         """Get DZI level dimensions and tile counts.
@@ -237,10 +232,12 @@ class PyramidalWSIFile(WSIFile):
         """
         pass
 
+    # DZI geometry and tiles live in wsi_toolbox.dzi; these methods are thin wrappers.
+
     def get_dzi_max_level(self) -> int:
         """Get maximum DZI pyramid level."""
         width, height = self.get_original_size()
-        return math.ceil(math.log2(max(width, height)))
+        return DziLayout(width, height).max_level
 
     def get_dzi_level_info(self, level: int, tile_size: int = 256) -> tuple[int, int, int, int]:
         """Get DZI level dimensions and tile counts.
@@ -253,13 +250,8 @@ class PyramidalWSIFile(WSIFile):
             (level_width, level_height, cols, rows)
         """
         width, height = self.get_original_size()
-        max_level = self.get_dzi_max_level()
-        dzi_downsample = 2 ** (max_level - level)
-        level_width = math.ceil(width / dzi_downsample)
-        level_height = math.ceil(height / dzi_downsample)
-        cols = math.ceil(level_width / tile_size)
-        rows = math.ceil(level_height / tile_size)
-        return level_width, level_height, cols, rows
+        layout = DziLayout(width, height, tile_size)
+        return (*layout.level_size(level), *layout.grid(level))
 
     def iter_dzi_tiles(self, tile_size: int = 256, overlap: int = 0):
         """Iterate over all DZI tiles.
@@ -267,67 +259,11 @@ class PyramidalWSIFile(WSIFile):
         Yields:
             (level, col, row, tile_array) for each tile
         """
-        max_level = self.get_dzi_max_level()
-        for level in range(max_level, -1, -1):
-            _, _, cols, rows = self.get_dzi_level_info(level, tile_size)
-            for row in range(rows):
-                for col in range(cols):
-                    tile = self.get_dzi_tile(level, col, row, tile_size, overlap)
-                    yield level, col, row, tile
+        yield from DziGenerator(self, tile_size, overlap).iter_tiles()
 
     def get_dzi_tile(self, level: int, col: int, row: int, tile_size: int = 256, overlap: int = 0) -> np.ndarray:
-        """Get a DZI tile as numpy array."""
-        width, height = self.get_original_size()
-        max_level = self.get_dzi_max_level()
-
-        # DZI downsample factor
-        dzi_downsample = 2 ** (max_level - level)
-
-        # Find best native level for this DZI level
-        native_levels = self._get_native_levels()
-        native_level_idx = self._find_best_native_level(native_levels, dzi_downsample)
-        native_downsample = native_levels[native_level_idx].downsample
-
-        # Calculate tile position in level 0 coordinates
-        dzi_x = col * tile_size
-        dzi_y = row * tile_size
-        level0_x = int(dzi_x * dzi_downsample)
-        level0_y = int(dzi_y * dzi_downsample)
-
-        # Calculate actual tile size (clamped to image bounds)
-        level_width = math.ceil(width / dzi_downsample)
-        level_height = math.ceil(height / dzi_downsample)
-
-        tile_right = min(dzi_x + tile_size + overlap, level_width)
-        tile_bottom = min(dzi_y + tile_size + overlap, level_height)
-        actual_width = tile_right - dzi_x + (overlap if dzi_x > 0 else 0)
-        actual_height = tile_bottom - dzi_y + (overlap if dzi_y > 0 else 0)
-
-        # Adjust for left/top overlap
-        if dzi_x > 0:
-            level0_x -= int(overlap * dzi_downsample)
-        if dzi_y > 0:
-            level0_y -= int(overlap * dzi_downsample)
-
-        # Size to read from native level (in native level coordinates)
-        read_width = int(actual_width * dzi_downsample / native_downsample)
-        read_height = int(actual_height * dzi_downsample / native_downsample)
-
-        # Read from native level
-        region = self._read_native_region(
-            native_level_idx,
-            int(level0_x / native_downsample),
-            int(level0_y / native_downsample),
-            read_width,
-            read_height,
-        )
-
-        # Resize if native level doesn't match DZI level exactly
-        if abs(native_downsample - dzi_downsample) > 0.01:
-            img = Image.fromarray(region)
-            region = np.array(img.resize((actual_width, actual_height), Image.Resampling.LANCZOS))
-
-        return region
+        """Get a DZI tile as numpy array (see ``wsi_toolbox.dzi.DziGenerator.tile``)."""
+        return DziGenerator(self, tile_size, overlap).tile(level, col, row)
 
     def _find_best_native_level(self, levels: list[NativeLevel], target_downsample: float) -> int:
         """Find the native level index closest to target downsample factor."""
