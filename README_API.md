@@ -16,9 +16,10 @@ pip install wsi-toolbox
 | Version | `__version__` |
 | Defaults | `Defaults`, `defaults`, `get_defaults`, `set_default_preset`, `set_default_device`, `set_default_progress`, `set_default_cluster_cmap`, `set_verbose`, `resolve_preset`, `resolve_devices` |
 | Progress | `ProgressEvent`, `ProgressSink`, `Reporter`, `Cancelled`, `UNSET`, `TqdmSink`, `RichSink`, `StreamlitSink`, `LoggingSink`, `MultiSink`, `NullSink`, `resolve_sink` |
-| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand`, `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand` |
-| Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult` |
+| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand`, `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand`, `PyramidCommand` (+ `VipsError`, `vips_available`, `read_pyramid_info`) |
+| Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult`, `PyramidInfo`, `PyramidResult` |
 | WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
+| DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
 | Patch readers | `PatchReader`, `WSIPatchReader`, `CachePatchReader`, `PrefetchReader`, `get_patch_reader` |
 | Presets | `TilePreset`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model` |
 | Utilities | `leiden_cluster`, `reorder_clusters_by_pca`, `rename_namespace`, `remove_namespace` |
@@ -279,6 +280,47 @@ cmd(wsi_path: str | None = None, wsi_file: WSIFile | None = None, output_dir='.'
 
 `DziResult`: `dzi_path`, `max_level`, `tile_size`, `overlap`, `width`, `height`. Cancellation is checked after every tile.
 
+### PyramidCommand
+
+Convert a WSI to a DZI-optimised tiled pyramidal TIFF with the `vips` CLI (subprocess). **CLI:** `wt pyramid`.
+
+```python
+wt.PyramidCommand(tile_size=512, quality=85, bigtiff=True, concurrency=8)   # concurrency -> VIPS_CONCURRENCY
+cmd(wsi_path, output_path, *, on_progress=UNSET, should_cancel=None) -> PyramidResult
+cmd.build_args(wsi_path, output_path) -> list[str]                           # the vips command line
+
+wt.vips_available() -> bool
+wt.read_pyramid_info(path) -> PyramidInfo      # tifffile; bytes / width / height / levels / tile_size
+```
+
+`PyramidResult`: `PyramidInfo` fields + `path`, `elapsed`. Phase `Building pyramid` (`n` = percent, `total` = 100).
+Written to `.<name>.tmp` then `os.replace`d. `should_cancel` is polled every 0.2 s: vips is killed, the temp file
+removed, `Cancelled` raised. `VipsError` when `vips` is missing or exits non-zero.
+
+## DZI serving
+
+```python
+wt.DziLayout(width, height, tile_size=256, overlap=0)   # pure geometry (frozen dataclass)
+layout.max_level / layout.level_count / layout.downsample(level)
+layout.level_size(level) -> (w, h)       # ceil(W / 2**(max_level - level))
+layout.grid(level) -> (cols, rows)
+layout.contains(level, col, row) -> bool
+layout.tile_rect(level, col, row) -> (x, y, w, h)   # level pixels, overlap included; DziTileNotFound outside
+layout.xml(format='jpeg') -> str
+
+wt.DziGenerator(wsi, tile_size=256, overlap=0, format='jpeg')   # wsi: any WSIFile with native levels
+gen.layout / gen.max_level / gen.xml()
+gen.tile(level, col, row) -> np.ndarray   # RGB uint8 (h, w, 3) == tile_rect size; DziTileNotFound outside
+gen.iter_tiles()                          # (level, col, row, tile), full resolution first
+
+wt.encode_tile(tile, format='jpeg', quality=90) -> bytes   # imagecodecs (libjpeg-turbo) / PNG
+wt.DziTileNotFound                        # LookupError
+```
+
+`PyramidalWSIFile.get_dzi_max_level / get_dzi_level_info / get_dzi_tile / iter_dzi_tiles` and `WSIFile.get_dzi_xml`
+are thin wrappers over these. A generator holds only the WSI, so it is as thread-safe as the WSI object
+(one per thread).
+
 ## Presets
 
 ```python
@@ -317,7 +359,7 @@ wt.find_wsi_for_h5(h5_path: str) -> str | None                      # xxx.h5 -> 
 wt.WSIFile               # abstract base
 wt.PyramidalWSIFile      # base for multi-level files (needed by DziCommand)
 wt.OpenSlideFile         # openslide-backed
-wt.PyramidalTiffFile     # tifffile-backed (OME-TIFF etc.)
+wt.PyramidalTiffFile     # tifffile-backed (OME-TIFF, pyramid.tif, ...). One instance per thread
 wt.StandardImage         # plain PNG/JPEG treated as a single-level slide
 wt.NativeLevel           # one pyramid level (dimensions, downsample)
 ```

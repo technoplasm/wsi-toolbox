@@ -23,6 +23,12 @@ Breaking release: progress, preset and device become command arguments. Migratio
 - `tests/` (pytest, CPU only, fake model): progress events, sinks, presets, extraction, cancellation, clustering,
   CLI `--help`. `uv run task test`.
 - CLI `--progress none`.
+- `PyramidCommand` (+ `PyramidResult`, `PyramidInfo`, `VipsError`, `vips_available`, `read_pyramid_info`) and CLI
+  `pyramid`: convert a WSI into a DZI-optimised tiled pyramid TIFF (512 px JPEG Q85 tiles, BigTIFF) by running the
+  `vips` CLI as a subprocess (optional feature; no Python dependency). Progress phase `Building pyramid`,
+  cancellation kills vips, the output is written atomically (temp file + `os.replace`).
+- `wsi_toolbox.dzi`: `DziLayout` (Deep Zoom geometry), `DziGenerator` (`.dzi` XML and on-demand tiles for any
+  opened WSI), `DziTileNotFound`, `encode_tile`. `DziCommand` and the `get_dzi_*` methods use it.
 
 ### Changed
 
@@ -32,6 +38,17 @@ Breaking release: progress, preset and device become command arguments. Migratio
   `PCA` / `KNN` / `Building graph` / `Leiden clustering` / `Finalizing`.
 - `FeatureExtractionCommand` argument order: `model, preset, device, batch_size, ...` (`device` moved forward).
 - `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model` are now derived from `TilePreset`.
+- `PyramidalTiffFile` reads plain tiled pages tile by tile (seek + read + `page.decode`, identical pixels) and caches
+  pages / zarr arrays per level instead of rebuilding `page.aszarr()` + `zarr.open()` on every read. One instance
+  per thread (documented).
+- ptp white detection counts the channel range with `np.maximum` / `np.minimum` instead of `np.ptp(axis=2)`:
+  about 9x faster, same decisions.
+
+### Fixed
+
+- DZI tiles always have the spec's size. Native levels whose downsample is only approximately 2^k (SVS 4.0001, odd
+  sizes) gave 255 px and short edge tiles; overview levels read past the coarsest native level and came out
+  partly black with openslide. Tiles at natively present 2x levels are unchanged.
 
 ### Removed
 

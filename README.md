@@ -273,6 +273,7 @@ reporter, so its stream is the two lists back to back, ending in a single `done`
 | `ClusterWithUmapCommand` | `UmapCommand` phases, then `ClusteringCommand` phases |
 | `Preview*Command` | `Rendering patches` (patches) |
 | `DziCommand` | `Generating tiles` (tiles; `message` = `Level L: row r/R`) |
+| `PyramidCommand` | `Building pyramid` (`n` = percent done, `total` = 100) |
 | `ShowCommand` | none (no `on_progress`) |
 
 When a command skips its work (output already present and `overwrite=False`) no phase is emitted, but the final
@@ -501,6 +502,50 @@ Export WSI to Deep Zoom Image format (for OpenSeadragon).
 wt dzi -i sample.ndpi -o ./output
 wt dzi -i sample.ndpi -o ./output -t 512   # Tile size
 ```
+
+To serve DZI tiles on demand instead of writing them all, use `wsi_toolbox.dzi` (see below).
+
+---
+
+### pyramid
+
+Convert a WSI into a tiled pyramidal TIFF optimised for DZI serving: every 2x level present, 512 px JPEG
+(Q85) tiles, BigTIFF. A 256 px DZI tile is then one contiguous read, which is much faster than reading an NDPI /
+SVS original, above all on HDD / NFS. Needs the libvips CLI (`vips`, with the openslide loader) on `PATH`; it runs
+as a subprocess, so no Python dependency is added.
+
+| CLI | Python |
+|-----|--------|
+| `wt pyramid -i sample.ndpi` | `PyramidCommand()(wsi_path, output_path)` |
+
+```bash
+wt pyramid -i sample.ndpi                          # -> sample.pyramid.tif
+wt pyramid -i sample.ndpi -o out.tif -q 90 -t 256  # JPEG quality / tile size
+```
+
+The output is written to `.<name>.tmp` and renamed into place, so a failed or cancelled run leaves nothing
+behind. `create_wsi_file("sample.pyramid.tif")` opens it like any pyramidal TIFF.
+
+### DZI serving (`wsi_toolbox.dzi`)
+
+`DziGenerator` answers `.dzi` and tile requests for any WSI toolbox opens (a `pyramid.tif` is fastest):
+
+```python
+from wsi_toolbox import DziGenerator, DziTileNotFound, create_wsi_file, encode_tile
+
+wsi = create_wsi_file("sample.pyramid.tif")      # one WSI object per thread
+dzi = DziGenerator(wsi, tile_size=256, overlap=0)
+xml = dzi.xml()                                  # {name}.dzi
+try:
+    tile = dzi.tile(level, col, row)             # RGB uint8, exactly the spec's tile size
+except DziTileNotFound:
+    ...                                          # 404
+jpeg = encode_tile(tile, quality=90)             # {name}_files/{level}/{col}_{row}.jpeg
+```
+
+Tiles always have the size the Deep Zoom spec gives, even when native levels are rounded (SVS 4.0001, odd sizes).
+Levels that exist natively are copied without resampling; the others are resampled from the next finer level with
+Lanczos over the exact source box.
 
 ---
 
