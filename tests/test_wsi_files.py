@@ -51,3 +51,12 @@ def test_read_region_matches_zarr(pyramid_tiff):
     wsi = PyramidalTiffFile(pyramid_tiff)
     for x, y, w, h in [(0, 0, 300, 200), (900, 650, 300, 300), (130, 5, 1, 1)]:
         assert np.array_equal(wsi.read_region((x, y, w, h)), _zarr_read(wsi, 0, x, y, w, h))
+
+
+def test_multi_tile_direct_reader_matches_zarr(pyramid_tiff):
+    """_read_tiles_direct also handles regions over several tiles (used only for single-tile reads)."""
+    wsi = PyramidalTiffFile(pyramid_tiff)
+    page = wsi._page(0)
+    for x, y, w, h in [(0, 0, 1000, 700), (100, 100, 300, 300), (990, 690, 10, 10), (127, 0, 2, 700)]:
+        got = wsi._normalize_color(wsi._read_tiles_direct(page, x, y, w, h))
+        assert np.array_equal(got, _zarr_read(wsi, 0, x, y, w, h))

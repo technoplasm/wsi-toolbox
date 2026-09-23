@@ -430,17 +430,26 @@ class PyramidalTiffFile(PyramidalWSIFile):
     def _read_page_region(self, page_index: int, x: int, y: int, w: int, h: int) -> np.ndarray:
         """Read ``[y:y+h, x:x+w]`` of a page (already clamped to its bounds).
 
-        Plain 2D tiled pages (what ``vips tiffsave --tile`` writes, and most pyramidal TIFFs)
-        are read tile by tile straight from the file: seek + read + ``page.decode`` for each
-        tile that intersects the region, the same decode call tifffile's zarr store makes, so
-        the pixels are identical but without zarr's per-call overhead. Anything else
-        (strips, volumetric / planar-separate tiles) goes through a per-level cached zarr array,
-        or ``page.asarray()`` for untiled pages.
+        A region inside **one** tile of a plain 2D tiled page (a 256 px DZI tile of a 512 px
+        tiled pyramid.tif) is read straight from the file: seek + read + ``page.decode``, the
+        same decode call tifffile's zarr store makes, so the pixels are identical but without
+        zarr's per-call overhead (~0.9 vs ~1.25 ms). Larger regions go through a per-level
+        cached zarr array, whose store decodes the tiles in parallel (a 1x8 tile strip: 2.5 ms
+        vs 7 ms decoded one by one); so do strips and volumetric / planar-separate tiles.
+        Untiled pages use ``page.asarray()``.
         """
         page = self._page(page_index)
         if not page.is_tiled:
             return page.asarray()[y : y + h, x : x + w]
-        if page.tiledepth == 1 and page.planarconfig == 1 and len(page.shape) in (2, 3):
+        if (
+            page.tiledepth == 1
+            and page.planarconfig == 1
+            and len(page.shape) in (2, 3)
+            and w > 0
+            and h > 0
+            and x // page.tilewidth == (x + w - 1) // page.tilewidth
+            and y // page.tilelength == (y + h - 1) // page.tilelength
+        ):
             return self._read_tiles_direct(page, x, y, w, h)
         z = self._zarr.get(page_index)
         if z is None:
