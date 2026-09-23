@@ -21,6 +21,7 @@ SUBCOMMANDS = [
     "preview-score",
     "show",
     "dzi",
+    "pyramid",
     "thumb",
     "migrate",
 ]

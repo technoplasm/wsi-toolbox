@@ -21,6 +21,12 @@ from .preview import PreviewClustersCommand as PreviewClustersCommand
 from .preview import PreviewLatentClusterCommand as PreviewLatentClusterCommand
 from .preview import PreviewLatentPCACommand as PreviewLatentPCACommand
 from .preview import PreviewScoresCommand as PreviewScoresCommand
+from .pyramid import PyramidCommand as PyramidCommand
+from .pyramid import PyramidInfo as PyramidInfo
+from .pyramid import PyramidResult as PyramidResult
+from .pyramid import VipsError as VipsError
+from .pyramid import read_pyramid_info as read_pyramid_info
+from .pyramid import vips_available as vips_available
 from .show import ShowCommand as ShowCommand
 from .show import ShowResult as ShowResult
 from .umap_embedding import UmapCommand as UmapCommand

@@ -1,4 +1,4 @@
-"""Utility subcommands: show, dzi, thumb, migrate."""
+"""Utility subcommands: show, dzi, pyramid, thumb, migrate."""
 
 import os
 from pathlib import Path
@@ -102,6 +102,23 @@ class ToolsMixin:
         )
         result = cmd(wsi_path=a.input_wsi, output_dir=str(output_dir), name=name, on_progress=self.sink)
         print(f"Export completed: {result.dzi_path}")
+
+    # ----- pyramid -----
+    class PyramidArgs(CommonArgs):
+        input_wsi: str = param(..., l="--input", s="-i", description="Input WSI file path")
+        output_path: str = param(
+            "", l="--output", s="-o", description="Output .tif (default: <input stem>.pyramid.tif next to the input)"
+        )
+        tile_size: int = param(512, l="--tile-size", s="-t", description="Tile size in pixels")
+        quality: int = param(85, s="-q", description="JPEG quality (1-100)")
+        concurrency: int = param(8, l="--concurrency", description="VIPS_CONCURRENCY for the vips process")
+
+    def run_pyramid(self, a: PyramidArgs):
+        """Convert a WSI to a DZI-optimised tiled pyramid TIFF (needs the `vips` CLI)"""
+        output_path = a.output_path or str(Path(a.input_wsi).with_suffix(".pyramid.tif"))
+        cmd = commands.PyramidCommand(tile_size=a.tile_size, quality=a.quality, concurrency=a.concurrency)
+        result = cmd(a.input_wsi, output_path, on_progress=self.sink)
+        print(f"wrote {result.path} ({result.bytes / 1e6:.1f} MB, {result.levels} levels, {result.elapsed:.1f}s)")
 
     # ----- thumb -----
     class ThumbArgs(CommonArgs):

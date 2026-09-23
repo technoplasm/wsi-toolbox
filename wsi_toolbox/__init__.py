@@ -50,12 +50,18 @@ from .commands import (
     PreviewLatentClusterCommand,
     PreviewLatentPCACommand,
     PreviewScoresCommand,
+    PyramidCommand,
+    PyramidInfo,
+    PyramidResult,
     ShowCommand,
     ShowResult,
     UmapCommand,
     UmapResult,
+    VipsError,
     Wsi2HDF5Command,
     Wsi2HDF5Result,
+    read_pyramid_info,
+    vips_available,
 )
 
 # Defaults
@@ -71,6 +77,9 @@ from .common import (
     set_default_progress,
     set_verbose,
 )
+
+# DZI serving
+from .dzi import DziGenerator, DziLayout, DziTileNotFound, encode_tile
 
 # Patch readers
 from .patch_reader import (
@@ -171,6 +180,15 @@ __all__ = [
     "PreviewLatentClusterCommand",
     "ShowCommand",
     "DziCommand",
+    "PyramidCommand",
+    "VipsError",
+    "vips_available",
+    "read_pyramid_info",
+    # DZI serving
+    "DziGenerator",
+    "DziLayout",
+    "DziTileNotFound",
+    "encode_tile",
     # Result types
     "CacheResult",
     "Wsi2HDF5Result",  # Deprecated alias
@@ -182,6 +200,8 @@ __all__ = [
     "PCAResult",
     "ShowResult",
     "DziResult",
+    "PyramidInfo",
+    "PyramidResult",
     # WSI files
     "WSIFile",
     "PyramidalWSIFile",
