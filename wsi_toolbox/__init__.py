@@ -119,6 +119,9 @@ from .progress import (
     resolve_sink,
 )
 
+# Region reads at a given µm/px
+from .region import read_region_at_mpp
+
 # Utility functions
 from .utils.analysis import leiden_cluster, reorder_clusters_by_pca
 from .utils.hdf5_paths import remove_namespace, rename_namespace
@@ -189,6 +192,8 @@ __all__ = [
     "DziLayout",
     "DziTileNotFound",
     "encode_tile",
+    # Region reads
+    "read_region_at_mpp",
     # Result types
     "CacheResult",
     "Wsi2HDF5Result",  # Deprecated alias

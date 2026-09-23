@@ -40,8 +40,8 @@ import imagecodecs
 import numpy as np
 from PIL import Image
 
-# relative tolerance for "same downsample" (vendors round level sizes: 4.0001, 8.0031, ...)
-_SCALE_TOLERANCE = 0.01
+from .region import SCALE_TOLERANCE as _SCALE_TOLERANCE
+from .region import pick_native_level as _pick_native_level
 
 
 class DziTileNotFound(LookupError):
@@ -221,16 +221,6 @@ def _native_scale(native: _NativeLevel, width: int, height: int) -> tuple[float,
     if abs(native.downsample - nominal) <= nominal * _SCALE_TOLERANCE:
         return float(nominal), float(nominal)
     return width / native.width, height / native.height
-
-
-def _pick_native_level(levels: list, target_downsample: float) -> int:
-    """Coarsest native level that is not coarser than ``target_downsample`` (never upsample)."""
-    limit = target_downsample * (1 + _SCALE_TOLERANCE)
-    best = 0
-    for i, lv in enumerate(levels):
-        if lv.downsample <= limit and lv.downsample > levels[best].downsample:
-            best = i
-    return best
 
 
 def encode_tile(tile: np.ndarray, format: str = "jpeg", quality: int = 90) -> bytes:

@@ -27,6 +27,9 @@ Breaking release: progress, preset and device become command arguments. Migratio
   `pyramid`: convert a WSI into a DZI-optimised tiled pyramid TIFF (512 px JPEG Q85 tiles, BigTIFF) by running the
   `vips` CLI as a subprocess (optional feature; no Python dependency). Progress phase `Building pyramid`,
   cancellation kills vips, the output is written atomically (temp file + `os.replace`).
+- `read_region_at_mpp(wsi, x, y, w, h, target_mpp, *, mpp=None)` (`wsi_toolbox.region`): a level-0 box
+  rendered at a given µm/px from the best native level (same 1 % level tolerance as DZI; Lanczos, tiled, no
+  seams). Replaces callers' use of the private `_get_native_levels` / `_read_native_region` for exports.
 - `wsi_toolbox.dzi`: `DziLayout` (Deep Zoom geometry), `DziGenerator` (`.dzi` XML and on-demand tiles for any
   opened WSI), `DziTileNotFound`, `encode_tile`. `DziCommand` and the `get_dzi_*` methods use it.
 - `scripts/bench_pyramid.py` and [`_docs/benchmark-pyramid-dzi.md`](_docs/benchmark-pyramid-dzi.md): pyramid TIFF vs

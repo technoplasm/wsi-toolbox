@@ -20,6 +20,7 @@ pip install wsi-toolbox
 | Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult`, `PyramidInfo`, `PyramidResult` |
 | WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
 | DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
+| Region reads | `read_region_at_mpp` |
 | Patch readers | `PatchReader`, `WSIPatchReader`, `CachePatchReader`, `PrefetchReader`, `get_patch_reader` |
 | Presets | `TilePreset`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model` |
 | Utilities | `leiden_cluster`, `reorder_clusters_by_pca`, `rename_namespace`, `remove_namespace` |
@@ -320,6 +321,19 @@ wt.DziTileNotFound                        # LookupError
 `PyramidalWSIFile.get_dzi_max_level / get_dzi_level_info / get_dzi_tile / iter_dzi_tiles` and `WSIFile.get_dzi_xml`
 are thin wrappers over these. A generator holds only the WSI, so it is as thread-safe as the WSI object
 (one per thread).
+
+## Region reads
+
+```python
+wt.read_region_at_mpp(wsi, x, y, w, h, target_mpp, *, mpp=None, tile=2048) -> np.ndarray
+```
+
+Renders the level-0 box `(x, y, w, h)` (inside the slide) at `target_mpp` µm/px: RGB uint8
+`(round(h * mpp / target_mpp), round(w * mpp / target_mpp), 3)` (at least 1 px). `mpp` is level-0 µm/px
+(`None` → `wsi.get_mpp()`). The source is the coarsest native level not coarser than the output, with the
+same 1 % tolerance as DZI tiles (`wsi_toolbox.region.pick_native_level`); it is resized with Lanczos in
+`tile` px squares with a filter margin (no seams; another `tile` changes pixels by at most ±1 of rounding). Outputs finer
+than level 0 are upsampled. `ValueError` for a non-positive mpp or an empty box.
 
 ## Presets
 
