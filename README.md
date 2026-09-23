@@ -526,6 +526,9 @@ wt pyramid -i sample.ndpi -o out.tif -q 90 -t 256  # JPEG quality / tile size
 The output is written to `.<name>.tmp` and renamed into place, so a failed or cancelled run leaves nothing
 behind. `create_wsi_file("sample.pyramid.tif")` opens it like any pyramidal TIFF.
 
+Benchmark against the originals (NDPI / SVS / TIFF / MIRAX on SSD / HDD / NFS) and how to rerun it on your
+slides: [`_docs/benchmark-pyramid-dzi.md`](_docs/benchmark-pyramid-dzi.md) (`scripts/bench_pyramid.py`).
+
 ### DZI serving (`wsi_toolbox.dzi`)
 
 `DziGenerator` answers `.dzi` and tile requests for any WSI toolbox opens (a `pyramid.tif` is fastest):

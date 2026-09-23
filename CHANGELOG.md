@@ -29,6 +29,9 @@ Breaking release: progress, preset and device become command arguments. Migratio
   cancellation kills vips, the output is written atomically (temp file + `os.replace`).
 - `wsi_toolbox.dzi`: `DziLayout` (Deep Zoom geometry), `DziGenerator` (`.dzi` XML and on-demand tiles for any
   opened WSI), `DziTileNotFound`, `encode_tile`. `DziCommand` and the `get_dzi_*` methods use it.
+- `scripts/bench_pyramid.py` and [`_docs/benchmark-pyramid-dzi.md`](_docs/benchmark-pyramid-dzi.md): pyramid TIFF vs
+  original WSI benchmark (conversion, DZI tile latency per level, 1 vs N threads with a handle pool, patch reading
+  with / without the white check, CPU vs I/O, cold / warm cache) with the 2026-09-24 results; moved from vision.
 
 ### Changed
 
