@@ -22,5 +22,6 @@ def fix_global_seed(seed=None):
     torch.random.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms = True
+    # (Earlier versions assigned ``torch.use_deterministic_algorithms = True`` here, which replaced the
+    # torch *function* with a bool: a no-op for eager but it made torch.compile / dynamo fail.)
     __GLOBAL_SEED = seed
