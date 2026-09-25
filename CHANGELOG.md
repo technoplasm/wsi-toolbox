@@ -76,6 +76,12 @@ Breaking release: progress, preset and device become command arguments. Migratio
   sizes) gave 255 px and short edge tiles; overview levels read past the coarsest native level and came out
   partly black with openslide. Tiles at natively present 2x levels are unchanged.
 
+- `PyramidCommand`: two runs writing the same output at once no longer collide. The temporary file was a fixed
+  `.pyramid.tif.tmp`, so one run renamed or deleted it under the other (`FileNotFoundError` on `os.replace`) or
+  read the other's half-written file. It is now unique per run (`.pyramid.tif.<pid>-<random>.tmp`, see
+  `tmp_path_for` / `tmp_files_for`), the result shape is read from the run's own file before it is published,
+  and leftovers of killed runs older than a day are removed by the next run.
+
 ### Removed
 
 - `BaseProgress`, `register_progress`, `wsi_toolbox.utils.progress` (`TqdmProgress`, `RichProgress`,

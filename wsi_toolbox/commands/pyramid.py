@@ -23,6 +23,7 @@ import select
 import shutil
 import subprocess
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -90,9 +91,37 @@ def read_pyramid_info(path: str | Path) -> PyramidInfo:
         )
 
 
-def tmp_path_for(output_path: Path) -> Path:
-    """Temporary file next to ``output_path`` (same filesystem, so ``os.replace`` is atomic)."""
-    return output_path.with_name(f".{output_path.name}.tmp")
+# Temporary files left behind by a killed process (SIGKILL skips the cleanup) are removed by the
+# next run once they are this old. Younger ones may belong to a run that is still going.
+STALE_TMP_SECONDS = 24 * 3600
+
+
+def tmp_path_for(output_path: Path, token: str | None = None) -> Path:
+    """Temporary file next to ``output_path`` (same filesystem, so ``os.replace`` is atomic).
+
+    The name is unique per run (``.pyramid.tif.<pid>-<random>.tmp``) so that two runs writing
+    the same ``output_path`` at once never share (or delete, or rename) each other's file.
+    Pass ``token`` to get a fixed name (tests).
+    """
+    if token is None:
+        token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    return output_path.with_name(f".{output_path.name}.{token}.tmp")
+
+
+def tmp_files_for(output_path: Path) -> list[Path]:
+    """Temporary files of any run for ``output_path`` (see ``tmp_path_for``)."""
+    return sorted(output_path.parent.glob(f".{output_path.name}.*.tmp"))
+
+
+def _remove_stale_tmp(output_path: Path) -> None:
+    now = time.time()
+    for p in tmp_files_for(output_path):
+        try:
+            if now - p.stat().st_mtime > STALE_TMP_SECONDS:
+                p.unlink(missing_ok=True)
+                logger.info(f"pyramid: removed stale temporary file {p.name}")
+        except OSError:
+            pass
 
 
 class PyramidCommand:
@@ -105,7 +134,8 @@ class PyramidCommand:
 
     The output is written to a temporary file next to ``output_path`` and moved into place
     with ``os.replace``: an interrupted or failed run never leaves a partial ``output_path``
-    (an existing one is replaced only on success).
+    (an existing one is replaced only on success). The temporary name is unique per run, so
+    two runs on the same ``output_path`` at once do not collide (the last to finish wins).
     """
 
     def __init__(
@@ -181,8 +211,8 @@ class PyramidCommand:
             raise VipsError(f"'{VIPS_BIN}' not found on PATH (install libvips with the openslide loader)")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        _remove_stale_tmp(output_path)
         tmp = tmp_path_for(output_path)
-        tmp.unlink(missing_ok=True)
 
         cmd = [*self.build_args(wsi_path, tmp), "--vips-progress"]
         env = dict(os.environ)
@@ -210,9 +240,15 @@ class PyramidCommand:
             tmp.unlink(missing_ok=True)
             raise VipsError(f"{VIPS_BIN} tiffsave failed (exit {proc.returncode}): {tail}")
 
-        os.replace(tmp, output_path)
         elapsed = time.monotonic() - t0
-        info = read_pyramid_info(output_path)
+        try:
+            # Read the shape from our own file before it is published: after os.replace another
+            # run may already have replaced output_path.
+            info = read_pyramid_info(tmp)
+            os.replace(tmp, output_path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         logger.info(f"pyramid: {output_path.name} {info.bytes} bytes, {info.levels} levels, {elapsed:.1f}s")
         return PyramidResult(path=str(output_path), elapsed=round(elapsed, 3), **info.model_dump())
 
