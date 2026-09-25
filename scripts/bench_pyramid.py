@@ -30,8 +30,8 @@ using the GPU) splits ``FeatureExtractionCommand`` into its two halves and the w
 - extract --parts reader  ``get_patch_reader`` (prefetch thread + ptp white check) alone, patches/s,
                           with and without tile-aligned strip reads (``--align both``), per
                           ``--read-workers`` (WSIPatchReader read threads, e.g. 1,2,4)
-- extract --parts model   ``_GPUWorker.infer`` on synthetic uint8 batches (H2D + normalise + forward
-                          + D2H) and the bare forward pass
+- extract --parts model   ``TileEncoder.encode`` on synthetic uint8 batches (H2D + normalise + forward
+                          + D2H) and the bare forward pass, per ``--accel`` (none / compile / graphs)
 - extract --parts e2e     ``FeatureExtractionCommand`` itself per ``--read-workers`` (cancelled after ``--budget`` s), with
                           the time spent inside ``infer`` ("GPU busy") vs the patch-processing phase
 - extract-compare A.h5 B.h5   cosine similarity of the features of the same coordinates (e.g. the
@@ -90,11 +90,10 @@ from sklearn.preprocessing import StandardScaler
 
 import wsi_toolbox
 from wsi_toolbox.commands import FeatureExtractionCommand
-from wsi_toolbox.commands.feature_extraction import _GPUWorker
 from wsi_toolbox.commands.pyramid import DEFAULT_CONCURRENCY, PyramidCommand, read_pyramid_info
 from wsi_toolbox.dzi import DziGenerator, encode_tile
+from wsi_toolbox.encoder import TileEncoder
 from wsi_toolbox.patch_reader import WSIPatchReader, get_patch_reader
-from wsi_toolbox.presets.tile import get_tile_preset
 from wsi_toolbox.progress import Cancelled
 from wsi_toolbox.utils.white import create_white_detector
 from wsi_toolbox.wsi_files import create_wsi_file
@@ -534,36 +533,33 @@ def _extract_reader(path: Path, align: bool, budget: float, workers: int) -> dic
     }
 
 
-def _extract_model(preset: str, device: str, budget: float) -> list[dict]:
-    tp = get_tile_preset(preset)
-    mean = torch.tensor(tp.norm_mean).view(1, 3, 1, 1)
-    std = torch.tensor(tp.norm_std).view(1, 3, 1, 1)
-    worker = _GPUWorker(tp.create_model().eval(), device, mean, std, tp.extract_fn, False)
+def _extract_model(preset: str, device: str, budget: float, accel: str) -> list[dict]:
+    enc = TileEncoder(preset, device, accel=accel)
+    worker = enc._workers[0]  # the bare forward needs the device-side callable (eager or compiled)
     rng = np.random.default_rng(0)
     out = []
     try:
-        for bs in (128, BATCH_SIZE):
+        t0 = time.perf_counter()
+        enc.warmup(PATCH_SIZE)
+        warmup_s = time.perf_counter() - t0
+        # 91 ~ one slide row after the white filter at batch 512 / 28 % tissue: exercises the bucket padding
+        for bs in (91, 128, BATCH_SIZE):
             batch = rng.integers(0, 256, (bs, PATCH_SIZE, PATCH_SIZE, 3), dtype=np.uint8)
             for _ in range(3):
-                worker.infer(batch)
+                enc.encode(batch)
             n, t0 = 0, time.perf_counter()
             while time.perf_counter() - t0 < budget / 4:
-                worker.infer(batch)
+                enc.encode(batch)
                 n += bs
             infer_s = time.perf_counter() - t0
             x = torch.randn(bs, 3, PATCH_SIZE, PATCH_SIZE, device=device).contiguous(memory_format=torch.channels_last)
             with torch.inference_mode(), torch.autocast(device_type=worker.device_type, dtype=worker.autocast_dtype):
-                fwd = (
-                    (lambda: worker.model.forward_features(x))
-                    if tp.extract_fn is None
-                    else (lambda: tp.extract_fn(worker.model, x))
-                )
                 for _ in range(3):
-                    fwd()
+                    worker.forward(x)
                 torch.cuda.synchronize()
                 k, t1 = 0, time.perf_counter()
                 while time.perf_counter() - t1 < budget / 4:
-                    fwd()
+                    worker.forward(x)
                     k += bs
                 torch.cuda.synchronize()
                 fwd_s = time.perf_counter() - t1
@@ -571,20 +567,23 @@ def _extract_model(preset: str, device: str, budget: float) -> list[dict]:
                 {
                     "part": "model",
                     "preset": preset,
+                    "accel": enc.accel,
                     "device": torch.cuda.get_device_name(device) if device.startswith("cuda") else device,
+                    "warmup_s": round(warmup_s, 2),
                     "batch": bs,
                     "infer_per_s": round(n / infer_s, 1),
                     "forward_per_s": round(k / fwd_s, 1),
                 }
             )
     finally:
-        worker.cleanup()
+        enc.close()
     return out
 
 
-def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: Path, workers: int) -> dict:
+def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: Path, workers: int, accel: str) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
-    h5 = out_dir / f"{path.name}.w{workers}.h5"
+    suffix = "" if accel == "none" else f".{accel}"
+    h5 = out_dir / f"{path.name}.w{workers}{suffix}.h5"
     marks: dict[str, float] = {}
     t0 = time.perf_counter()
 
@@ -592,17 +591,24 @@ def _extract_e2e(path: Path, preset: str, device: str, budget: float, out_dir: P
         marks.setdefault(ev.phase, time.perf_counter())
 
     cmd = FeatureExtractionCommand(
-        model=preset, preset=preset, device=device, batch_size=BATCH_SIZE, overwrite=True, read_workers=workers
+        model=preset,
+        preset=preset,
+        device=device,
+        batch_size=BATCH_SIZE,
+        overwrite=True,
+        read_workers=workers,
+        accel=accel,
     )
     try:
         res = cmd(str(h5), str(path), on_progress=sink, should_cancel=lambda: time.perf_counter() - t0 > budget)
     except Cancelled:
-        return {"part": "e2e", "file": str(path), "read_workers": workers, "cancelled_after_s": budget}
+        return {"part": "e2e", "file": str(path), "read_workers": workers, "accel": accel, "cancelled_after_s": budget}
     proc = marks["Writing"] - marks["Processing patches"]
     return {
         "part": "e2e",
         "h5": str(h5),
         "read_workers": workers,
+        "accel": res.accel,
         "kept": res.patch_count,
         "grid": res.total_patches,
         "init_s": round(marks["Processing patches"] - marks.get("Initializing model", t0), 2),
@@ -617,7 +623,7 @@ def cmd_extract(args) -> None:
     parts = set(args.parts.split(","))
     workers_list = [int(w) for w in args.read_workers.split(",")]
     if "model" in parts:
-        for rec in _extract_model(args.preset, args.device, args.budget):
+        for rec in _extract_model(args.preset, args.device, args.budget, args.accel):
             print(json.dumps(rec), flush=True)
     for f in args.files:
         path = Path(f)
@@ -628,7 +634,7 @@ def cmd_extract(args) -> None:
                     print(json.dumps({"file": path.name, **rec}), flush=True)
         if "e2e" in parts:
             for workers in workers_list:
-                rec = _extract_e2e(path, args.preset, args.device, args.budget, Path(args.out), workers)
+                rec = _extract_e2e(path, args.preset, args.device, args.budget, Path(args.out), workers, args.accel)
                 print(json.dumps({"file": path.name, **rec}), flush=True)
 
 
@@ -1013,6 +1019,9 @@ def main() -> None:
     a.add_argument("--budget", type=float, default=30.0, help="seconds per part and file")
     a.add_argument("--out", default=str(BENCH_DIR / "extract"), help="e2e writes <out>/<file name>.w<N>.h5")
     a.add_argument("--read-workers", default="1,4", help="WSIPatchReader read threads to compare, e.g. 1,2,4")
+    a.add_argument(
+        "--accel", choices=["none", "compile", "graphs"], default="none", help="TileEncoder acceleration (model, e2e)"
+    )
     a.set_defaults(fn=cmd_extract)
 
     a = sp.add_parser("extract-compare", help="feature similarity of two extract H5s at the same coordinates")

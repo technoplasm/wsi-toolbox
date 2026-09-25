@@ -1,21 +1,21 @@
 """
 Feature extraction command using foundation models.
 
-Uses get_patch_reader() to read from cache or WSI.
-Supports multi-GPU parallel inference.
+Uses get_patch_reader() to read from cache or WSI. The model lives in a ``TileEncoder``
+(multi-GPU, optional torch.compile / CUDA graphs); pass one in with ``encoder=`` to reuse it
+across calls, or let the command build a temporary one.
 """
 
 import gc
 import logging
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 
 import h5py
 import numpy as np
 from pydantic import BaseModel
 
-from ..common import resolve_devices, resolve_preset
+from ..encoder import TileEncoder, validate_accel
 from ..patch_reader import get_patch_reader
 from ..presets.tile import TilePreset
 from ..progress import UNSET, ProgressSink, Reporter, Unset
@@ -39,6 +39,7 @@ class FeatureExtractResult(BaseModel):
     batch_time_std: float = 0.0
     model: str = ""
     with_latent: bool = False
+    accel: str = "none"
     skipped: bool = False
 
     def summary(self) -> str:
@@ -51,73 +52,8 @@ class FeatureExtractResult(BaseModel):
             f"{self.total_batches} batches, "
             f"{m}m{s}s elapsed "
             f"({self.batch_time_mean:.2f}±{self.batch_time_std:.2f}s/batch), "
-            f"model={self.model}, dim={self.feature_dim}"
+            f"model={self.model}, dim={self.feature_dim}, accel={self.accel}"
         )
-
-
-class _GPUWorker:
-    """Holds a model copy on a specific GPU for parallel inference."""
-
-    def __init__(self, model, device: str, mean, std, extract_fn, with_latent: bool):
-        import torch  # noqa: PLC0415
-
-        self.device = device
-        self.extract_fn = extract_fn
-        self.with_latent = with_latent
-        self.model = model.to(device, memory_format=torch.channels_last)
-        self.mean = mean.to(device)
-        self.std = std.to(device)
-
-        # Select best autocast dtype for this device
-        if device.startswith("cuda"):
-            self.autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        else:
-            self.autocast_dtype = torch.bfloat16
-        self.device_type = "cuda" if device.startswith("cuda") else "cpu"
-
-        if extract_fn is None:
-            self.latent_size = model.patch_embed.proj.kernel_size[0]
-        else:
-            self.latent_size = 0
-
-        logger.debug(f"Worker {device}: autocast={self.autocast_dtype}, channels_last")
-
-    def infer(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
-        """Run inference on a batch. Returns (features, latent_or_None)."""
-        import torch  # noqa: PLC0415
-
-        # Upload uint8 and scale / normalise on the device: converting to float32 on the CPU first
-        # cost as much as the forward pass of a small model (ViT-S) and moved 4x the bytes.
-        x = torch.from_numpy(batch).to(self.device).permute(0, 3, 1, 2)  # BHWC->BCHW (a channels_last view)
-        x = x.float().div_(255).contiguous(memory_format=torch.channels_last)
-        x = (x - self.mean) / self.std
-
-        with torch.inference_mode(), torch.autocast(device_type=self.device_type, dtype=self.autocast_dtype):
-            if self.extract_fn is not None:
-                features = self.extract_fn(self.model, x)
-                result_features = features.float().cpu().numpy()
-                result_latent = None
-            else:
-                h_tensor = self.model.forward_features(x)
-                # Only the CLS token leaves the device unless the latent tokens are wanted
-                result_features = h_tensor[:, 0, ...].float().cpu().numpy()
-                if self.with_latent:
-                    latent_index = h_tensor.shape[1] - self.latent_size**2
-                    result_latent = h_tensor[:, latent_index:, ...].float().cpu().numpy().astype(np.float16)
-                else:
-                    result_latent = None
-                del h_tensor
-
-        del x
-        return result_features, result_latent
-
-    def cleanup(self):
-        """Release GPU resources."""
-        import torch  # noqa: PLC0415
-
-        del self.model, self.mean, self.std
-        if self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
 
 
 class FeatureExtractionCommand:
@@ -133,6 +69,10 @@ class FeatureExtractionCommand:
     Usage:
         cmd = FeatureExtractionCommand(model='uni2', preset='uni2', batch_size=256)
         result = cmd('data.h5', on_progress=TqdmSink())
+
+        # Reuse one model (and its compiled graphs) across many slides
+        enc = TileEncoder('gigapath-flash', device='cuda', accel='graphs'); enc.warmup()
+        cmd = FeatureExtractionCommand(model='gigapath-flash', encoder=enc, batch_size=512)
     """
 
     def __init__(
@@ -148,6 +88,8 @@ class FeatureExtractionCommand:
         prefetch: int = 1,
         white_detector: Callable[[np.ndarray], bool] | None = None,
         read_workers: int | None = None,
+        accel: str = "none",
+        encoder: TileEncoder | None = None,
     ):
         """
         Initialize feature extractor.
@@ -168,10 +110,27 @@ class FeatureExtractionCommand:
             white_detector: Function (patch) -> bool, True if white.
             read_workers: Threads reading the WSI in parallel (``WSIPatchReader``); None = min(4, CPUs / 2),
                 1 = no extra threads. Patches and features are the same for any value.
+            accel: Model acceleration for the encoder the command builds itself: 'none' (eager),
+                'compile' or 'graphs' (``TileEncoder``). Not allowed together with ``encoder``.
+            encoder: A prebuilt ``TileEncoder`` to reuse across calls (the command does not close it).
+                ``preset`` and ``device`` must then be None and ``with_latent`` must match the encoder's.
         """
+        validate_accel(accel)
+        if encoder is not None:
+            if preset is not None or device is not None:
+                raise ValueError("encoder= と preset= / device= は同時に指定できません: the encoder already has them")
+            if accel != "none":
+                raise ValueError("encoder= と accel= は同時に指定できません: accel belongs to the encoder")
+            if encoder.with_latent != with_latent:
+                raise ValueError(
+                    f"with_latent={with_latent} が encoder の with_latent={encoder.with_latent} と一致しません"
+                )
+
         self.model = model
         self.preset = preset
         self.device = device
+        self.accel = accel
+        self.encoder = encoder
         self.batch_size = batch_size
         self.with_latent = with_latent
         self.overwrite = overwrite
@@ -216,10 +175,6 @@ class FeatureExtractionCommand:
             return self._run(hdf5_path, wsi_path, reporter)
 
     def _run(self, hdf5_path: str, wsi_path: str | None, reporter: Reporter) -> FeatureExtractResult:
-        import copy  # noqa: PLC0415
-
-        import torch  # noqa: PLC0415
-
         # Check if already exists
         try:
             with h5py.File(hdf5_path, "r") as f:
@@ -229,16 +184,6 @@ class FeatureExtractionCommand:
                         return FeatureExtractResult(skipped=True)
         except FileNotFoundError:
             pass  # File doesn't exist yet
-
-        tile_preset = resolve_preset(self.preset)
-        devices = resolve_devices(self.device)
-        num_gpus = len(devices)
-        use_parallel = num_gpus > 1
-
-        if use_parallel:
-            logger.info(f"Using {num_gpus} GPUs for parallel inference: {devices}")
-        else:
-            logger.info(f"Using device: {devices[0]}")
 
         reporter.phase("Initializing model")
 
@@ -254,34 +199,22 @@ class FeatureExtractionCommand:
         )
         total_batches = reader.get_num_batches(self.batch_size)
 
-        workers: list[_GPUWorker] = []
-        executor: ThreadPoolExecutor | None = None
+        encoder = self.encoder
+        owns_encoder = encoder is None
         done = False
         t_start = time.perf_counter()
         batch_times: list[float] = []
 
         try:
-            extract_fn = tile_preset.extract_fn
-            mean = torch.tensor(tile_preset.norm_mean).view(1, 3, 1, 1)
-            std = torch.tensor(tile_preset.norm_std).view(1, 3, 1, 1)
-
-            if self.with_latent and extract_fn is not None:
-                logger.warning("with_latent is not supported with custom extract_fn, skipping latent extraction")
-
-            # Create workers (one per device)
-            base_model = tile_preset.create_model().eval()
-            workers.append(_GPUWorker(base_model, devices[0], mean.clone(), std.clone(), extract_fn, self.with_latent))
-            for dev in devices[1:]:
-                model_copy = copy.deepcopy(base_model)
-                workers.append(_GPUWorker(model_copy, dev, mean.clone(), std.clone(), extract_fn, self.with_latent))
+            if owns_encoder:
+                encoder = TileEncoder(self.preset, self.device, accel=self.accel, with_latent=self.with_latent)
+                if encoder.accel != "none":
+                    encoder.warmup(patch_size=self.patch_size)
 
             # Collect all features and coordinates
             all_features = []
-            all_latent = [] if self.with_latent and extract_fn is None else None
+            all_latent = [] if encoder.with_latent else None
             all_coords = []
-
-            if use_parallel:
-                executor = ThreadPoolExecutor(max_workers=num_gpus)
 
             reporter.phase("Processing patches", total=total_batches)
 
@@ -292,26 +225,10 @@ class FeatureExtractionCommand:
                     continue
 
                 t_batch = time.perf_counter()
-
-                if use_parallel:
-                    # Split batch across GPUs
-                    chunks = np.array_split(batch, num_gpus)
-                    futures = []
-                    for worker, chunk in zip(workers, chunks):
-                        if len(chunk) == 0:
-                            continue
-                        futures.append(executor.submit(worker.infer, chunk))
-
-                    for future in futures:
-                        features, latent = future.result()
-                        all_features.append(features)
-                        if latent is not None and all_latent is not None:
-                            all_latent.append(latent)
-                else:
-                    features, latent = workers[0].infer(batch)
-                    all_features.append(features)
-                    if latent is not None and all_latent is not None:
-                        all_latent.append(latent)
+                features, latent = encoder.encode(batch)
+                all_features.append(features)
+                if latent is not None and all_latent is not None:
+                    all_latent.append(latent)
 
                 batch_times.append(time.perf_counter() - t_batch)
                 all_coords.extend(coords)
@@ -357,7 +274,8 @@ class FeatureExtractionCommand:
                 for key, value in reader.metadata.items():
                     grp.attrs[key] = value
                 grp.attrs["patch_count"] = patch_count
-                grp.attrs["preset"] = tile_preset.name
+                grp.attrs["preset"] = encoder.preset.name
+                grp.attrs["accel"] = encoder.accel
 
                 # Also write to root attrs (if not already present)
                 write_root_metadata(f, reader.metadata, patch_count)
@@ -375,16 +293,12 @@ class FeatureExtractionCommand:
                 batch_time_std=float(bt.std()),
                 model=self.model,
                 with_latent=all_latent is not None,
+                accel=encoder.accel,
             )
 
         finally:
-            if executor is not None:
-                executor.shutdown(wait=True)
-            for worker in workers:
-                worker.cleanup()
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
+            if owns_encoder and encoder is not None:
+                encoder.close()
             gc.collect()
 
             if not done:

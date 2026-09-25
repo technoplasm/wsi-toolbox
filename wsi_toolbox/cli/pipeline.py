@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic_autocli import param
 
 from .. import commands
+from ..encoder import ACCEL_NAMES
 from ..presets.slide import resolve_tile_model
 from ..utils.white import create_white_detector
 from ..wsi_files import WSI_EXTENSIONS, resolve_h5_path
@@ -80,6 +81,12 @@ class PipelineMixin:
         read_workers: int = param(
             0, l="--read-workers", description="WSI read threads (0 = min(4, CPUs/2), 1 = single-threaded)"
         )
+        accel: str = param(
+            "none",
+            l="--accel",
+            choices=list(ACCEL_NAMES),
+            description="Model acceleration: none (eager), compile (torch.compile), graphs (+ CUDA graphs)",
+        )
 
     def run_extract(self, a: ExtractArgs):
         """Extract patch features with a foundation model preset."""
@@ -106,6 +113,7 @@ class PipelineMixin:
             target_mpp=a.target_mpp,
             prefetch=a.prefetch,
             read_workers=a.read_workers or None,
+            accel=a.accel,
         )
         result = cmd(h5_path, wsi_path=wsi_path, on_progress=self.sink)
 

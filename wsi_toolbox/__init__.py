@@ -81,6 +81,9 @@ from .common import (
 # DZI serving
 from .dzi import DziGenerator, DziLayout, DziTileNotFound, encode_tile
 
+# Tile encoder (model + acceleration, reusable across commands)
+from .encoder import ACCEL_NAMES, TileEncoder
+
 # Patch readers
 from .patch_reader import (
     CachePatchReader,
@@ -171,6 +174,8 @@ __all__ = [
     "CacheCommand",
     "Wsi2HDF5Command",  # Deprecated alias
     "FeatureExtractionCommand",
+    "TileEncoder",
+    "ACCEL_NAMES",
     "AggregateCommand",
     "ClusteringCommand",
     "ClusterWithUmapCommand",
