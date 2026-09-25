@@ -597,6 +597,150 @@ uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.ndpi
 WT_TEST_WSI=a.ndpi:b.svs uv run pytest tests/test_patch_reader.py -k parallel_reads_match_on_real
 ```
 
+## 12. GB10（DGX Spark）: cu130、torch.compile、FP8（2026-09-25）
+
+問い（ken）: 本番機（DGX Spark、GB10、aarch64）で extract の GPU 側をさらに速くできるか。§11 で GPU 律速になった
+ので、残る手は GPU 側（CUDA のバージョン、torch.compile、低精度）。
+
+条件: 本番機（GB10、統合メモリ 128 GB、Grace 20 コア）、プリセット `gigapath-flash`（ViT-S/16、384 次元）、
+入力は pyramid.tif、`batch_size=512`、読み手 4 ワーカー、ptp 白判定。計測中 GPU は他に使われていない
+（`nvidia-smi`、compute-jobs は待機中）。特徴量の比較は本番の H5（cu128・eager で作ったもの）に対して。
+
+### 12.1 cu128 → cu130: bf16 の Tensor Core が使われていなかった
+
+GEMM 8192³ の実効値（`torch.matmul`、3 回の中央値）:
+
+| 精度 | cu128 | cu130 |
+|---|---:|---:|
+| bf16 | 10.7 TFLOPS | **97 TFLOPS** |
+| fp16 | 10.6 | 97.5 |
+| tf32 | 37 | 40 |
+| int8 | 58 TOPS | 59 TOPS |
+| device-to-device コピー | 240 GB/s | 240 GB/s |
+
+クロック 2,158 MHz・80 W で張り付き、スロットリング無し。つまり **cuBLAS 12.8 は sm_121 向けの bf16 / fp16
+カーネルを持っておらず**、cu128 の torch は GB10 で Tensor Core を使えていなかった（tf32・int8 は両方とも同じ）。
+
+実スライドの extract（eager、`accel="none"`）:
+
+| スライド | 残 / 格子 | cu128 | cu130 |
+|---|---:|---:|---:|
+| 25-0452_1 | 9,823 / 35,640 | 16.5 s | **12.0 s** |
+| 25-0452_2 | 12,477 / 44,114 | 20.5 s | **14.6 s** |
+
+- cu128 の特徴量は本番 H5 と**ビット一致**（同じカーネルなので当然）。cu130 は bf16 カーネルが替わるので
+  cos 平均 0.99998 / 最小 0.99993、pyramid の特徴量で本番 H5 を最近傍検索して自分自身が出る割合 100 %。
+- 読み手だけ（pyramid.tif）: 4 ワーカーで格子 9,700 パッチ/s（残 2,700/s）、8 ワーカーで 8,200（遅くなる）。
+  GPU の 1,237 パッチ/s より十分速いので **GPU 律速**であって読み手ではない。
+- **決定: Linux はアーキテクチャを問わず cu130 の index を使う**（`pyproject.toml`。x86_64 / RTX 3090・
+  ドライバ 615 でも動く前提。ken 判断）。cu130 の torch が要求する `nvidia-*-cu13` 系のホイールは aarch64 も
+  PyPI にある。
+
+### 12.2 torch.compile と CUDA graphs（`TileEncoder(accel=...)`）
+
+`_GPUWorker.infer`（現 `TileEncoder.encode`）を合成 uint8 バッチで、cu130:
+
+| 方式 | パッチ/s | 備考 |
+|---|---:|---|
+| eager | 1,237 | バッチ 48〜1,024 で**変わらない**（フラット）。バッチを大きくしても速くならない |
+| `torch.compile(dynamic=True)` | 1,600 | それでも再コンパイルが起きる |
+| `torch.compile(mode="reduce-overhead", dynamic=False)` + 固定バケット 64/128/256/512 | **1,870〜1,910** | 形ごとに初回 4〜5 s（cold）、Inductor のディスクキャッシュが温かければ 0.5〜1.7 s |
+| 同 `mode="max-autotune"` | 1,880 | 形ごとに 8〜11 s。速くならない |
+| `torch.compile(dynamic=False)` を実スライドにそのまま | 44〜85 s（eager 12 s） | 行ごとにバッチ長が変わり**毎行再コンパイル** |
+
+- 読み手のバッチは「1 行の帯 − 白パッチ」なので長さが毎回違う（バッチ 512・組織率 28 % で平均 ≈ 90）。
+  `dynamic=False` はその形ごとにコンパイルし直すので、そのままでは使えない。そこで **バッチを固定のバケット
+  （既定 64 / 128 / 256 / 512）まで最後のパッチを繰り返して詰め、結果を元の長さに切る**（`_pad_to_bucket`）。
+  ViT の attention はサンプルごとに独立なので、詰め物は実パッチの特徴量に影響しない。
+- 速くなるのは **CUDA graphs（`reduce-overhead`）でカーネル起動のオーバーヘッドが消える**ぶん。ViT-S は 1 パッチ
+  あたりの計算が小さく、eager では起動が律速だった（バッチを増やしても伸びないのがその証拠）。
+- 詰め物は捨てる計算なので、実効値はバッチの埋まり具合で決まる。バケットぴったりで 1,870〜1,910、平均 90 の
+  バッチ（→ 128 に詰める、29 % が無駄）なら実効はその 7 割。`TileEncoder(buckets=...)` で刻みを変えられる
+  （細かいほどコンパイルする形が増える）。実装後の実測は §12.4。
+- 実装: `wsi_toolbox/encoder.py` の `TileEncoder`（`accel="none" | "compile" | "graphs"`）。モデルを
+  コマンドの外で持てるので、vision の compute のような常駐プロセスはプロセスにつき 1 回だけコンパイルすればよい
+  （`warmup()`）。`FeatureExtractionCommand(encoder=enc)` / `wt extract --accel graphs`。
+
+### 12.3 FP8（測って却下）
+
+`torch._scaled_mm`（e4m3、テンソル単位スケール）と torchao の `Float8DynamicActivationFloat8Weight`（行単位）:
+
+- GEMM 単体は cu130 で bf16 の 1.3〜1.8 倍。ただし活性化の量子化（fp8 への変換）が融合されないと **0.3〜0.7 倍**
+  （量子化のメモリ往復で相殺）。
+- fp8 + compile の forward、ViT-S（gigapath-flash）: 1,966 パッチ/s vs bf16 + compile 2,030。**速くならない**
+  （GEMM 律速ではない）。
+- ViT-H（uni2 の形、乱数重み）: 199 vs 153 パッチ/s（1.3 倍）。大きいモデルなら効く。
+- 実スライドで fp8 + compile の特徴量を本番 H5 と比べると cos 平均 0.9966 / 最小 0.984（bf16 の 0.99998 に対し
+  誤差が 2 桁大きい）。
+- **gigapath-flash では却下**。uni2 など GEMM 律速のモデルを使うときに再検討。
+
+### 12.4 実装後の確認（`TileEncoder`、この節の実装コミット）
+
+（本番機、cu130、gigapath-flash、合成 uint8 バッチ 256 px。`buckets` は既定の 64/128/256/512）
+
+合成バッチ（`TileEncoder.encode`、H2D + 正規化 + forward + D2H、パッチ/s。バケットは既定の 4 段 = 64/128/256/512、
+「16 段」は 32 刻み `tuple(range(32, 513, 32))`）:
+
+| バッチ長 | 32 | 64 | 91 | 128 | 200 | 256 | 512 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `none`（eager） | 1,440 | 1,262 | 1,230 | 1,232 | 1,233 | 1,238 | 1,236 |
+| `compile`、4 段 | 924 | 1,853 | 1,315 | 1,859 | 1,439 | 1,848 | 1,893 |
+| `graphs`、4 段 | 938 | **1,883** | 1,316 | 1,854 | 1,424 | 1,824 | 1,861 |
+| `graphs`、16 段 | 2,055 | 1,883 | **1,759** | 1,853 | 1,626 | 1,822 | 1,862 |
+
+- バケットぴったり（64 / 128 / 256 / 512）なら eager の 1.5 倍（1,850〜1,890）。`compile` と `graphs` は同じ速さで、
+  差は warmup（`compile` は形ごとにコンパイル、`graphs` はそれに加えて数回流して graph を記録）。
+- **詰め物の分だけ落ちる**: 91 → 128 に詰めると 1,316（29 % が無駄）、32 → 64 で 938。16 段なら 91 → 96 で 1,759。
+- 実パッチの特徴量は eager と cos 最小 0.99989 / 平均 0.99997（5 / 91 / 512 / 700 パッチで確認。bf16 の
+  カーネルが替わるぶんで、詰め物の影響ではない）。
+- warmup: cold（Inductor のキャッシュ無し）で 4 段 17.6 s、キャッシュが温かければ 4 段 4.1〜4.7 s、16 段 15 s。
+  2 回目の `warmup()` は 1.7 s（既にコンパイル済みの形をなぞるだけ）。
+
+実スライド 25-0452_1（pyramid.tif、残 9,823 / 格子 35,640、組織 28 %、幅 270 パッチ = バッチ 512 で 1 行 ≈ 74 パッチ）。
+`FeatureExtractionCommand(encoder=enc)` の「Processing patches」フェーズの秒数（warmup 済みの encoder、
+読み手 4 ワーカー、`prefetch=2`）:
+
+| | バッチ 512（1 行） | 1,024（3 行） | 2,048（7 行） |
+|---|---:|---:|---:|
+| `none` | 9.3 s（1,058 パッチ/s） | 9.5 s | 9.8 s |
+| `graphs`、4 段 | 9.1 s | 8.9 s | **7.7 s**（1,272/s） |
+| `graphs`、16 段 | **7.4 s**（1,328/s） | **7.2 s**（1,364/s） | 7.3 s |
+
+- **実スライドでの伸びは 1.25〜1.3 倍**で、合成の 1.5 倍には届かない。理由は 2 つ。(1) 詰め物: 1 行 ≈ 74 パッチは
+  4 段では 128 に詰まる（42 % 無駄）ので `-B 512` では eager とほぼ同じ。バッチを 2,048（7 行 ≈ 515）にするか、
+  32 刻みのバケットにすると埋まる。(2) eager でも実スライドは 1,058 パッチ/s と合成の 1,237 より 15 % 遅い
+  （読み手からの受け渡し・行の np.array 化・H2D が GPU と直列に入る）。この分は compile では消えない。
+- **既定のバケットは 4 段のまま**（コンパイルする形が少なく warmup が短い。vision の compute はこの既定に
+  合わせて実装する）。常駐プロセスで最速を取るなら `TileEncoder(buckets=tuple(range(32, 513, 32)))`
+  （warmup cold で 1 分前後、温かければ 15 s）か、`batch_size` を 2,048 に。
+- CLI の一発実行 `wt extract --accel graphs` は warmup をその場で払うので、1 枚だけなら eager より遅い
+  （wall 18.2 s vs 12.8 s）。**`accel` は常駐（`TileEncoder` を持ち回す）向け**。既定は `none`。
+- 本番 H5（cu128・eager）との一致: `graphs` cos 平均 0.99997 / 最小 0.99978 / p1 0.99993、`none`（cu130）
+  0.99998 / 0.99994 / 0.99996。自己最近傍はどちらも 100 %。残ったパッチ数・座標は 9,823 で完全一致。
+- ついでに直したこと: CLI の `fix_global_seed` が `torch.use_deterministic_algorithms = True` と**関数を bool で
+  上書き**していた。eager では無害だったが dynamo がこの関数を呼ぶので `--accel` が
+  `TypeError: 'bool' object is not callable` で落ちた。代入を削除（数値は変わらない）。
+
+### 12.5 環境の注意
+
+- **システムの python 3.12 には `Python.h` が無い**（`python3-dev` 相当が入っていない）ので triton のコンパイルが
+  失敗し、`torch.compile` が使えない。uv 管理の CPython にはヘッダがある → `pyproject.toml` に
+  `[tool.uv] python-preference = "only-managed"`。`uv sync` が uv の Python で `.venv` を作り直す。
+- 原本の NDPI を読んで本番 H5（pyramid.tif から作ったもの）と比べると cos 0.972 になる。これは §10.4 の
+  JPEG Q85 再圧縮の差で、数値計算が変わったわけではない。**比較するときは入力を揃える。**
+
+再実行:
+
+```bash
+# GPU 側だけ（バッチ 91 / 128 / 512、warmup の秒数も出る）
+uv run python scripts/bench_pyramid.py extract --parts model --accel none
+uv run python scripts/bench_pyramid.py extract --parts model --accel graphs
+# end-to-end（data/bench/extract/<ファイル名>.w4.graphs.h5 に書く）と特徴量の比較
+uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-workers 4 --accel none
+uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-workers 4 --accel graphs
+uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.pyramid.tif.w4.h5 data/bench/extract/a.pyramid.tif.w4.graphs.h5
+```
+
 ## 付録: 全結果（2026-09-24、vision の旧スクリプトの `report` 出力）
 
 列は旧スクリプトのもの（`independent` = スレッドごとに別ハンドル、`(openslide)` = openslide で開いた変種、`(no-white)` = 白判定なし）。

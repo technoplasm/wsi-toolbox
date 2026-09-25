@@ -16,7 +16,7 @@ pip install wsi-toolbox
 | Version | `__version__` |
 | Defaults | `Defaults`, `defaults`, `get_defaults`, `set_default_preset`, `set_default_device`, `set_default_progress`, `set_default_cluster_cmap`, `set_verbose`, `resolve_preset`, `resolve_devices` |
 | Progress | `ProgressEvent`, `ProgressSink`, `Reporter`, `Cancelled`, `UNSET`, `TqdmSink`, `RichSink`, `StreamlitSink`, `LoggingSink`, `MultiSink`, `NullSink`, `resolve_sink` |
-| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand`, `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand`, `PyramidCommand` (+ `VipsError`, `vips_available`, `read_pyramid_info`) |
+| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand` (+ `TileEncoder`, `ACCEL_NAMES`), `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand`, `PyramidCommand` (+ `VipsError`, `vips_available`, `read_pyramid_info`) |
 | Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult`, `PyramidInfo`, `PyramidResult` |
 | WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
 | DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
@@ -144,12 +144,53 @@ wt.FeatureExtractionCommand(
     target_mpp: float = 0.5,
     prefetch: int = 1,
     white_detector: Callable[[np.ndarray], bool] | None = None,
+    read_workers: int | None = None,         # WSI read threads; None -> min(4, CPUs / 2)
+    accel: str = 'none',                     # 'none' | 'compile' | 'graphs' for the encoder the command builds itself
+    encoder: TileEncoder | None = None,      # reuse a prebuilt encoder (then preset/device must be None, accel 'none')
 )
 cmd(hdf5_path: str, wsi_path: str | None = None, *, on_progress=UNSET, should_cancel=None) -> FeatureExtractResult
 ```
 
 `FeatureExtractResult`: `feature_dim`, `patch_count`, `total_patches`, `total_batches`, `elapsed`,
-`batch_time_mean`, `batch_time_std`, `model`, `with_latent`, `skipped`; `.summary()` gives a one-line string.
+`batch_time_mean`, `batch_time_std`, `model`, `with_latent`, `accel`, `skipped`; `.summary()` gives a one-line
+string. `accel` (also written to the H5 group attrs) is what actually ran: `'none'` when a compiled mode was
+requested on the CPU.
+
+#### TileEncoder
+
+The loaded tile model(s) plus the acceleration choice. `FeatureExtractionCommand` builds one per call unless
+you pass `encoder=`; build it once in a long-lived process so `torch.compile` runs once, not per slide.
+
+```python
+wt.TileEncoder(
+    preset: str | TilePreset | None = None,  # None -> defaults.preset
+    device: str | None = None,               # None -> defaults.device; 'cuda:0,1' -> one model copy per GPU
+    *,
+    accel: str = 'none',                     # 'none' (eager) | 'compile' (torch.compile, dynamic=False)
+                                             # | 'graphs' (+ mode='reduce-overhead', CUDA graphs); CUDA only
+    buckets: tuple[int, ...] = (64, 128, 256, 512),  # batch shapes the compiled model is specialised for
+    with_latent: bool = False,               # must match the command's with_latent
+)
+enc.preset: TilePreset
+enc.devices: list[str]
+enc.accel: str                               # what actually runs ('none' on the CPU)
+enc.feature_dim: int | None                  # known after warmup() / the first encode()
+enc.warmup(patch_size: int = 256) -> None    # compile every bucket shape now (no-op for 'none')
+enc.encode(batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]  # uint8 (n, H, W, 3) -> (features (n, dim) float32, latent float16 | None)
+enc.close() -> None                          # also a context manager
+```
+
+`encode` is thread-safe (one lock per device; CUDA graphs use static buffers). With `accel != 'none'` each
+batch is padded to the smallest bucket >= its size (larger batches: chunks of the largest bucket) by repeating
+the last patch, and the padding is sliced off again. The command never closes an encoder it was given.
+
+```python
+with wt.TileEncoder('gigapath-flash', device='cuda', accel='graphs') as enc:
+    enc.warmup()
+    cmd = wt.FeatureExtractionCommand(model='gigapath-flash', encoder=enc, batch_size=512)
+    for slide in slides:
+        cmd(slide.with_suffix('.h5'), wsi_path=slide, on_progress=None)
+```
 
 ```python
 import wsi_toolbox as wt

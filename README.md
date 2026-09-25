@@ -87,6 +87,43 @@ For the Streamlit app, set via environment variable:
 WT_DEVICE=cuda:0 uv run task app
 ```
 
+### Acceleration (`TileEncoder`, `accel`)
+
+`TileEncoder` holds the loaded tile model(s) and the acceleration choice. Build it once, call `warmup()`,
+and pass it to as many `FeatureExtractionCommand` calls as you like (a long-lived service pays the compile
+cost once per process). Without `encoder=` the command builds a temporary encoder per call.
+
+```python
+enc = wt.TileEncoder('gigapath-flash', device='cuda', accel='graphs')
+enc.warmup()                                   # compiles every bucket shape (~5 s each cold, ~1 s with a warm cache)
+cmd = wt.FeatureExtractionCommand(model='gigapath-flash', encoder=enc, batch_size=512)
+cmd('a.h5', wsi_path='a.ndpi'); cmd('b.h5', wsi_path='b.ndpi')
+enc.close()
+```
+
+```bash
+wt extract -i sample.ndpi --preset gigapath-flash --accel graphs   # none (default) | compile | graphs
+```
+
+| `accel` | What it does |
+|---|---|
+| `none` | Eager forward on each reader batch (bit-identical to earlier releases) |
+| `compile` | `torch.compile(dynamic=False)`; every batch is padded to a fixed bucket (64/128/256/512 patches) so there is one graph per shape |
+| `graphs` | The same plus CUDA graphs (`mode="reduce-overhead"`), which removes the kernel-launch overhead of a small model such as GigaPath-Flash (ViT-S) |
+
+Padding repeats the last patch and is sliced off again, so features do not depend on it (cosine to eager
+> 0.9999; the bf16 kernels differ slightly). The padding is wasted compute, so the gain depends on how full
+the reader's row batches are: exactly filled buckets run 1.5x faster than eager on a GB10, a real slide
+1.25-1.3x (`_docs/benchmark-pyramid-dzi.md` §12.4). Finer buckets (`buckets=tuple(range(32, 513, 32))`) or a
+larger `batch_size` (more rows per batch) fill them better at the cost of more shapes to compile. `accel` is
+meant for long-lived processes: a one-shot `wt extract --accel graphs` pays the warmup inside the run and is
+slower than eager for a single slide. CUDA only; on the CPU `accel` falls back to `none` with a warning. The
+H5 group attrs and `FeatureExtractResult.accel` record what ran.
+
+Blackwell / GB10 (DGX Spark): the `+cu128` torch wheels have no bf16 Tensor Core GEMM for sm_121 (10.7 vs
+97 TFLOPS), so `pyproject.toml` pins the `cu130` index for Linux and `uv` uses its own managed CPython
+(`python-preference = "only-managed"`; `torch.compile` needs `Python.h`, which the hosts' system Python lacks).
+
 ## Quick Start
 
 ```bash

@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `TileEncoder` (`wsi_toolbox.encoder`, exported as `wt.TileEncoder`): the loaded tile model(s) plus the
+  acceleration choice, built once and shared by many `FeatureExtractionCommand` calls (`encoder=`). One model
+  copy per device, `encode()` splits a batch across GPUs and is thread-safe. `accel='none'` is the eager path
+  of 0.6.0 (bit-identical features); `'compile'` is `torch.compile(dynamic=False)` and `'graphs'` adds CUDA
+  graphs (`mode='reduce-overhead'`), both with batches padded to fixed buckets (64/128/256/512 by default,
+  `buckets=`) so that every shape compiles once; `warmup()` compiles them up front. CUDA only (falls back to
+  `'none'` with a warning on the CPU).
+- `FeatureExtractionCommand(accel=..., encoder=...)`; `FeatureExtractResult.accel` and the H5 group attr
+  `accel` record what ran. CLI `wt extract --accel none|compile|graphs`.
+- `scripts/bench_pyramid.py extract --accel` for the `model` / `e2e` parts; `_docs/benchmark-pyramid-dzi.md`
+  §12 (GB10: cu128 vs cu130, torch.compile / CUDA graphs, FP8 measured and rejected).
+
+### Changed
+
+- Linux installs get the `cu130` torch / torchvision wheels (both x86_64 and aarch64): the `cu128` wheels have no
+  usable bf16 Tensor Core GEMM on Blackwell GB10 (sm_121), extract was 1.4x slower there.
+- `[tool.uv] python-preference = "only-managed"`: `torch.compile` needs triton, which compiles against
+  `Python.h`; the hosts' system Python 3.12 ships without headers.
+
+### Fixed
+
+- `fix_global_seed` (CLI) assigned `torch.use_deterministic_algorithms = True`, replacing the torch function
+  with a bool; harmless in eager mode but `torch.compile` (dynamo) calls it. The assignment is removed.
+
+### Removed
+
+- `commands.feature_extraction._GPUWorker` (private) is replaced by `TileEncoder`.
+
 ## 0.6.0 (2026-09-25)
 
 Breaking release: progress, preset and device become command arguments. Migration guide:
