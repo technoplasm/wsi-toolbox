@@ -74,6 +74,9 @@ compile = ["flash-attn"]
 [tool.uv]
 no-build-isolation-package = ["flash-attn"]
 preview = true
+# torch.compile (TileEncoder accel="compile"/"graphs") needs triton, which compiles against Python.h;
+# the system Python on the hosts ships without headers, uv-managed CPython has them.
+python-preference = "only-managed"
 
 # [tool.uv.sources]
 # # x86_64 Linux: use CUDA 12.1 wheels, otherwise: use default PyPI (CPU)
@@ -84,17 +87,20 @@ preview = true
 #     { index = "pytorch", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 # ]
 
+# Linux: CUDA 13.0 wheels for every architecture (x86_64 and aarch64). The cu128 wheels have no
+# usable bf16 Tensor Core GEMM on Blackwell GB10 (sm_121): 10.7 vs 97 TFLOPS, extract 1.4x slower
+# (_docs/benchmark-pyramid-dzi.md §12).
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux'" },
 ]
 torchvision = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux'" },
 ]
 
 [tool.uv.extra-build-dependencies]
