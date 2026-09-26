@@ -114,7 +114,8 @@ wt extract -i sample.ndpi --preset gigapath-flash --accel graphs   # none (defau
 Padding repeats the last patch and is sliced off again, so features do not depend on it (cosine to eager
 > 0.9999; the bf16 kernels differ slightly). The padding is wasted compute, so the gain depends on how full
 the reader's row batches are: exactly filled buckets run 1.5x faster than eager on a GB10, a real slide
-1.25-1.3x (`_docs/benchmark-pyramid-dzi.md` §12.4). Finer buckets (`buckets=tuple(range(32, 513, 32))`) or a
+1.25-1.3x (`_docs/benchmark-pyramid-dzi.md` §12.4). On an RTX 3090 the gain on filled buckets is only
+1.2-1.25x, and a real slide at `batch_size=512` is 7-15 % slower than eager (§13). Finer buckets (`buckets=tuple(range(32, 513, 32))`) or a
 larger `batch_size` (more rows per batch) fill them better at the cost of more shapes to compile. `accel` is
 meant for long-lived processes: a one-shot `wt extract --accel graphs` pays the warmup inside the run and is
 slower than eager for a single slide. CUDA only; on the CPU `accel` falls back to `none` with a warning. The
@@ -123,6 +124,8 @@ H5 group attrs and `FeatureExtractResult.accel` record what ran.
 Blackwell / GB10 (DGX Spark): the `+cu128` torch wheels have no bf16 Tensor Core GEMM for sm_121 (10.7 vs
 97 TFLOPS), so `pyproject.toml` pins the `cu130` index for Linux and `uv` uses its own managed CPython
 (`python-preference = "only-managed"`; `torch.compile` needs `Python.h`, which the hosts' system Python lacks).
+The `cu130` wheels also run on x86_64 / RTX 3090 (driver 615) at the same speed as `cu128`, with eager features
+matching to cosine > 0.99998 (§13).
 
 ## Quick Start
 

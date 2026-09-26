@@ -632,9 +632,9 @@ GEMM 8192³ の実効値（`torch.matmul`、3 回の中央値）:
   cos 平均 0.99998 / 最小 0.99993、pyramid の特徴量で本番 H5 を最近傍検索して自分自身が出る割合 100 %。
 - 読み手だけ（pyramid.tif）: 4 ワーカーで格子 9,700 パッチ/s（残 2,700/s）、8 ワーカーで 8,200（遅くなる）。
   GPU の 1,237 パッチ/s より十分速いので **GPU 律速**であって読み手ではない。
-- **決定: Linux はアーキテクチャを問わず cu130 の index を使う**（`pyproject.toml`。x86_64 / RTX 3090・
-  ドライバ 615 でも動く前提。ken 判断）。cu130 の torch が要求する `nvidia-*-cu13` 系のホイールは aarch64 も
-  PyPI にある。
+- **決定: Linux はアーキテクチャを問わず cu130 の index を使う**（`pyproject.toml`、ken 判断）。x86_64 の
+  RTX 3090・ドライバ 615 でも動き、速度・特徴量は cu128 と同じ（§13）。cu130 の torch が要求する `nvidia-*-cu13`
+  系のホイールは aarch64 も PyPI にある。
 
 ### 12.2 torch.compile と CUDA graphs（`TileEncoder(accel=...)`）
 
@@ -739,6 +739,98 @@ uv run python scripts/bench_pyramid.py extract --parts model --accel graphs
 uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-workers 4 --accel none
 uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-workers 4 --accel graphs
 uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/a.pyramid.tif.w4.h5 data/bench/extract/a.pyramid.tif.w4.graphs.h5
+```
+
+## 13. RTX 3090: cu128 → cu130（2026-09-27）
+
+問い: §12.1 で Linux を cu130 に揃えた。開発機の RTX 3090（Ampere、sm_86）で cu130 は動くか、速度と特徴量は変わるか。
+`accel="graphs"` は 3090 でも効くか。
+
+条件: RTX 3090（24 GB、ドライバ 615.71）、Ryzen 9 5950X、SSD warm、プリセット `gigapath-flash`、入力は §10〜11 と
+同じ pyramid.tif 2 本（`24mumnvq.pyramid.tif` 残 27,456 / 格子 55,216、`7akahdcu.pyramid.tif` 残 4,216 / 格子 19,152）、
+`batch_size=512`、読み手 4 ワーカー、ptp 白判定、`buckets` は既定の 64/128/256/512。計測中 GPU は他に使われていない
+（`nvidia-smi`、vision の compute-jobs は待機中）。
+
+| | cu128 | cu130 |
+|---|---|---|
+| torch / torchvision / triton | 2.10.0 / 0.25.0 / 3.6.0 | 2.14.0 / 0.29.0 / 3.8.0 |
+| CUDA ランタイム / cuDNN | 12.8 / 9.10 | 13.0 / 9.24 |
+
+同じ `.venv` を `uv sync` で入れ替えた（`uv.lock` は cu130）。torch 本体の版も違うので、差は CUDA だけのものではない。
+
+### 13.1 GEMM（8192³、`torch.matmul`、3 回の中央値）
+
+| 精度 | cu128 | cu130 |
+|---|---:|---:|
+| bf16 | 71.6 TFLOPS | 75.5 TFLOPS |
+| fp16 | 70.1 | 73.7 |
+| tf32 | 37.5 | 36.4 |
+| int8（`torch._int_mm`） | 229 TOPS | 260 TOPS |
+| device-to-device コピー | 833 GB/s | 833 GB/s |
+
+sm_86 は cuBLAS 12.8 でも bf16 の Tensor Core カーネルを持っているので、GB10（§12.1、10.7 → 97）のような段差は無い。
+
+### 13.2 GPU 単体（`TileEncoder.encode`、合成 uint8 バッチ、パッチ/s）
+
+| | バッチ 91 | 128 | 512 | forward だけ（512） | warmup |
+|---|---:|---:|---:|---:|---:|
+| cu128 `none` | 2,205 | 2,264 | 2,377 | 2,505 | — |
+| cu128 `graphs` | 1,896 | 2,619 | 2,996 | 3,181 | 23.9 s |
+| cu130 `none` | 2,223 | 2,292 | **2,409** | 2,536 | — |
+| cu130 `graphs` | 1,992 | 2,777 | **3,003** | 3,205 | 26.1 s |
+
+- eager は cu130 で 1〜1.5 % 速いだけ（誤差程度）。
+- `graphs` はバケットぴったり（128 / 512）で eager の 1.2〜1.25 倍。GB10 の 1.5 倍（§12.4）より小さい。3090 は
+  eager でもカーネル起動がそれほど律速になっていない。91 → 128 に詰めると eager より遅い。
+- warmup は Inductor のキャッシュが無い状態（その torch の版で初回）の値。キャッシュが温かいと e2e の初期化が
+  1.8 s（`none`）→ 7.3 s（`graphs`）で、差の 5.5 s が warmup。
+
+### 13.3 end-to-end（`FeatureExtractionCommand`、「Processing patches」フェーズの秒数、2 回）
+
+| | 24mumnvq（残 27,456） | 残パッチ/s | 7akahdcu（残 4,216） |
+|---|---:|---:|---:|
+| cu128 `none` | 13.67 / 13.67 s | 2,008 | 3.32 / 3.24 s |
+| cu128 `graphs` | 15.34 / 15.39 s | 1,787 | 3.45 / 3.56 s |
+| cu130 `none` | **13.40 / 13.46 s** | **2,044** | 3.11 / 3.29 s |
+| cu130 `graphs` | 15.21 / 15.80 s | 1,770 | 3.56 / 3.41 s |
+| 参考: cu130、バッチ 2,048、`none` / `graphs` | 14.41 s / 13.31 s | 1,905 / 2,063 | |
+
+- **cu128 と cu130 は同じ速さ**（24mumnvq で 2 % 差）。§11 の 3090 の値（13.5 s、バッチ 256）とも揃う。
+- **`graphs` は 3090 の実スライドでは遅い**（24mumnvq で 1.12〜1.15 倍、7akahdcu で 1.07 倍の時間）。24mumnvq は
+  幅 272 パッチなのでバッチ 512 は 1 行、白判定後の平均 ≈ 135 パッチが 256 に詰まり、半分近くが捨てる計算になる。
+  合成で 1.25 倍の上乗せでは取り返せない。バッチ 2,048（7 行 ≈ 950 パッチ → 512 × 2 に詰める）なら詰め物が
+  1 割弱に減り、`graphs` は eager のバッチ 512 と同じ程度（13.3 s）まで戻る。32 刻みのバケットは測っていない。
+
+### 13.4 特徴量の一致（`data/bench/extract/cu128/` と `cu130/` の H5、全パッチ）
+
+| 比較 | 24mumnvq cos 平均 / 最小 | 7akahdcu cos 平均 / 最小 | 自己最近傍 |
+|---|---:|---:|---:|
+| cu128 `none` vs cu130 `none` | > 0.9999999 / 0.99998 | > 0.9999999 / 0.99998 | 100 % |
+| cu128 `none` vs cu130 `graphs` | 0.99997 / 0.99986 | 0.99997 / 0.99978 | 100 % |
+| cu128 `none` vs cu128 `graphs` | 0.99996 / 0.99974 | 0.99996 / 0.99976 | 100 % |
+
+- 残ったパッチ数と座標はすべて一致。cu128 と cu130 の eager は**行の 99.98〜99.99 % がビット一致**で、違うのは数行だけ
+  （sm_86 では同じ bf16 カーネルが選ばれる）。自己最近傍は全パッチで検索した値。
+- cu128 `none`・バッチ 512 の H5 は §11 のバッチ 256 の H5（`data/bench/extract/24mumnvq.pyramid.tif.w4.h5`）と
+  24mumnvq でビット一致、7akahdcu で cos 最小 0.99997。
+- `graphs` のずれ（cos 最小 0.9997〜0.9999）は §12.4 の GB10 と同じ大きさ。
+
+### 13.5 結論
+
+- **cu130 は RTX 3090（ドライバ 615）でそのまま動き、速度も特徴量も cu128 と同じ。** 開発機も cu130 のままでよい。
+- **3090 では `accel="graphs"` は既定のバケット・バッチ 512 だと逆効果。** GPU 単体の上乗せが 1.2〜1.25 倍と小さく、
+  詰め物で消える。3090 で回すなら `none`。
+
+再実行（バッチ 512 は `bench_pyramid.BATCH_SIZE` を 512 にして流した。スクリプトの既定は 256。GEMM は
+8192³ の `a @ b` を 10 回流す計測を 3 回やった中央値で、スクリプトには入っていない）:
+
+```bash
+uv run python scripts/bench_pyramid.py extract --parts model --accel none
+uv run python scripts/bench_pyramid.py extract --parts model --accel graphs
+uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-workers 4 --accel none --out data/bench/extract/cu130
+uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-workers 4 --accel graphs --out data/bench/extract/cu130
+# cu128 は旧 .venv（torch 2.10.0+cu128）で同じコマンドを --out data/bench/extract/cu128 に
+uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/cu128/a.pyramid.tif.w4.h5 data/bench/extract/cu130/a.pyramid.tif.w4.h5
 ```
 
 ## 付録: 全結果（2026-09-24、vision の旧スクリプトの `report` 出力）
