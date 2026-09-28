@@ -81,6 +81,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import h5py
+import imagecodecs
 import numpy as np
 import openslide
 import tifffile
@@ -265,7 +266,7 @@ def environment() -> dict:
         "wsi_toolbox_commit": commit,
         "openslide": openslide.__library_version__,
         "tifffile": tifffile.__version__,
-        "vips": run_text(["vips", "--version"]),
+        "imagecodecs": imagecodecs.__version__,
     }
 
 
@@ -737,7 +738,7 @@ def convert(src: Path, dst: Path, concurrency: int) -> dict:
         "wall_s": round(wall, 2),
         "cpu_s": round(cpu, 2),
         "levels": info.levels,
-        "vips_concurrency": concurrency,
+        "concurrency": concurrency,
     }
 
 
@@ -799,7 +800,7 @@ def cmd_run(args) -> None:
                         "name": name,
                         "src": str(src),
                         "dst": str(pyr),
-                        **convert(src, pyr, args.vips_concurrency),
+                        **convert(src, pyr, args.concurrency),
                     }
                 )
             if pyr.exists():
@@ -863,7 +864,8 @@ def print_report(recs: list[dict], run_id: str | None = None) -> None:
         print(
             f"run {e['run']} ({e.get('label')}): {e.get('cpu')} x{e.get('nproc')}, {e.get('mem_gb')} GB, "
             f"Linux {e.get('kernel')}; wsi-toolbox {e.get('wsi_toolbox')} ({e.get('wsi_toolbox_commit')}), "
-            f"openslide {e.get('openslide')}, tifffile {e.get('tifffile')}, {e.get('vips')}\n"
+            f"openslide {e.get('openslide')}, tifffile {e.get('tifffile')}, "
+            f"{e.get('vips') or 'imagecodecs ' + str(e.get('imagecodecs'))}\n"
         )
 
     if conv:
@@ -981,7 +983,9 @@ def main() -> None:
     a.add_argument("--threads", type=int, default=4)
     a.add_argument("--engine", default="auto", help="reader for the originals (auto / openslide / tifffile)")
     a.add_argument("--reconvert", action="store_true")
-    a.add_argument("--vips-concurrency", type=int, default=DEFAULT_CONCURRENCY)
+    a.add_argument(
+        "--concurrency", type=int, default=DEFAULT_CONCURRENCY, help="PyramidCommand reader / encoder threads"
+    )
     a.set_defaults(fn=cmd_run)
 
     a = sp.add_parser("report", help="Markdown tables from a results JSONL")

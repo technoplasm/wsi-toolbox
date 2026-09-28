@@ -16,7 +16,7 @@ pip install wsi-toolbox
 | Version | `__version__` |
 | Defaults | `Defaults`, `defaults`, `get_defaults`, `set_default_preset`, `set_default_device`, `set_default_progress`, `set_default_cluster_cmap`, `set_verbose`, `resolve_preset`, `resolve_devices` |
 | Progress | `ProgressEvent`, `ProgressSink`, `Reporter`, `Cancelled`, `UNSET`, `TqdmSink`, `RichSink`, `StreamlitSink`, `LoggingSink`, `MultiSink`, `NullSink`, `resolve_sink` |
-| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand` (+ `TileEncoder`, `ACCEL_NAMES`), `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand`, `PyramidCommand` (+ `VipsError`, `vips_available`, `read_pyramid_info`) |
+| Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand` (+ `TileEncoder`, `ACCEL_NAMES`), `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand`, `PyramidCommand` (+ `PyramidError`, `read_pyramid_info`; `VipsError` / `vips_available` kept as old names) |
 | Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult`, `PyramidInfo`, `PyramidResult` |
 | WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
 | DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
@@ -324,20 +324,22 @@ cmd(wsi_path: str | None = None, wsi_file: WSIFile | None = None, output_dir='.'
 
 ### PyramidCommand
 
-Convert a WSI to a DZI-optimised tiled pyramidal TIFF with the `vips` CLI (subprocess). **CLI:** `wt pyramid`.
+Convert a WSI to a DZI-optimised tiled pyramidal TIFF (in-process, streaming; openslide + OpenCV + imagecodecs +
+tifffile). **CLI:** `wt pyramid`.
 
 ```python
-wt.PyramidCommand(tile_size=512, quality=85, bigtiff=True, concurrency=8)   # concurrency -> VIPS_CONCURRENCY
+wt.PyramidCommand(tile_size=512, quality=85, bigtiff=True, concurrency=8)   # concurrency: reader / encoder threads
 cmd(wsi_path, output_path, *, on_progress=UNSET, should_cancel=None) -> PyramidResult
-cmd.build_args(wsi_path, output_path) -> list[str]                           # the vips command line
 
-wt.vips_available() -> bool
 wt.read_pyramid_info(path) -> PyramidInfo      # tifffile; bytes / width / height / levels / tile_size
+wt.PyramidError                                # VipsError is the same class (old name); wt.vips_available() is always True
 ```
 
-`PyramidResult`: `PyramidInfo` fields + `path`, `elapsed`. Phase `Building pyramid` (`n` = percent, `total` = 100).
-Written to `.<name>.tmp` then `os.replace`d. `should_cancel` is polled every 0.2 s: vips is killed, the temp file
-removed, `Cancelled` raised. `VipsError` when `vips` is missing or exits non-zero.
+`PyramidResult`: `PyramidInfo` fields + `path`, `elapsed`. Phase `Building pyramid` (`n` = percent of level 0, `total` = 100).
+Output: JPEG tiles (4:2:0 below Q90, shared JPEGTables), one page per 2x level (2x2 mean, floor sizes) down to one tile,
+resolution in pixels per inch from the slide's mpp. Written to `.<name>.tmp` then `os.replace`d. `should_cancel` is
+checked after every band of `tile_size` rows: the temp file is removed and `Cancelled` raised. `PyramidError` when
+the input cannot be opened or read.
 
 ## DZI serving
 

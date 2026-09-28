@@ -22,6 +22,7 @@ from .preview import PreviewLatentClusterCommand as PreviewLatentClusterCommand
 from .preview import PreviewLatentPCACommand as PreviewLatentPCACommand
 from .preview import PreviewScoresCommand as PreviewScoresCommand
 from .pyramid import PyramidCommand as PyramidCommand
+from .pyramid import PyramidError as PyramidError
 from .pyramid import PyramidInfo as PyramidInfo
 from .pyramid import PyramidResult as PyramidResult
 from .pyramid import VipsError as VipsError

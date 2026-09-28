@@ -551,8 +551,9 @@ To serve DZI tiles on demand instead of writing them all, use `wsi_toolbox.dzi` 
 
 Convert a WSI into a tiled pyramidal TIFF optimised for DZI serving: every 2x level present, 512 px JPEG
 (Q85) tiles, BigTIFF. A 256 px DZI tile is then one contiguous read, which is much faster than reading an NDPI /
-SVS original, above all on HDD / NFS. Needs the libvips CLI (`vips`, with the openslide loader) on `PATH`; it runs
-as a subprocess, so no Python dependency is added.
+SVS original, above all on HDD / NFS. Built in-process and streaming (openslide reads level 0 in bands, each level is
+the 2x2 mean of the one above, imagecodecs encodes the tiles in threads, tifffile writes the pages), so memory stays
+at a few bands of rows and no system library is needed.
 
 | CLI | Python |
 |-----|--------|

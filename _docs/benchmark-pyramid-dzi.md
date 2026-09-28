@@ -1,6 +1,7 @@
 # ピラミッド TIFF / DZI ベンチマーク（原本 WSI との比較）
 
-対象: `PyramidCommand`（`vips tiffsave --tile 512 --pyramid --compression jpeg --Q 85 --bigtiff`）が作る
+対象: `PyramidCommand`（512 px JPEG Q85 タイル・2 倍刻みの全レベル・BigTIFF。§5〜§13 の計測時は
+`vips tiffsave --tile 512 --pyramid --compression jpeg --Q 85 --bigtiff`、今の実装は §14）が作る
 DZI 向けピラミッド TIFF（以下 pyramid.tif）と、その原本（NDPI / SVS / TIFF / MIRAX ...）。
 スクリプト: [`scripts/bench_pyramid.py`](../scripts/bench_pyramid.py)（再実行手順は §9）。
 
@@ -355,8 +356,8 @@ Playwright で負荷が揺れていたので、旧パッチ分割は負荷の低
 
 ## 9. 再実行（`scripts/bench_pyramid.py`）
 
-リポジトリの root で。`data/` は git 外。依存は toolbox とその依存（openslide / tifffile）だけで、変換には
-`vips` CLI（openslide ローダ付き）が要る。GPU は使わない。
+リポジトリの root で。`data/` は git 外。依存は toolbox とその依存（openslide / tifffile / imagecodecs）だけ。
+GPU は使わない。
 
 ```bash
 # OpenSlide 公開テストデータ（下表）を data/bench/src へ。既にあれば大きさを確かめて飛ばす
@@ -388,7 +389,7 @@ uv run python scripts/bench_pyramid.py report data/bench/results.jsonl [--run 20
   置き場は測りたいストレージにする。効いているかは表の `read MB`（cold > 0、warm = 0）で確かめる。
 - 原本の reader は toolbox の自動判定。Philips TIFF のように判定が合わない形式は `--engine openslide` で強制する。
 - `run` の最初の行（`kind: env`）に CPU・メモリ・カーネル・toolbox のバージョンとコミット・openslide / tifffile /
-  vips のバージョンが入る。ここに結果を足すときはそれを添える。
+  imagecodecs のバージョンが入る（§13 までの行は vips）。ここに結果を足すときはそれを添える。
 
 公開テストデータ（<https://openslide.cs.cmu.edu/download/openslide-testdata/>、合計 1.76 GB。MIRAX は展開で +0.57 GB）:
 
@@ -832,6 +833,45 @@ uv run python scripts/bench_pyramid.py extract a.pyramid.tif --parts e2e --read-
 # cu128 は旧 .venv（torch 2.10.0+cu128）で同じコマンドを --out data/bench/extract/cu128 に
 uv run python scripts/bench_pyramid.py extract-compare data/bench/extract/cu128/a.pyramid.tif.w4.h5 data/bench/extract/cu130/a.pyramid.tif.w4.h5
 ```
+
+## 14. 変換を libvips 無しに（2026-09-28、toolbox 0.6.2）
+
+`PyramidCommand` を `vips tiffsave` の subprocess から、toolbox の中のストリーミング実装に替えた（vision #65。
+`pyvips-binary` の wheel には CLI も openslide loader も無く、システムの libvips を要求しない形にするため）。
+openslide で level 0 を 512 行の帯ごとに読み（8 スレッド）、各レベルは 1 つ上の 2x2 平均（`cv2.resize` INTER_AREA を
+列の塊ごとにスレッドで）、imagecodecs で JPEG（8 スレッド。量子化・ハフマン表は JPEGTables に 1 つ）、tifffile で書く。
+レベル 1 以下のタイルは page 0 を書いている間に無名の一時ファイルへ溜め、あとで pages 1..n として書く。
+
+比べた案（同じ dev 機、x86_64 32 コア、SSD、8 スレッド。子プロセス 1 本の wall / 最大 RSS）:
+
+- **A**: 別プロセスの pyvips-binary に openslide-bin の level 0 を非圧縮 BigTIFF の流れとして渡し `tiffsave`。CLI と
+  バイト一致だが遅く、メモリも多い
+- **B**: 上の実装（採用）
+
+| スライド | vips CLI | A（pyvips） | B（採用） | 出力 CLI / B |
+|---|---:|---:|---:|---:|
+| NDPI 187 MB（36864×35840） | 3.7 s / 0.36 GB | 5.1 s / 0.64 GB | 4.7 s（プロセス 6.3 s）/ +0.29 GB | 151,274,826 / 151,331,166 |
+| NDPI 1.1 GB（77824×53760） | 11.8 s / 0.57 GB | 16.2 s / 1.08 GB | 15.0 s（16.5 s）/ +0.52 GB | 983,661,496 / 984,012,005 |
+| Aperio CMU-1.svs | 9.0 s / 0.58 GB | 7.1 s / 0.69 GB | 6.2 s（7.7 s）/ +0.30 GB | 169,133,754 / 167,865,960 |
+| Philips-1.tiff | 16.9 s / 0.73 GB | 8.0 s / 0.68 GB | 6.9 s（8.4 s）/ +0.30 GB | 322,066,724 / 322,308,858 |
+| MIRAX CMU-1（疎） | 57.8 s / 1.02 GB | —（下記） | 63 s（64.7 s）/ +0.83 GB | 890,004,248 / 889,219,428 |
+
+- B の時間はプロセス全体（括弧内）から `import wsi_toolbox`（torch を含む、約 1.5 s・0.74 GB）を引いた値（187 MB NDPI は
+  `PyramidResult.elapsed` で 4.6〜4.7 s）。
+  メモリの「+」は import 後からの増分
+- A の MIRAX（398 s）は透明画素の合成が遅い版で測った。B も同じ版では 359 s で、合成を「全部不透明 / 全部透明 /
+  混在だけ計算」に分けて 61 s になった（A にも同じ直しが効くはずだが、B を採ったので測り直していない）
+- 画質（DZI タイル。原本とそれぞれを toolbox の reader で開き、各レベル 40 枚の無作為抽出 + 粗いレベルは全タイル）:
+  B の原本に対する誤差は CLI とどのスライドでも 0.03 以内で同じ（187 MB NDPI: 平均 1.79 vs 1.80、最大 8.87 vs 8.87）。
+  B と CLI の DZI タイルどうしの差は平均 0.00〜0.06・最大 1.67。原本に対する最大誤差が 4 を超えるのは両方とも同じで、
+  原本のネイティブレベル（NDPI・SVS は 4 倍刻み、Philips は mpp 無し）から DZI が縮小する経路と、pyramid.tif の 2 倍刻みの
+  経路の違い。MIRAX の原本側は toolbox の reader が透明を黒にするので誤差が 228 と大きいが、CLI も B も白で同じ
+- タグ: ページ数・タイル 512・YCbCr・解像度（px/inch、分母 256 の有理数。mpp は CLI と同じ 0.452735 / 0.499000 / 0.2325）は
+  CLI と同じ。B は YCbCrSubSampling (2, 2) を明示する。openslide は generic-tiff として開き、`create_wsi_file` は
+  `PyramidalTiffFile`、DZI の XML は原本と同じ
+- 同じ入力から 2 回作ってバイト一致（187 MB NDPI、sha256）
+- 大きさの差: タイルごとに完全な JPEG（表 約 600 B 込み）だと MIRAX で +8 % になった。表を JPEGTables に 1 つ出して
+  各タイルを表抜きにし、CLI と ±0.1 % に揃えた
 
 ## 付録: 全結果（2026-09-24、vision の旧スクリプトの `report` 出力）
 

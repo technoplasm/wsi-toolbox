@@ -439,7 +439,7 @@ class PyramidalTiffFile(PyramidalWSIFile):
         return self._normalize_color(self._read_page_region(level.index, x, y, w, h))
 
     def native_tile_height(self, level_idx: int) -> int:
-        """Tile height of a tiled page (512 for vips' pyramid.tif, 8 for NDPI's restart-marker rows)."""
+        """Tile height of a tiled page (512 for PyramidCommand's pyramid.tif, 8 for NDPI's restart-marker rows)."""
         page = self._page(self._levels[level_idx].index)
         return page.tilelength if page.is_tiled else 1
 

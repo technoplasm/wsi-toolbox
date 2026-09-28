@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.2 (2026-09-28)
+
+### Changed
+
+- `PyramidCommand` no longer needs libvips (neither the `vips` CLI nor pyvips). It builds the pyramid TIFF in the
+  calling process, streaming: openslide reads level 0 in bands of `tile_size` rows (`concurrency` threads; inputs
+  openslide does not open go through `create_wsi_file`), each level is the rounded 2x2 mean of the one above
+  (OpenCV INTER_AREA on column chunks), imagecodecs encodes the JPEG tiles (`concurrency` threads, tables shared
+  as JPEGTables) and tifffile writes the pages (lower levels are spooled to an unnamed temporary file while
+  page 0 is written). Same pages, tile size, JPEG settings (Q85 4:2:0, full chroma from Q90), BigTIFF and
+  resolution tags as `vips tiffsave --tile --pyramid` wrote; output size within 0.1 %, DZI tiles within
+  0.06 mean abs error of the vips output; deterministic (same input and settings give the same bytes).
+  Transparent pixels are composited over the slide's background colour. `_docs/benchmark-pyramid-dzi.md` §14.
+- `should_cancel` is checked after every band (was polled every 0.2 s while vips ran).
+- `concurrency` is now the reader / encoder thread count (was `VIPS_CONCURRENCY`).
+- New dependency `openslide-bin` (openslide-python >= 1.4 loads it, so no system libopenslide is needed).
+
+### Added
+
+- `PyramidError` (exported as `wt.PyramidError`), `pyramid_sizes()`.
+
+### Removed
+
+- `PyramidCommand.build_args()` (there is no command line any more). `VipsError` stays as an alias of
+  `PyramidError`, and `vips_available()` always returns True.
+
 ## 0.6.1 (2026-09-26)
 
 ### Added

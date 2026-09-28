@@ -106,7 +106,7 @@ def _smooth_rgb(width: int, height: int) -> np.ndarray:
 
 
 def write_pyramid_tiff(path, width: int, height: int, levels: int = 3, tile: int = PYRAMID_TILE) -> str:
-    """Tiled JPEG pyramidal TIFF, one page per 2x level. Level sizes use floor (like libvips)."""
+    """Tiled JPEG pyramidal TIFF, one page per 2x level. Level sizes use floor (like PyramidCommand)."""
     base = _smooth_rgb(width, height)
     with tifffile.TiffWriter(path) as tw:
         for i in range(levels):
