@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Tile presets `hibou-b` / `hibou-l` (HistAI Hibou-B / Hibou-L, DINOv2 ViT-B/14 and ViT-L/14 with 4 registers,
+  CLS token, Hibou normalization). The transformers weights are renamed into a timm `VisionTransformer` and
+  strict-loaded, so neither `trust_remote_code` (whose code no longer imports on transformers 5) nor the network
+  is needed. Hibou-L matches the model card's `pooler_output` (cos 1.000000 at 224 px); Hibou-B is checked only
+  against the remote-code model with random weights (its gated weights were not available).
+- Tile preset `h0-mini` (Bioptimus H0-mini, ViT-B/14 distilled from H-optimus-0, timm hub config as in the model
+  card, CLS token as recommended there, H-optimus-0 normalization). Not run with the real weights yet (gated).
+- Tile preset `phikon` (Owkin Phikon v1, iBOT ViT-B/16, transformers `ViTModel` with position-embedding
+  interpolation, CLS token, ImageNet normalization).
+- Tile preset `kaiko-midnight` (kaiko.ai Midnight-12k, DINOv2 ViT-g/14, transformers `Dinov2Model`,
+  normalization 0.5 / 0.5). Outputs the model card's classification embedding, concat(CLS, mean of patch
+  tokens) = 3072 dims, through `extract_fn` (no latent). Not the same model as `midnight` (OpenMidnight).
+
 ## 0.6.2 (2026-09-28)
 
 ### Changed

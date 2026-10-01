@@ -32,8 +32,18 @@ pip install git+https://github.com/technoplasm/wsi-toolbox.git
 | `conch15_768` | ViT-L/16 | 300M | 768 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
 | `midnight` | ViT-g/14 | 1.1B | 1536 | [SophontAI/OpenMidnight](https://huggingface.co/SophontAI/OpenMidnight) |
 | `phikon2` | ViT-L/16 | 300M | 1024 | [owkin/phikon-v2](https://huggingface.co/owkin/phikon-v2) |
+| `hibou-b` | ViT-B/14 (4 reg) | 86M | 768 | [histai/hibou-b](https://huggingface.co/histai/hibou-b) |
+| `hibou-l` | ViT-L/14 (4 reg) | 304M | 1024 | [histai/hibou-L](https://huggingface.co/histai/hibou-L) |
+| `h0-mini` | ViT-B/14 (4 reg) | 86M | 768 | [bioptimus/H0-mini](https://huggingface.co/bioptimus/H0-mini) |
+| `phikon` | ViT-B/16 | 86M | 768 | [owkin/phikon](https://huggingface.co/owkin/phikon) |
+| `kaiko-midnight` | ViT-g/14 | 1.1B | 3072 | [kaiko-ai/midnight](https://huggingface.co/kaiko-ai/midnight) |
 
 `conch15_768` outputs FC-projected features (not cls_token), intended for [TITAN](https://huggingface.co/MahmoodLab/TITAN) input.
+
+`kaiko-midnight` is kaiko.ai's Midnight-12k and outputs the CLS token concatenated with the mean of the patch tokens
+(the model card's classification embedding, 2 x 1536), so it has no latent output. `midnight` is a different model
+(SophontAI's OpenMidnight). `hibou-b` / `hibou-l` are rebuilt in timm from the transformers weights, so they need
+neither `trust_remote_code` nor network access once the weights are in the HF cache.
 
 ### Slide presets (slide-level aggregators)
 
@@ -351,6 +361,7 @@ wt extract -i sample.ndpi --preset gigapath-flash  # GigaPath-Flash (ViT-S, ~50x
 wt extract -i sample.ndpi --preset virchow2        # Use Virchow2
 wt extract -i sample.ndpi --preset conch15_768     # CONCH v1.5 (768D, TITAN-ready)
 wt extract -i sample.ndpi --preset midnight        # OpenMidnight
+wt extract -i sample.ndpi --preset kaiko-midnight  # Midnight-12k (kaiko.ai), CLS + mean patch tokens
 wt extract -i sample.ndpi -L                       # Include latent features
 wt extract -i sample.ndpi -D cuda:0,1              # Multi-GPU parallel
 ```
@@ -658,7 +669,7 @@ Features are stored under `{model}/`. `model` (the storage key) defaults to the 
 └── {namespace}/               # analysis results (see below)
 ```
 
-Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `gigapath-flash: 384`, `virchow/2: 1280`, `h-optimus-0: 1536`, `conch15: 1024`, `conch15_768: 768`, `midnight: 1536`, `phikon2: 1024`.
+Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `gigapath-flash: 384`, `virchow/2: 1280`, `h-optimus-0: 1536`, `conch15: 1024`, `conch15_768: 768`, `midnight: 1536`, `phikon2: 1024`, `hibou-b: 768`, `hibou-l: 1024`, `h0-mini: 768`, `phikon: 768`, `kaiko-midnight: 3072`.
 
 ```python
 with h5py.File('sample.h5', 'r') as f:

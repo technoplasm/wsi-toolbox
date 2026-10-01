@@ -24,11 +24,22 @@ PRESET_NAMES = [
     "conch15_768",
     "midnight",
     "phikon2",
+    "hibou-b",
+    "hibou-l",
+    "h0-mini",
+    "phikon",
+    "kaiko-midnight",
 ]
 
 # ImageNet defaults
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
+# H-optimus-0 (also used by its distillation H0-mini)
+_HOPTIMUS_MEAN = (0.707223, 0.578729, 0.703617)
+_HOPTIMUS_STD = (0.211883, 0.230117, 0.177517)
+# Hibou-B / Hibou-L (preprocessor_config.json)
+_HIBOU_MEAN = (0.7068, 0.5755, 0.722)
+_HIBOU_STD = (0.195, 0.2316, 0.1816)
 
 _NORMALIZATION: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
     "uni": (_IMAGENET_MEAN, _IMAGENET_STD),
@@ -37,15 +48,22 @@ _NORMALIZATION: dict[str, tuple[tuple[float, float, float], tuple[float, float, 
     "gigapath-flash": (_IMAGENET_MEAN, _IMAGENET_STD),
     "virchow": (_IMAGENET_MEAN, _IMAGENET_STD),
     "virchow2": (_IMAGENET_MEAN, _IMAGENET_STD),
-    "h-optimus-0": ((0.707223, 0.578729, 0.703617), (0.211883, 0.230117, 0.177517)),
+    "h-optimus-0": (_HOPTIMUS_MEAN, _HOPTIMUS_STD),
     "conch15": (_IMAGENET_MEAN, _IMAGENET_STD),
     "conch15_768": (_IMAGENET_MEAN, _IMAGENET_STD),
     "midnight": ((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     "phikon2": (_IMAGENET_MEAN, _IMAGENET_STD),
+    "hibou-b": (_HIBOU_MEAN, _HIBOU_STD),
+    "hibou-l": (_HIBOU_MEAN, _HIBOU_STD),
+    "h0-mini": (_HOPTIMUS_MEAN, _HOPTIMUS_STD),
+    "phikon": (_IMAGENET_MEAN, _IMAGENET_STD),
+    "kaiko-midnight": ((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
 }
 
 _EXTRACT_FN: dict[str, Callable] = {
     "conch15_768": lambda model, x: model(x),
+    # concat(CLS, mean of patch tokens), the model card's classification embedding
+    "kaiko-midnight": lambda model, x: model(x),
 }
 
 
@@ -157,7 +175,33 @@ def _create_model(preset: str):
     if preset == "phikon2":
         from .phikon import create_phikon_model  # noqa: PLC0415
 
-        return create_phikon_model()
+        return create_phikon_model("v2")
+
+    if preset == "phikon":
+        from .phikon import create_phikon_model  # noqa: PLC0415
+
+        return create_phikon_model("v1")
+
+    if preset in ("hibou-b", "hibou-l"):
+        from .hibou import create_hibou_model  # noqa: PLC0415
+
+        return create_hibou_model(preset.removeprefix("hibou-"))
+
+    if preset == "h0-mini":
+        # Distilled from H-optimus-0; timm config + weights on the hub, SwiGLU / SiLU as in the model card
+        return timm.create_model(
+            "hf-hub:bioptimus/H0-mini",
+            pretrained=True,
+            mlp_layer=SwiGLUPacked,
+            act_layer=torch.nn.SiLU,
+            dynamic_img_size=True,
+            dynamic_img_pad=True,
+        )
+
+    if preset == "kaiko-midnight":
+        from .kaiko_midnight import create_kaiko_midnight_model  # noqa: PLC0415
+
+        return create_kaiko_midnight_model()
 
     raise ValueError(f"Invalid preset: {preset}. Must be one of {PRESET_NAMES}")
 

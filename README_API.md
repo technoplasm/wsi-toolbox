@@ -392,7 +392,8 @@ class TilePreset:
 get_tile_preset(name: str) -> TilePreset      # built-in preset by name; ValueError lists PRESET_NAMES
 PRESET_NAMES: list[str]
 # ['uni', 'uni2', 'gigapath', 'gigapath-flash', 'virchow', 'virchow2', 'h-optimus-0',
-#  'conch15', 'conch15_768', 'midnight', 'phikon2']
+#  'conch15', 'conch15_768', 'midnight', 'phikon2', 'hibou-b', 'hibou-l', 'h0-mini', 'phikon',
+#  'kaiko-midnight']
 
 # Compatibility tables derived from the presets
 create_preset_model(name: str) -> torch.nn.Module      # == get_tile_preset(name).create_model()
