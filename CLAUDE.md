@@ -40,7 +40,9 @@ uv run ruff format wsi_toolbox/
 ### リリース / バージョニング
 
 - バージョンは `pyproject.toml` の `version` で管理（`wsi_toolbox/__init__.py` は `importlib.metadata` から取得）
-- バージョンを上げるコミットは `Bump version X.Y.Z` の形式にならう
+- **Claude はバージョンを上げない**（`version` の書き換え・`Bump version` コミット・CHANGELOG のバージョン見出しを作らない）。
+  bump は ken が変更を溜めてから最後に行い、そのまま PyPI に公開する。機能を入れたら bump せずに報告する
+- バージョンを上げるコミットは（ken が行うとき）`Bump version X.Y.Z` の形式にならう
 - **git tag は不要**（打たない）
 - PyPI への公開は `./deploy.sh` を使う（clean → build → `twine check` → `y/N` 確認 → upload）
   - `~/.pypirc` の `[pypi]` トークンで認証
