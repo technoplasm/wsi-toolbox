@@ -7,6 +7,7 @@ across calls, or let the command build a temporary one.
 """
 
 import gc
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -234,7 +235,19 @@ class FeatureExtractionCommand:
                 all_coords.extend(coords)
                 reporter.advance(1, message=desc)
 
-            reporter.phase("Writing")
+            # Patches the reader had to repair (OpenSlide decode errors), reported once per slide
+            meta = reader.metadata
+            n_fallback = len(json.loads(meta.get("level0_fallback_tiles", "[]")))
+            n_unreadable = len(json.loads(meta.get("unreadable_tiles", "[]")))
+            warning = ""
+            if n_fallback or n_unreadable:
+                warning = (
+                    f"WARNING: {n_fallback} patch(es) read from level 0 instead (undecodable at level "
+                    f"{meta['level_used']}), {n_unreadable} unreadable patch(es) dropped"
+                )
+                logger.warning(warning)
+
+            reporter.phase("Writing", message=warning)
 
             # Concatenate results
             all_features = np.concatenate(all_features, axis=0)

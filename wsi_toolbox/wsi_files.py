@@ -16,6 +16,7 @@ Class hierarchy:
 
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +25,7 @@ import cv2
 import numpy as np
 import tifffile
 import zarr
-from openslide import OpenSlide
+from openslide import OpenSlide, OpenSlideError
 from PIL import Image
 
 from .dzi import DziGenerator, DziLayout
@@ -40,6 +41,33 @@ class NativeLevel:
     width: int
     height: int
     downsample: float  # Downsample factor relative to level 0
+
+
+class ReadRepairLog:
+    """Blocks an ``OpenSlideFile`` could not decode at the requested level, and what was done instead.
+
+    Shared by a file and the handles ``reopen()`` makes from it (read workers), so one log covers a
+    whole pass over the slide. Entries are dicts in the coordinates of the level that was read:
+    ``{"level", "x", "y", "w", "h", "error"}`` (plus ``"error_level0"`` for unreadable ones).
+
+    - ``level0_fallback``: read from level 0 instead and downscaled (``Image.BOX``)
+    - ``unreadable``: not readable at level 0 either; filled with white and dropped by ``WSIPatchReader``
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.level0_fallback: list[dict] = []
+        self.unreadable: list[dict] = []
+
+    def add(self, kind: str, entry: dict) -> None:
+        with self._lock:
+            getattr(self, kind).append(entry)
+
+    def snapshot(self) -> tuple[list[dict], list[dict]]:
+        """(level0_fallback, unreadable), each sorted by (y, x)."""
+        with self._lock:
+            key = lambda e: (e["y"], e["x"])  # noqa: E731
+            return sorted(self.level0_fallback, key=key), sorted(self.unreadable, key=key)
 
 
 class WSIFile(ABC):
@@ -535,12 +563,22 @@ class PyramidalTiffFile(PyramidalWSIFile):
 
 
 class OpenSlideFile(PyramidalWSIFile):
-    """OpenSlide compatible file reader"""
+    """OpenSlide compatible file reader
 
-    def __init__(self, path):
+    A region whose decode fails (e.g. ``Corrupt JPEG data`` in one tile of an NDPI level) does not
+    abort the read: the handle is reopened (openslide refuses every read after an error) and the
+    region is read again in ``repair_block`` squares aligned to multiples of ``repair_block``. A block
+    that still fails is read from level 0 and downscaled; a block that fails at level 0 too is filled
+    with white. Both are recorded in ``repair_log`` (see ``ReadRepairLog``). ``WSIPatchReader`` sets
+    ``repair_block`` to its patch size, so a block is exactly one patch.
+    """
+
+    def __init__(self, path, repair_log: ReadRepairLog | None = None, repair_block: int = 256):
         self.path = path
         self.wsi = OpenSlide(path)
         self.prop = dict(self.wsi.properties)
+        self.repair_log = repair_log if repair_log is not None else ReadRepairLog()
+        self.repair_block = repair_block
 
         # Build level info from OpenSlide
         self._levels = self._build_level_info()
@@ -560,7 +598,12 @@ class OpenSlideFile(PyramidalWSIFile):
             return 1
 
     def reopen(self) -> "OpenSlideFile":
-        return OpenSlideFile(self.path)
+        return OpenSlideFile(self.path, repair_log=self.repair_log, repair_block=self.repair_block)
+
+    def _reset_handle(self) -> None:
+        """Open a fresh handle: after a decode error openslide fails every later read on the old one."""
+        self.wsi.close()
+        self.wsi = OpenSlide(self.path)
 
     def close(self) -> None:
         self.wsi.close()
@@ -581,16 +624,10 @@ class OpenSlideFile(PyramidalWSIFile):
     def _get_native_levels(self) -> list[NativeLevel]:
         return self._levels
 
-    def _read_native_region(self, level_idx: int, x: int, y: int, w: int, h: int) -> np.ndarray:
-        """Read a region from a specific OpenSlide level."""
-        level = self._levels[level_idx]
-
+    def _read_level(self, level: NativeLevel, x: int, y: int, w: int, h: int) -> np.ndarray:
         # OpenSlide read_region takes level 0 coordinates for location
-        level0_x = int(x * level.downsample)
-        level0_y = int(y * level.downsample)
-
         region = self.wsi.read_region(
-            location=(level0_x, level0_y),
+            location=(int(x * level.downsample), int(y * level.downsample)),
             level=level.index,
             size=(w, h),
         )
@@ -600,6 +637,48 @@ class OpenSlideFile(PyramidalWSIFile):
             region = region.convert("RGB")
 
         return np.array(region)
+
+    def _read_native_region(self, level_idx: int, x: int, y: int, w: int, h: int) -> np.ndarray:
+        """Read a region from a specific OpenSlide level (repairing undecodable blocks, see the class doc)."""
+        level = self._levels[level_idx]
+        try:
+            return self._read_level(level, x, y, w, h)
+        except OpenSlideError as e:
+            logger.warning(f"{self.path}: level {level_idx} region ({x},{y}) {w}x{h} failed ({e}); reading by blocks")
+            self._reset_handle()
+            return self._read_by_blocks(level, x, y, w, h)
+
+    def _read_by_blocks(self, level: NativeLevel, x: int, y: int, w: int, h: int) -> np.ndarray:
+        B = self.repair_block
+        out = np.empty((h, w, 3), dtype=np.uint8)
+        for by in range(y // B * B, y + h, B):
+            for bx in range(x // B * B, x + w, B):
+                # The block clipped to the requested region
+                x0, y0 = max(bx, x), max(by, y)
+                x1, y1 = min(bx + B, x + w), min(by + B, y + h)
+                out[y0 - y : y1 - y, x0 - x : x1 - x] = self._read_block(level, x0, y0, x1 - x0, y1 - y0)
+        return out
+
+    def _read_block(self, level: NativeLevel, x: int, y: int, w: int, h: int) -> np.ndarray:
+        try:
+            return self._read_level(level, x, y, w, h)
+        except OpenSlideError as e:
+            self._reset_handle()
+            entry = {"level": level.index, "x": x, "y": y, "w": w, "h": h, "error": str(e)}
+            if level.index != 0:
+                try:
+                    ds = level.downsample
+                    src = self.wsi.read_region((int(x * ds), int(y * ds)), 0, (round(w * ds), round(h * ds)))
+                    block = np.array(src.convert("RGB").resize((w, h), Image.BOX))
+                    self.repair_log.add("level0_fallback", entry)
+                    logger.warning(f"{self.path}: level {level.index} block ({x},{y}) read from level 0 ({e})")
+                    return block
+                except OpenSlideError as e0:
+                    self._reset_handle()
+                    entry["error_level0"] = str(e0)
+            self.repair_log.add("unreadable", entry)
+            logger.warning(f"{self.path}: level {level.index} block ({x},{y}) unreadable, dropped ({e})")
+            return np.full((h, w, 3), 255, dtype=np.uint8)
 
 
 class StandardImage(WSIFile):

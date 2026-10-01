@@ -8,6 +8,7 @@ Provides unified interface for reading patches regardless of source:
 - get_patch_reader(): Auto-select appropriate reader
 """
 
+import json
 import logging
 import os
 import threading
@@ -149,6 +150,10 @@ class WSIPatchReader:
         self.patch_size = patch_size
         self.target_mpp = target_mpp
         self.white_detector = white_detector
+        # Files that repair undecodable blocks (OpenSlideFile) do it per patch; see ReadRepairLog
+        self.repair_log = getattr(wsi, "repair_log", None)
+        if self.repair_log is not None:
+            wsi.repair_block = patch_size
         self.align_reads = align_reads
         workers = default_read_workers() if read_workers is None else max(1, int(read_workers))
         self.read_workers = workers if workers == 1 or _can_reopen(wsi) else 1
@@ -240,6 +245,7 @@ class WSIPatchReader:
         """
         S = self.patch_size
         num_rows = strip.shape[0] // S
+        unreadable = {(e["x"] // S, e["y"] // S) for e in self.repair_log.snapshot()[1]} if self.repair_log else set()
 
         patches = []
         coords = []
@@ -250,6 +256,10 @@ class WSIPatchReader:
 
             for col in range(self.cols):
                 patch = row_strip[:, col * S : (col + 1) * S, :]
+
+                # Not decodable even at level 0 (filled with white): drop regardless of the white detector
+                if (col, row) in unreadable:
+                    continue
 
                 # White detection
                 if self.white_detector and self.white_detector(patch):
@@ -423,8 +433,14 @@ class WSIPatchReader:
 
     @property
     def metadata(self) -> dict:
-        """Metadata for saving to HDF5."""
-        return {
+        """Metadata for saving to HDF5.
+
+        Readers over an ``OpenSlideFile`` also report the patches repaired while reading, as JSON lists
+        (``"[]"`` when none) of ``{"level", "x", "y", "w", "h", "error"}`` in ``level_used`` pixels:
+        ``level0_fallback_tiles`` (read from level 0 and downscaled) and ``unreadable_tiles``
+        (not decodable at level 0 either; dropped). Complete only after a full pass.
+        """
+        meta = {
             "mpp": self.actual_mpp,
             "target_mpp": self.target_mpp,
             "level_used": self.level.index,
@@ -432,6 +448,11 @@ class WSIPatchReader:
             "cols": self.cols,
             "rows": self.rows,
         }
+        if self.repair_log is not None:
+            fallback, unreadable = self.repair_log.snapshot()
+            meta["level0_fallback_tiles"] = json.dumps(fallback)
+            meta["unreadable_tiles"] = json.dumps(unreadable)
+        return meta
 
 
 class CachePatchReader:
