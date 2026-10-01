@@ -7,8 +7,7 @@
 - Tile presets `hibou-b` / `hibou-l` (HistAI Hibou-B / Hibou-L, DINOv2 ViT-B/14 and ViT-L/14 with 4 registers,
   CLS token, Hibou normalization). The transformers weights are renamed into a timm `VisionTransformer` and
   strict-loaded, so neither `trust_remote_code` (whose code no longer imports on transformers 5) nor the network
-  is needed. Hibou-L matches the model card's `pooler_output` (cos 1.000000 at 224 px); Hibou-B is checked only
-  against the remote-code model with random weights (its gated weights were not available).
+  is needed. Both match the model card's `pooler_output` (cos 1.000000 at 224 px, > 0.99999 at 252 px).
 - Tile preset `h0-mini` (Bioptimus H0-mini, ViT-B/14 distilled from H-optimus-0, timm hub config as in the model
   card, CLS token as recommended there, H-optimus-0 normalization). Not run with the real weights yet (gated).
 - Tile preset `phikon` (Owkin Phikon v1, iBOT ViT-B/16, transformers `ViTModel` with position-embedding
