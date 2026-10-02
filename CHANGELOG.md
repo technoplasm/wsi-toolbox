@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.3 (2026-10-02)
 
 ### Added
 
@@ -16,6 +16,16 @@
 - Tile preset `kaiko-midnight` (kaiko.ai Midnight-12k, DINOv2 ViT-g/14, transformers `Dinov2Model`,
   normalization 0.5 / 0.5). Outputs the model card's classification embedding, concat(CLS, mean of patch
   tokens) = 3072 dims, through `extract_fn` (no latent). Not the same model as `midnight` (OpenMidnight).
+- `OpenSlideFile` repairs regions openslide cannot decode (e.g. `Corrupt JPEG data` in one tile of an NDPI
+  level) instead of failing the whole read: it reopens the handle (openslide refuses every read after an
+  error), reads the region again block by block, reads a block that still fails from level 0 and downscales
+  it (`Image.BOX`), and fills a block that fails at level 0 too with white. `WSIPatchReader` sets the block to
+  its patch size and drops unreadable patches regardless of the white detector. Every repair goes to a
+  `ReadRepairLog` shared with the `reopen()`ed read-worker handles.
+- `WSIPatchReader.metadata` over an `OpenSlideFile` has `level0_fallback_tiles` and `unreadable_tiles`
+  (JSON lists of `{level, x, y, w, h, error}` in `level_used` pixels, `"[]"` when none), so
+  `FeatureExtractionCommand` writes them to the model group's attrs. It also logs a warning and puts it in the
+  `Writing` phase's progress message when any patch was repaired.
 
 ## 0.6.2 (2026-09-28)
 
