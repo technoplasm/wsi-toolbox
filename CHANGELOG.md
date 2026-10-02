@@ -9,7 +9,8 @@
   strict-loaded, so neither `trust_remote_code` (whose code no longer imports on transformers 5) nor the network
   is needed. Both match the model card's `pooler_output` (cos 1.000000 at 224 px, > 0.99999 at 252 px).
 - Tile preset `h0-mini` (Bioptimus H0-mini, ViT-B/14 distilled from H-optimus-0, timm hub config as in the model
-  card, CLS token as recommended there, H-optimus-0 normalization). Not run with the real weights yet (gated).
+  card, CLS token as recommended there, H-optimus-0 normalization = the hub config's `pretrained_cfg`).
+  Identical to the model card's code at 224 / 252 px (256 px is padded to 266, as for `h-optimus-0`).
 - Tile preset `phikon` (Owkin Phikon v1, iBOT ViT-B/16, transformers `ViTModel` with position-embedding
   interpolation, CLS token, ImageNet normalization).
 - Tile preset `kaiko-midnight` (kaiko.ai Midnight-12k, DINOv2 ViT-g/14, transformers `Dinov2Model`,
