@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from wsi_toolbox.commands.pyramid import _Level0
 from wsi_toolbox.patch_reader import WSIPatchReader
 from wsi_toolbox.region import read_region_at_mpp
 from wsi_toolbox.wsi_files import WSI_EXTENSIONS, ISyntaxFile, _rgba_to_rgb, create_wsi_file, find_wsi_for_h5
@@ -141,3 +142,43 @@ def test_patch_reader_workers_match_single_thread(slide):
     for (b1, c1, _), (b3, c3, _) in zip(*runs):
         assert c1 == c3
         assert np.array_equal(b1, b3)
+
+
+@needs_sample
+def test_tile_assembly_matches_libisyntax_read_region(slide):
+    """Regions assembled from read_tile (+ the decoded-tile LRU) are exactly libisyntax's read_region."""
+    rng = np.random.default_rng(1)
+    for lv in slide._get_native_levels():
+        for _ in range(3):
+            w, h = int(rng.integers(1, min(600, lv.width) + 1)), int(rng.integers(1, min(600, lv.height) + 1))
+            x, y = int(rng.integers(0, lv.width - w + 1)), int(rng.integers(0, lv.height - h + 1))
+            ref = slide.slide.read_region(x, y, w, h, level=lv.index)[..., :3]
+            assert np.array_equal(slide._read_native_region(lv.index, x, y, w, h), ref), (lv.index, x, y, w, h)
+
+
+@needs_sample
+def test_reopen_sizes_the_cache_for_the_read_width(slide):
+    block = slide.reopen(read_width=4096)
+    try:
+        assert block.cache_size == 20 * (16 + 2)
+        assert block.slide._cache_size == block.cache_size
+    finally:
+        block.close()
+
+
+@needs_sample
+def test_pyramid_column_blocks_read_the_same_band(slide):
+    """PyramidCommand's level 0 over iSyntax: per-thread column blocks give the pixels of one plain read."""
+    lv0 = slide._get_native_levels()[0]
+    with ThreadPoolExecutor(4) as pool:
+        source = _Level0(SAMPLE, pool, workers=4)
+        try:
+            assert len(source.blocks) == 4
+            assert len({id(b.wsi) for b in source.blocks}) == 4
+            for y in (0, lv0.height // 2, lv0.height - 100):
+                band, futures = source.start_band(y, 512)
+                for f in futures:
+                    f.result()
+                assert np.array_equal(band, slide.read_region((0, y, lv0.width, 512)))
+        finally:
+            source.close()

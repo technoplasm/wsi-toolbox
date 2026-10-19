@@ -22,7 +22,7 @@ from typing import Iterator, Protocol, runtime_checkable
 import h5py
 import numpy as np
 
-from .wsi_files import PyramidalWSIFile, create_wsi_file, find_best_level_for_mpp, find_wsi_for_h5
+from .wsi_files import PyramidalWSIFile, can_reopen, create_wsi_file, find_best_level_for_mpp, find_wsi_for_h5
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +35,6 @@ READ_AHEAD = 2
 def default_read_workers() -> int:
     """Read worker threads WSIPatchReader uses when not told: half the CPUs, at most 4."""
     return max(1, min(4, (os.cpu_count() or 2) // 2))
-
-
-def _can_reopen(wsi) -> bool:
-    fn = getattr(type(wsi), "reopen", None)
-    return fn is not None and fn is not PyramidalWSIFile.reopen
 
 
 class _StripCache:
@@ -156,7 +151,7 @@ class WSIPatchReader:
             wsi.repair_block = patch_size
         self.align_reads = align_reads
         workers = default_read_workers() if read_workers is None else max(1, int(read_workers))
-        self.read_workers = workers if workers == 1 or _can_reopen(wsi) else 1
+        self.read_workers = workers if workers == 1 or can_reopen(wsi) else 1
 
         # Find best level for target mpp
         self.level = find_best_level_for_mpp(wsi, target_mpp)

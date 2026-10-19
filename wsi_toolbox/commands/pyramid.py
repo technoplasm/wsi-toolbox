@@ -9,7 +9,9 @@ like any ``.tif`` (tifffile reader); openslide opens it as generic-tiff.
 How it is built, streaming (memory stays at a few bands of rows, whatever the slide size):
 
 - level 0 is read in bands of ``tile_size`` rows, each band with ``concurrency`` threads of
-  openslide ``read_region`` (inputs openslide does not open go through ``create_wsi_file``).
+  openslide ``read_region`` (inputs openslide does not open go through ``create_wsi_file``; a
+  reader that can be ``reopen``ed, e.g. iSyntax, is read in ``concurrency`` contiguous column
+  blocks, each with its own handle and thread).
   Transparent pixels (outside the scanned area) are composited over the slide's background
   colour (white if the slide does not say)
 - every level is the rounded 2x2 mean of the one above (``cv2.resize`` INTER_AREA on column chunks
@@ -43,7 +45,7 @@ import tifffile
 from pydantic import BaseModel
 
 from ..progress import UNSET, ProgressSink, Reporter, Unset
-from ..wsi_files import create_wsi_file
+from ..wsi_files import can_reopen, create_wsi_file
 from ._base import make_reporter
 
 logger = logging.getLogger(__name__)
@@ -156,10 +158,12 @@ def _remove_stale_tmp(output_path: Path) -> None:
 class _Level0:
     """Level 0 of the input as RGB rows: openslide when it opens the file, else ``create_wsi_file``."""
 
-    def __init__(self, path: Path, pool: ThreadPoolExecutor):
+    def __init__(self, path: Path, pool: ThreadPoolExecutor, workers: int):
         self.pool = pool
+        self.workers = workers  # threads of pool
         self.slide: openslide.OpenSlide | None = None
         self.wsi = None
+        self.blocks: list[_Block] | None = None  # create_wsi_file path: the column blocks
         if openslide.OpenSlide.detect_format(str(path)) is not None:
             self.slide = openslide.OpenSlide(str(path))
             self.width, self.height = self.slide.dimensions
@@ -170,6 +174,7 @@ class _Level0:
         else:
             self.wsi = create_wsi_file(str(path))
             self.width, self.height = self.wsi.get_original_size()
+            self.blocks = self._column_blocks()
             try:
                 self.mpp_x = self.mpp_y = float(self.wsi.get_mpp() or 0.0)
             except Exception:  # noqa: BLE001 - no resolution in the file
@@ -177,10 +182,31 @@ class _Level0:
             bg = "ffffff"
         self.background = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.uint8)
 
+    def _column_blocks(self) -> list["_Block"]:
+        """The band split into one contiguous column block per reader thread (``workers`` of them).
+
+        Only for readers that can be reopened (else one block, the whole width). Each block has its
+        own handle and its own thread, so a handle walks its columns down the slide in tile order and
+        its caches (libisyntax's ancestors / neighbours of an iSyntax tile) are reused band after
+        band; blocks are reopened with ``read_width`` so those caches are sized for the block, not
+        for the whole width. A block thread goes on to its part of the next band (read ahead) without
+        waiting for the other blocks of this one. The pixels do not depend on the split.
+        """
+        n = self.workers if can_reopen(self.wsi) else 1
+        n = max(1, min(n, -(-self.width // _READ_COLUMNS)))  # blocks at least _READ_COLUMNS wide
+        edges = [self.width * i // n for i in range(n + 1)]
+        if n == 1:
+            return [_Block(0, self.width, self.wsi)]
+        return [_Block(x0, x1, self.wsi.reopen(read_width=x1 - x0)) for x0, x1 in zip(edges, edges[1:])]
+
+    def start_band(self, y: int, rows: int) -> tuple[np.ndarray, list[Future]]:
+        """create_wsi_file path: queue the band's blocks on their threads; (band, block futures)."""
+        h = min(rows, self.height - y)
+        out = np.empty((h, self.width, 3), np.uint8)
+        return out, [b.thread.submit(b.read, out, y, h) for b in self.blocks]
+
     def read_band(self, y: int, rows: int) -> np.ndarray:
         h = min(rows, self.height - y)
-        if self.slide is None:
-            return np.ascontiguousarray(self.wsi.read_region((0, y, self.width, h))[..., :3])
         out = np.empty((h, self.width, 3), np.uint8)
         futures = [self.pool.submit(self._read_columns, out, x, y, h) for x in range(0, self.width, _READ_COLUMNS)]
         for f in futures:
@@ -208,8 +234,24 @@ class _Level0:
     def close(self) -> None:
         if self.slide is not None:
             self.slide.close()
-        elif self.wsi is not None and hasattr(self.wsi, "close"):
-            self.wsi.close()
+        elif self.wsi is not None:
+            for b in self.blocks or []:
+                b.thread.shutdown(wait=True, cancel_futures=True)
+                if b.wsi is not self.wsi:
+                    b.wsi.close()
+            if hasattr(self.wsi, "close"):
+                self.wsi.close()
+
+
+class _Block:
+    """A column block of level 0 (create_wsi_file path) with its own handle and reading thread."""
+
+    def __init__(self, x0: int, x1: int, wsi):
+        self.x0, self.x1, self.wsi = x0, x1, wsi
+        self.thread = ThreadPoolExecutor(1, thread_name_prefix="pyramid-read")
+
+    def read(self, out: np.ndarray, y: int, h: int) -> None:
+        out[:, self.x0 : self.x1] = self.wsi.read_region((self.x0, y, self.x1 - self.x0, h))[..., :3]
 
 
 def _float_or_zero(value: str | None) -> float:
@@ -408,7 +450,7 @@ class PyramidCommand:
         band_pool = ThreadPoolExecutor(1, thread_name_prefix="pyramid-band")
         try:
             try:
-                source = _Level0(wsi_path, read_pool)
+                source = _Level0(wsi_path, read_pool, workers)
             except Exception as e:
                 raise PyramidError(f"cannot open {wsi_path}: {type(e).__name__}: {e}") from e
             try:
@@ -473,14 +515,28 @@ class PyramidCommand:
             except Exception as e:
                 raise PyramidError(f"reading rows {y}..{y + t} failed: {type(e).__name__}: {e}") from e
 
+        def gather(y: int, band: np.ndarray, futures: list[Future]) -> np.ndarray:
+            for f in futures:
+                try:
+                    f.result()
+                except Exception as e:
+                    raise PyramidError(f"reading rows {y}..{y + t} failed: {type(e).__name__}: {e}") from e
+            return band
+
+        def start(y: int) -> Future:
+            if source.blocks is None:
+                return band_pool.submit(read, y)
+            # the blocks are queued now, so their threads run ahead into the next bands
+            return band_pool.submit(gather, y, *source.start_band(y, t))
+
         def page0_tiles() -> Iterator[bytes]:
             ys = list(range(0, source.height, t))
-            ahead = deque(band_pool.submit(read, y) for y in ys[: _READ_AHEAD + 1])
+            ahead = deque(start(y) for y in ys[: _READ_AHEAD + 1])
             done = 0
             for i in range(len(ys)):
                 band = ahead.popleft().result()
                 if i + _READ_AHEAD + 1 < len(ys):
-                    ahead.append(band_pool.submit(read, ys[i + _READ_AHEAD + 1]))
+                    ahead.append(start(ys[i + _READ_AHEAD + 1]))
                 levels[0].push(band, final=i == len(ys) - 1)
                 while page0:
                     yield page0.popleft().result()

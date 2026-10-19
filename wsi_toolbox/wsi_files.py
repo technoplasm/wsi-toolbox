@@ -21,6 +21,7 @@ import logging
 import os
 import threading
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -297,11 +298,16 @@ class PyramidalWSIFile(WSIFile):
         """
         return 1
 
-    def reopen(self) -> "PyramidalWSIFile":
+    def reopen(self, read_width: int | None = None) -> "PyramidalWSIFile":
         """A new, independent instance on the same file (its own file handle and caches).
 
         For reading one slide from several threads: an instance is used by one thread at a
         time, so each thread opens its own (``WSIPatchReader`` read workers do this).
+
+        Args:
+            read_width: Width (level-0 px) of the regions the new instance will read, when the
+                caller reads the slide in column blocks (``PyramidCommand``). Readers whose cache
+                must span the width of a read (``ISyntaxFile``) size it for this; others ignore it.
         """
         raise NotImplementedError(f"{type(self).__name__} cannot be reopened")
 
@@ -500,7 +506,7 @@ class PyramidalTiffFile(PyramidalWSIFile):
         page = self._page(self._levels[level_idx].index)
         return page.tilelength if page.is_tiled else 1
 
-    def reopen(self) -> "PyramidalTiffFile":
+    def reopen(self, read_width: int | None = None) -> "PyramidalTiffFile":
         return PyramidalTiffFile(self.path)
 
     def close(self) -> None:
@@ -629,7 +635,7 @@ class OpenSlideFile(PyramidalWSIFile):
         except (KeyError, ValueError):
             return 1
 
-    def reopen(self) -> "OpenSlideFile":
+    def reopen(self, read_width: int | None = None) -> "OpenSlideFile":
         return OpenSlideFile(self.path, repair_log=self.repair_log, repair_block=self.repair_block)
 
     def _reset_handle(self) -> None:
@@ -722,10 +728,23 @@ class ISyntaxFile(PyramidalWSIFile):
       (floor). The level-0 size excludes the wavelet padding, and ``ISyntax.read_region`` takes
       ``x`` / ``y`` in the coordinates of the level it reads (libisyntax adds the padding offset
       itself), so native-level coordinates go straight through.
-    - Pixels: ``read_region`` returns RGBA uint8. Tiles that do not exist in the file (background
+    - Pixels: libisyntax returns RGBA uint8 tiles. Tiles that do not exist in the file (background
       the scanner skipped) and tiles outside the grid come back as 0xFF in every byte, i.e. opaque
-      white; decoded tiles are opaque too. The alpha channel is dropped, and should a pixel ever be
-      less than opaque it is composited onto white (``_rgba_to_rgb``).
+      white; decoded tiles are always opaque too (its YCoCg -> RGBA conversion writes alpha 0xFF),
+      so the alpha channel is just dropped.
+    - Reads are assembled from whole libisyntax tiles (``ISyntax.read_tile``) through a small LRU of
+      decoded RGB tiles, instead of ``ISyntax.read_region``. libisyntax's tiles start at the wavelet
+      padding offset, so a region (a pyramid band, a 256 px DZI tile) usually cuts through tiles that
+      the next region needs too; ``read_region`` decodes those again, the LRU hands them back. The
+      pixels are exactly those of ``read_region`` (the same tiles, the same offset).
+    - Coefficient cache: to decode a tile libisyntax also needs its ancestors (inverse DWT from the
+      coarse levels down) and its neighbours' coefficients, kept in a per-handle cache of
+      ``cache_size`` tiles. Reading a level in tile order reuses them, but only if the cache holds
+      about ``_CACHE_TILES_PER_COLUMN`` tiles per tile column of the reads: below that the ancestors
+      are evicted before their next child is read and every tile repeats the whole cascade (a
+      full-width band read went from 0.3 s to 0.9 s with 600 instead of 2000 tiles). By default it
+      is sized for the width of the first read (WSIPatchReader's strips, a pyramid block), at least
+      pyisyntax's 2000; ``reopen(read_width=)`` sizes it for column blocks without the floor.
     - Regions are clamped to the level (like ``PyramidalTiffFile``): libisyntax would otherwise
       return the padding around the image, so a region reaching past the edge comes back smaller.
     - mpp: libisyntax reads it from the header and substitutes 1.0 when the header has none.
@@ -740,20 +759,38 @@ class ISyntaxFile(PyramidalWSIFile):
     every call first gives the calling thread its arena (``_LIBISYNTAX_THREADS``).
     """
 
-    def __init__(self, path, cache_size: int = 2000):
+    def __init__(self, path, cache_size: int | None = None, read_width: int | None = None):
         """
         Args:
             path: Path to the .isyntax file
-            cache_size: Tiles kept in libisyntax's coefficient cache (pyisyntax's default)
+            cache_size: Tiles kept in libisyntax's coefficient cache. None: enough for reads
+                ``read_width`` level-0 px wide; without ``read_width``, enough for reads as wide
+                as the first one and at least pyisyntax's default of 2000
+            read_width: See ``cache_size``
         """
         self.path = path
-        self.cache_size = cache_size
         _LIBISYNTAX_THREADS.ensure()
         with _LIBISYNTAX_THREADS.registry_lock:
-            self.slide = ISyntax.open(path, cache_size=cache_size)
+            # opened with pyisyntax's default; the cache itself is created on the first read, from
+            # self.slide._cache_size, so it can still be sized from the slide's geometry
+            self.slide = ISyntax.open(path)
+        self._tile_w = self.slide.tile_width
+        self._tile_h = self.slide.tile_height
+        if cache_size is None and read_width is not None:
+            cache_size = self._cache_tiles_for(read_width)
+        # None: decided by the first read (pyisyntax creates the cache then, from slide._cache_size)
+        self.cache_size = cache_size
+        if cache_size is not None:
+            self.slide._cache_size = cache_size
 
         # Build pyramid info
         self._levels = self._build_level_info()
+        level_count = self.slide.level_count
+        # libisyntax's read_region offset: level-L tile (tx, ty) covers level-L px from
+        # (tx * tile_w - offset, ty * tile_h - offset); the padding of the coarsest level, scaled
+        self._offsets = [((_ISYNTAX_PADDING << level_count) - _ISYNTAX_PADDING) >> i for i in range(level_count)]
+        self._tiles: OrderedDict[tuple[int, int, int], np.ndarray] = OrderedDict()  # decoded RGB tiles
+        self._tile_capacity = _MIN_DECODED_TILES
 
     def _build_level_info(self) -> list[NativeLevel]:
         """Build pyramid level information from the iSyntax wavelet scales."""
@@ -791,20 +828,64 @@ class ISyntaxFile(PyramidalWSIFile):
             return np.zeros((max(h, 0), max(w, 0), 3), dtype=np.uint8)
 
         _LIBISYNTAX_THREADS.ensure()
-        rgba = self.slide.read_region(x, y, w, h, level=level.index)
-        return _rgba_to_rgb(rgba)
+        o, tw, th = self._offsets[level.index], self._tile_w, self._tile_h
+        tx0, tx1 = (x + o) // tw, (x + w - 1 + o) // tw
+        ty0, ty1 = (y + o) // th, (y + h - 1 + o) // th
+        if self.cache_size is None:  # first read of a default handle: size the cache for reads this wide
+            self.cache_size = self.slide._cache_size = max(_MIN_CACHE_TILES, self._cache_tiles_for(w))
+        # keep at least the tiles of two rows of this read, so the next read below gets the row it shares
+        self._tile_capacity = max(self._tile_capacity, 2 * (tx1 - tx0 + 1) + 2)
+        out = np.empty((h, w, 3), dtype=np.uint8)
+        for ty in range(ty0, ty1 + 1):
+            y0 = ty * th - o
+            sy0, sy1 = max(y, y0), min(y + h, y0 + th)
+            for tx in range(tx0, tx1 + 1):
+                x0 = tx * tw - o
+                sx0, sx1 = max(x, x0), min(x + w, x0 + tw)
+                tile = self._tile(level.index, tx, ty)
+                out[sy0 - y : sy1 - y, sx0 - x : sx1 - x] = tile[sy0 - y0 : sy1 - y0, sx0 - x0 : sx1 - x0]
+        return out
+
+    def _cache_tiles_for(self, width: int) -> int:
+        """Coefficient-cache size for reads ``width`` px wide (in the level being read)."""
+        columns = -(-width // self._tile_w) + 2  # a region also touches a partial tile on each side
+        return _CACHE_TILES_PER_COLUMN * columns
+
+    def _tile(self, level: int, tx: int, ty: int) -> np.ndarray:
+        """Decoded RGB tile (through the LRU)."""
+        key = (level, tx, ty)
+        tile = self._tiles.get(key)
+        if tile is not None:
+            self._tiles.move_to_end(key)
+            return tile
+        tile = cv2.cvtColor(self.slide.read_tile(tx, ty, level=level), cv2.COLOR_RGBA2RGB)
+        self._tiles[key] = tile
+        while len(self._tiles) > self._tile_capacity:
+            self._tiles.popitem(last=False)
+        return tile
 
     # native_tile_height stays 1: libisyntax's tiles start at the wavelet padding offset, not at
     # y = 0, so reads aligned to multiples of the tile height (WSIPatchReader) would not line up
-    # with them anyway.
+    # with them anyway (the decoded-tile LRU covers the overlap instead).
 
-    def reopen(self) -> "ISyntaxFile":
-        return ISyntaxFile(self.path, cache_size=self.cache_size)
+    def reopen(self, read_width: int | None = None) -> "ISyntaxFile":
+        if read_width is None:
+            return ISyntaxFile(self.path, cache_size=self.cache_size)
+        return ISyntaxFile(self.path, read_width=read_width)
 
     def close(self) -> None:
         _LIBISYNTAX_THREADS.ensure()
         with _LIBISYNTAX_THREADS.registry_lock:
             self.slide.close()
+
+
+# libisyntax internals the tile assembly relies on (checked against ISyntax.read_region in the tests)
+_ISYNTAX_PADDING = 3  # PER_LEVEL_PADDING in libisyntax.c
+# Coefficient-cache tiles per tile column of the reads (measured on testslide.isyntax, 8 levels: 11x
+# thrashes, 16x does not; see the ISyntaxFile doc) and the floor of the default (pyisyntax's default)
+_CACHE_TILES_PER_COLUMN = 20
+_MIN_CACHE_TILES = 2000
+_MIN_DECODED_TILES = 64  # decoded RGB tiles kept per handle at least (~12 MB at 256 px)
 
 
 class _LibISyntaxThreads:
@@ -899,12 +980,18 @@ class StandardImage(WSIFile):
             raise ValueError(f"StandardImage has a single level, got level {level_idx}")
         return self.read_region((x, y, w, h))
 
-    def reopen(self) -> "StandardImage":
+    def reopen(self, read_width: int | None = None) -> "StandardImage":
         """The image is an in-memory array that is only sliced, so threads can share it."""
         return self
 
     def close(self) -> None:
         pass
+
+
+def can_reopen(wsi) -> bool:
+    """True when ``wsi`` implements ``reopen`` (one handle per reading thread)."""
+    fn = getattr(type(wsi), "reopen", None)
+    return fn is not None and fn is not PyramidalWSIFile.reopen
 
 
 def _is_pyramidal_tiff(path: str) -> bool:

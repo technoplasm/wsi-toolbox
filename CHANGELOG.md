@@ -14,6 +14,19 @@
   is given libisyntax's scratch arena first and frees it on exit). `.isyntax` is in `WSI_EXTENSIONS` and the
   watcher's slide glob.
 
+### Changed
+
+- `PyramidCommand` over iSyntax: testslide.isyntax (37382 x 73222) 41 s -> 12 s, with the same bytes, and the
+  same for every `concurrency` (openslide inputs are read as before; their output is byte-identical too). Inputs
+  that go through `create_wsi_file` and can be `reopen`ed are read in `concurrency` contiguous column blocks,
+  each with its own handle and thread, which run ahead into the next bands (before: one `read_region` of the
+  whole band on one thread). `PyramidalWSIFile.reopen(read_width=)` tells the new handle how wide its reads are.
+- `ISyntaxFile` assembles regions from whole libisyntax tiles through a small LRU of decoded tiles (exactly the
+  pixels of libisyntax's `read_region`, which decoded again the tiles a band or DZI tile shares with the next
+  one; DZI tiles ~30 % faster), and sizes libisyntax's coefficient cache for the width of its reads (20 tiles
+  per tile column; with fewer, the ancestors are evicted before their next child and every tile repeats the
+  inverse-DWT cascade: pyisyntax's fixed 2000 tiles thrashed on full-width reads of this slide).
+
 ### Fixed
 
 - `create_wsi_file` opens vendor TIFFs that openslide recognises (`OpenSlide.detect_format` other than
