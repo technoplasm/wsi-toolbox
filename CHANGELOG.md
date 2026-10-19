@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Philips iSyntax (`.isyntax`) slides: `ISyntaxFile` (a `PyramidalWSIFile`, read with `pyisyntax` / libisyntax,
+  new dependency; openslide does not read iSyntax). `create_wsi_file` picks it for `.isyntax` (or
+  `engine="isyntax"`), so DZI tiles, `read_region_at_mpp`, thumbnails, `WSIPatchReader` (`reopen()` per read
+  worker), `CacheCommand` and `PyramidCommand` take iSyntax like any other slide. Levels are the wavelet scales
+  (downsample `2 ** scale`); regions are clamped to the level and returned as RGB (libisyntax's RGBA is opaque,
+  missing background tiles come back white). One instance per thread, like `PyramidalTiffFile`; any thread may
+  use one (pyisyntax 0.1.7 segfaults on threads other than the one that initialised libisyntax, so each thread
+  is given libisyntax's scratch arena first and frees it on exit). `.isyntax` is in `WSI_EXTENSIONS` and the
+  watcher's slide glob.
+
+### Fixed
+
+- `create_wsi_file` opens vendor TIFFs that openslide recognises (`OpenSlide.detect_format` other than
+  `generic-tiff`, e.g. Philips TIFF exported from iSyntax) with openslide instead of tifffile. Through tifffile a
+  Philips TIFF had no mpp (`get_mpp` failed: it is in the XML ImageDescription), wrong level downsamples (the
+  pages are padded to whole tiles: 3.96 / 7.74 / 14.8 instead of 4 / 8 / 16, and the levels stopped at 16x) and
+  black squares for the tiles missing from sparse slides. Plain pyramidal TIFFs (`generic-tiff`, e.g.
+  `PyramidCommand`'s pyramid.tif) and TIFFs openslide does not open stay on tifffile.
+- `OpenSlideFile` composites transparent pixels onto `openslide.background-color` (white when absent) instead of
+  dropping alpha, so missing tiles of sparse slides (Philips TIFF, MIRAX) and areas outside the slide read as
+  background, not black.
+
 ## 0.6.3 (2026-10-02)
 
 ### Added

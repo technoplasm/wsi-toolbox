@@ -52,6 +52,7 @@ dependencies = [
     "zarr>=3",
     "pydantic-autocli>=0.2.0",
     "einops>=0.8.1",
+    "pyisyntax>=0.1.7",
 ]
 
 [project.scripts]

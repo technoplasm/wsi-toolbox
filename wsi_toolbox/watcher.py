@@ -57,7 +57,7 @@ class Task:
         self.options_line = options_line
         self.preset, self.should_rotate = self.parse_request_line(options_line)
         self.on_complete = on_complete
-        self.wsi_files = list(folder.glob("**/*.ndpi")) + list(folder.glob("**/*.svs"))
+        self.wsi_files = [p for ext in ("ndpi", "svs", "isyntax") for p in folder.glob(f"**/*.{ext}")]
         self.wsi_files.sort()
 
         # Standalone logger (not registered in the logging tree) whose only

@@ -69,7 +69,7 @@ class CacheCommand:
             patch_size: Size of patches to extract (default: 256)
             target_mpp: Target microns per pixel (default: 0.5)
             rows_per_read: Number of rows to read at once (default: 4)
-            engine: WSI reader engine ('auto', 'openslide', 'tifffile', 'standard')
+            engine: WSI reader engine ('auto', 'openslide', 'tifffile', 'isyntax', 'standard')
             overwrite: Whether to overwrite existing cache (default: False)
             white_detector: Function (patch) -> bool, True if white.
                            If None, uses default ptp method.

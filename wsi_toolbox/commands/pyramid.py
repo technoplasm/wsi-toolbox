@@ -380,7 +380,7 @@ class PyramidCommand:
 
         Args:
             wsi_path: Input WSI (anything openslide opens: NDPI / SVS / MRXS / tiled TIFF ...;
-                otherwise what ``create_wsi_file`` opens).
+                otherwise what ``create_wsi_file`` opens, e.g. iSyntax).
             output_path: Output ``.tif``.
             on_progress: Progress sink. Not given -> ``defaults.progress``; None -> silent.
             should_cancel: Checked after every band of ``tile_size`` rows; True removes the

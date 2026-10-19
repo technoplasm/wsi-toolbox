@@ -4,6 +4,7 @@ WSI (Whole Slide Image) file handling classes.
 Provides unified interface for different WSI formats:
 - OpenSlide compatible formats (.svs, .tiff, etc.)
 - TIFF files (.ndpi, .tif)
+- Philips iSyntax (.isyntax, via pyisyntax / libisyntax; openslide does not read it)
 - Standard images (.jpg, .png)
 
 Class hierarchy:
@@ -11,9 +12,11 @@ Class hierarchy:
     ├── StandardImage (DZI non-supported)
     └── PyramidalWSIFile (DZI shared logic)
         ├── OpenSlideFile
-        └── PyramidalTiffFile
+        ├── PyramidalTiffFile
+        └── ISyntaxFile
 """
 
+import ctypes
 import logging
 import os
 import threading
@@ -25,6 +28,9 @@ import cv2
 import numpy as np
 import tifffile
 import zarr
+from isyntax import ISyntax
+from isyntax import _pyisyntax as _pyisyntax_ext
+from isyntax.lowlevel import libisyntax
 from openslide import OpenSlide, OpenSlideError
 from PIL import Image
 
@@ -68,6 +74,29 @@ class ReadRepairLog:
         with self._lock:
             key = lambda e: (e["y"], e["x"])  # noqa: E731
             return sorted(self.level0_fallback, key=key), sorted(self.unreadable, key=key)
+
+
+WHITE = (255, 255, 255)
+
+
+def _rgba_to_rgb(rgba: np.ndarray, background: tuple[int, int, int] = WHITE) -> np.ndarray:
+    """RGB of an RGBA uint8 array (non-premultiplied); pixels that are not fully opaque are
+    composited onto ``background`` (transparent -> background, not black)."""
+    rgb = np.ascontiguousarray(rgba[..., :3])
+    alpha = rgba[..., 3]
+    if alpha.min() == 255:
+        return rgb
+    a = alpha[..., None].astype(np.float32) / 255.0
+    bg = np.asarray(background, dtype=np.float32)
+    return np.rint(rgb * a + bg * (1.0 - a)).astype(np.uint8)
+
+
+def _parse_hex_color(value: str | None) -> tuple[int, int, int]:
+    """``"ffffff"`` (openslide.background-color) -> (255, 255, 255); white when absent or malformed."""
+    try:
+        return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[index, return-value]
+    except (TypeError, ValueError):
+        return WHITE
 
 
 class WSIFile(ABC):
@@ -579,6 +608,9 @@ class OpenSlideFile(PyramidalWSIFile):
         self.prop = dict(self.wsi.properties)
         self.repair_log = repair_log if repair_log is not None else ReadRepairLog()
         self.repair_block = repair_block
+        # Transparent pixels (sparse / missing tiles: Philips TIFF, MRXS, outside the slide) are
+        # filled with this, not left black by dropping the alpha channel
+        self.background = _parse_hex_color(self.prop.get("openslide.background-color"))
 
         # Build level info from OpenSlide
         self._levels = self._build_level_info()
@@ -616,8 +648,8 @@ class OpenSlideFile(PyramidalWSIFile):
         return (dim[0], dim[1])
 
     def read_region(self, xywh):
-        img = self.wsi.read_region((xywh[0], xywh[1]), 0, (xywh[2], xywh[3])).convert("RGB")
-        return np.array(img)
+        img = self.wsi.read_region((xywh[0], xywh[1]), 0, (xywh[2], xywh[3]))
+        return _rgba_to_rgb(np.asarray(img), self.background)
 
     # === PyramidalWSIFile abstract methods ===
 
@@ -632,11 +664,8 @@ class OpenSlideFile(PyramidalWSIFile):
             size=(w, h),
         )
 
-        # Convert RGBA to RGB
-        if region.mode == "RGBA":
-            region = region.convert("RGB")
-
-        return np.array(region)
+        # RGBA -> RGB on the background color
+        return _rgba_to_rgb(np.asarray(region), self.background)
 
     def _read_native_region(self, level_idx: int, x: int, y: int, w: int, h: int) -> np.ndarray:
         """Read a region from a specific OpenSlide level (repairing undecodable blocks, see the class doc)."""
@@ -669,7 +698,9 @@ class OpenSlideFile(PyramidalWSIFile):
                 try:
                     ds = level.downsample
                     src = self.wsi.read_region((int(x * ds), int(y * ds)), 0, (round(w * ds), round(h * ds)))
-                    block = np.array(src.convert("RGB").resize((w, h), Image.BOX))
+                    block = np.array(
+                        Image.fromarray(_rgba_to_rgb(np.asarray(src), self.background)).resize((w, h), Image.BOX)
+                    )
                     self.repair_log.add("level0_fallback", entry)
                     logger.warning(f"{self.path}: level {level.index} block ({x},{y}) read from level 0 ({e})")
                     return block
@@ -679,6 +710,163 @@ class OpenSlideFile(PyramidalWSIFile):
             self.repair_log.add("unreadable", entry)
             logger.warning(f"{self.path}: level {level.index} block ({x},{y}) unreadable, dropped ({e})")
             return np.full((h, w, 3), 255, dtype=np.uint8)
+
+
+class ISyntaxFile(PyramidalWSIFile):
+    """Philips iSyntax (.isyntax) reader using pyisyntax (Python bindings for libisyntax)
+
+    iSyntax stores a wavelet pyramid, not JPEG tiles: libisyntax decodes a tile by running the
+    inverse DWT down from its ancestors, keeping the coefficients in a per-handle tile cache.
+
+    - Levels: one per wavelet scale, downsample ``2 ** scale``, size ``level-0 size >> scale``
+      (floor). The level-0 size excludes the wavelet padding, and ``ISyntax.read_region`` takes
+      ``x`` / ``y`` in the coordinates of the level it reads (libisyntax adds the padding offset
+      itself), so native-level coordinates go straight through.
+    - Pixels: ``read_region`` returns RGBA uint8. Tiles that do not exist in the file (background
+      the scanner skipped) and tiles outside the grid come back as 0xFF in every byte, i.e. opaque
+      white; decoded tiles are opaque too. The alpha channel is dropped, and should a pixel ever be
+      less than opaque it is composited onto white (``_rgba_to_rgb``).
+    - Regions are clamped to the level (like ``PyramidalTiffFile``): libisyntax would otherwise
+      return the padding around the image, so a region reaching past the edge comes back smaller.
+    - mpp: libisyntax reads it from the header and substitutes 1.0 when the header has none.
+
+    Thread safety: one instance must be used by **one thread at a time** (like ``PyramidalTiffFile``).
+    libisyntax serialises tile reads on the handle's cache mutex, but pyisyntax creates that cache
+    lazily without a lock and feeds the decoder through one Python file object; so for parallel
+    reads open one instance per thread (``reopen``). The decode runs with the GIL released (cffi),
+    so instances on separate threads do decode in parallel. Each instance holds its own tile cache.
+    Any thread may use an instance: libisyntax decodes into a per-thread scratch arena that only the
+    thread which initialised the library gets (pyisyntax 0.1.7 segfaults on any other thread), so
+    every call first gives the calling thread its arena (``_LIBISYNTAX_THREADS``).
+    """
+
+    def __init__(self, path, cache_size: int = 2000):
+        """
+        Args:
+            path: Path to the .isyntax file
+            cache_size: Tiles kept in libisyntax's coefficient cache (pyisyntax's default)
+        """
+        self.path = path
+        self.cache_size = cache_size
+        _LIBISYNTAX_THREADS.ensure()
+        with _LIBISYNTAX_THREADS.registry_lock:
+            self.slide = ISyntax.open(path, cache_size=cache_size)
+
+        # Build pyramid info
+        self._levels = self._build_level_info()
+
+    def _build_level_info(self) -> list[NativeLevel]:
+        """Build pyramid level information from the iSyntax wavelet scales."""
+        return [
+            NativeLevel(index=i, width=w, height=h, downsample=float(ds))
+            for i, ((w, h), ds) in enumerate(zip(self.slide.level_dimensions, self.slide.level_downsamples))
+        ]
+
+    def get_mpp(self):
+        return float(self.slide.mpp_x)
+
+    def get_original_size(self):
+        w, h = self.slide.dimensions
+        return (w, h)
+
+    def read_region(self, xywh):
+        x, y, w, h = xywh
+        return self._read_native_region(0, x, y, w, h)
+
+    # === PyramidalWSIFile abstract methods ===
+
+    def _get_native_levels(self) -> list[NativeLevel]:
+        return self._levels
+
+    def _read_native_region(self, level_idx: int, x: int, y: int, w: int, h: int) -> np.ndarray:
+        """Read a region from a specific iSyntax level (clamped to it, see the class doc)."""
+        level = self._levels[level_idx]
+
+        # Clamp to bounds
+        x = max(0, min(x, level.width - 1))
+        y = max(0, min(y, level.height - 1))
+        w = min(w, level.width - x)
+        h = min(h, level.height - y)
+        if w <= 0 or h <= 0:
+            return np.zeros((max(h, 0), max(w, 0), 3), dtype=np.uint8)
+
+        _LIBISYNTAX_THREADS.ensure()
+        rgba = self.slide.read_region(x, y, w, h, level=level.index)
+        return _rgba_to_rgb(rgba)
+
+    # native_tile_height stays 1: libisyntax's tiles start at the wavelet padding offset, not at
+    # y = 0, so reads aligned to multiples of the tile height (WSIPatchReader) would not line up
+    # with them anyway.
+
+    def reopen(self) -> "ISyntaxFile":
+        return ISyntaxFile(self.path, cache_size=self.cache_size)
+
+    def close(self) -> None:
+        _LIBISYNTAX_THREADS.ensure()
+        with _LIBISYNTAX_THREADS.registry_lock:
+            self.slide.close()
+
+
+class _LibISyntaxThreads:
+    """Per-thread setup libisyntax needs and pyisyntax (0.1.7) does not do.
+
+    - Scratch arena: libisyntax decodes with a thread-local arena (``threadlocal_thread_memory``)
+      that is allocated only on the thread that ran ``libisyntax_init`` (the first ``ISyntax.open``
+      in the process); a read from any other thread dereferences NULL and segfaults. ``ensure()``
+      gives each Python thread its own arena once, through the extension's exported
+      ``destroy_thread_memory`` / ``init_thread_memory`` (destroy first, so the init thread's arena
+      is replaced rather than tripping libisyntax's "called twice" assert), and frees it when the
+      thread exits (a sentinel in a ``threading.local``), so short-lived read workers do not leak
+      16 MB each.
+    - ``registry_lock``: pyisyntax keeps the open files in an unlocked module-level registry whose
+      slot reuse is not thread-safe; opens and closes are serialised on it.
+    """
+
+    def __init__(self):
+        self.registry_lock = threading.Lock()
+        self._init_lock = threading.Lock()
+        self._local = threading.local()
+        self._lib: ctypes.CDLL | None = None
+        self._system_info = 0
+
+    def _load(self) -> ctypes.CDLL:
+        with self._init_lock:
+            if self._lib is None:
+                libisyntax.init()  # libisyntax_init (once per process): global system info, thread pool
+                lib = ctypes.CDLL(_pyisyntax_ext.__file__)  # the already-loaded extension
+                lib.init_thread_memory.argtypes = [ctypes.c_void_p]
+                lib.init_thread_memory.restype = None
+                lib.destroy_thread_memory.argtypes = []
+                lib.destroy_thread_memory.restype = None
+                self._system_info = ctypes.addressof(ctypes.c_char.in_dll(lib, "global_system_info"))
+                self._lib = lib
+            return self._lib
+
+    def ensure(self) -> None:
+        """Give the calling thread its libisyntax scratch arena (no-op after the first call)."""
+        if getattr(self._local, "arena", None) is not None:
+            return
+        lib = self._load()
+        lib.destroy_thread_memory()
+        lib.init_thread_memory(self._system_info)
+        self._local.arena = _ThreadArena(lib)
+
+
+class _ThreadArena:
+    """Frees the libisyntax arena of the thread whose ``threading.local`` holds it, as that thread exits."""
+
+    def __init__(self, lib: ctypes.CDLL):
+        self._lib = lib
+        self._thread = threading.get_ident()
+
+    def __del__(self):
+        # A thread's locals are cleared on that thread as it exits; anywhere else would free the
+        # wrong thread's arena (thread-local), so do nothing then.
+        if threading.get_ident() == self._thread:
+            self._lib.destroy_thread_memory()
+
+
+_LIBISYNTAX_THREADS = _LibISyntaxThreads()
 
 
 class StandardImage(WSIFile):
@@ -730,13 +918,27 @@ def _is_pyramidal_tiff(path: str) -> bool:
         return False
 
 
+def _openslide_vendor_tiff(path: str) -> bool:
+    """True when openslide reads the TIFF as a vendor format (``detect_format`` other than generic-tiff).
+
+    Plain pyramidal TIFFs (generic-tiff, e.g. ``PyramidCommand``'s pyramid.tif) and TIFFs openslide
+    does not open (None) stay on tifffile: its direct tile reads are faster for DZI serving
+    (``_docs/benchmark-pyramid-dzi.md``).
+    """
+    try:
+        vendor = OpenSlide.detect_format(path)
+    except Exception:  # noqa: BLE001 - unreadable header: let the tifffile path report it
+        return False
+    return vendor is not None and vendor != "generic-tiff"
+
+
 def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> WSIFile:
     """
     Factory function to create appropriate WSIFile instance
 
     Args:
         image_path: Path to WSI file
-        engine: Engine type ('auto', 'openslide', 'tifffile', 'standard')
+        engine: Engine type ('auto', 'openslide', 'tifffile', 'isyntax', 'standard')
         mpp: Default Microns Per Pixel (only used when engine == 'standard')
 
     Returns:
@@ -747,13 +949,20 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
 
     if engine == "auto":
         if ext in [".tif", ".tiff"]:
+            if _openslide_vendor_tiff(image_path):
+                # A vendor TIFF openslide knows (Philips TIFF, Aperio / Ventana / Leica ...): its mpp,
+                # level layout and sparse tiles come from vendor metadata that tifffile does not read
+                engine = "openslide"
             # Check if pyramidal TIFF or single-level
-            if _is_pyramidal_tiff(image_path):
+            elif _is_pyramidal_tiff(image_path):
                 engine = "tifffile"
             else:
                 engine = "standard"
         elif ext in [".jpg", ".jpeg", ".png"]:
             engine = "standard"
+        elif ext == ".isyntax":
+            # Philips iSyntax: openslide does not read it
+            engine = "isyntax"
         else:
             # Default to openslide for WSI formats (.svs, .ndpi, etc.)
             engine = "openslide"
@@ -770,13 +979,15 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
             return PyramidalTiffFile(image_path)
     elif engine == "tifffile":
         return PyramidalTiffFile(image_path)
+    elif engine == "isyntax":
+        return ISyntaxFile(image_path)
     elif engine == "standard":
         return StandardImage(image_path, mpp=mpp)
     else:
         raise ValueError(f"Invalid engine: {engine}")
 
 
-# OpenSlide supported formats
+# WSI formats (OpenSlide supported formats, plus .isyntax read by ISyntaxFile)
 WSI_EXTENSIONS = [
     ".ndpi",  # Hamamatsu
     ".vms",  # Hamamatsu
@@ -790,6 +1001,7 @@ WSI_EXTENSIONS = [
     ".tiff",
     ".ome.tiff",
     ".ome.tif",
+    ".isyntax",  # Philips (ISyntaxFile)
 ]
 
 

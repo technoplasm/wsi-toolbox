@@ -132,6 +132,7 @@ from .utils.hdf5_paths import remove_namespace, rename_namespace
 
 # WSI file classes
 from .wsi_files import (
+    ISyntaxFile,
     NativeLevel,
     OpenSlideFile,
     PyramidalTiffFile,
@@ -220,6 +221,7 @@ __all__ = [
     "NativeLevel",
     "OpenSlideFile",
     "PyramidalTiffFile",
+    "ISyntaxFile",
     "StandardImage",
     "create_wsi_file",
     "find_wsi_for_h5",

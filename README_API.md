@@ -18,7 +18,7 @@ pip install wsi-toolbox
 | Progress | `ProgressEvent`, `ProgressSink`, `Reporter`, `Cancelled`, `UNSET`, `TqdmSink`, `RichSink`, `StreamlitSink`, `LoggingSink`, `MultiSink`, `NullSink`, `resolve_sink` |
 | Commands | `CacheCommand`, `Wsi2HDF5Command` (deprecated alias), `FeatureExtractionCommand` (+ `TileEncoder`, `ACCEL_NAMES`), `AggregateCommand`, `ClusteringCommand`, `ClusterWithUmapCommand`, `UmapCommand`, `PCACommand`, `BasePreviewCommand`, `PreviewClustersCommand`, `PreviewScoresCommand`, `PreviewLatentPCACommand`, `PreviewLatentClusterCommand`, `ShowCommand`, `DziCommand`, `PyramidCommand` (+ `PyramidError`, `read_pyramid_info`; `VipsError` / `vips_available` kept as old names) |
 | Result types | `CacheResult`, `Wsi2HDF5Result` (deprecated alias), `FeatureExtractResult`, `AggregateResult`, `ClusteringResult`, `ClusterWithUmapResult`, `UmapResult`, `PCAResult`, `ShowResult`, `DziResult`, `PyramidInfo`, `PyramidResult` |
-| WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
+| WSI files | `WSIFile`, `PyramidalWSIFile`, `NativeLevel`, `OpenSlideFile`, `PyramidalTiffFile`, `ISyntaxFile`, `StandardImage`, `create_wsi_file`, `find_wsi_for_h5` |
 | DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
 | Region reads | `read_region_at_mpp` |
 | Patch readers | `PatchReader`, `WSIPatchReader`, `CachePatchReader`, `PrefetchReader`, `get_patch_reader` |
@@ -411,13 +411,14 @@ A custom model is a `TilePreset` you construct yourself; see [README.md](README.
 ## WSI files
 
 ```python
-wt.create_wsi_file(path: str, engine: str = 'auto') -> WSIFile    # 'auto' | 'openslide' | 'tifffile' | 'standard'
+wt.create_wsi_file(path: str, engine: str = 'auto') -> WSIFile    # 'auto' | 'openslide' | 'tifffile' | 'isyntax' | 'standard'
 wt.find_wsi_for_h5(h5_path: str) -> str | None                      # xxx.h5 -> xxx.ndpi / .svs / ... in the same dir
 
 wt.WSIFile               # abstract base
 wt.PyramidalWSIFile      # base for multi-level files (needed by DziCommand)
 wt.OpenSlideFile         # openslide-backed
 wt.PyramidalTiffFile     # tifffile-backed (OME-TIFF, pyramid.tif, ...). One instance per thread
+wt.ISyntaxFile           # Philips iSyntax (.isyntax) via pyisyntax / libisyntax. One instance per thread
 wt.StandardImage         # plain PNG/JPEG treated as a single-level slide
 wt.NativeLevel           # one pyramid level (dimensions, downsample)
 ```

@@ -1,5 +1,5 @@
 version = 1
-revision = 4
+revision = 5
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine == 'aarch64' and sys_platform == 'linux'",
@@ -7,8 +7,6 @@ resolution-markers = [
     "sys_platform == 'darwin'",
     "sys_platform != 'darwin' and sys_platform != 'linux'",
 ]
-
-[manifest]
 
 [[manifest.dependency-metadata]]
 name = "flash-attn"
@@ -1993,6 +1991,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pyisyntax"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6e/f9/13a892859feb280e31c120d86ff1021a92931f52a29a820733c5c0027038/pyisyntax-0.1.7.tar.gz", hash = "sha256:f6a9054825ec780e14e9e487b49714402266111e514e2890d0693d4890d009d6", size = 259247, upload-time = "2026-09-13T04:36:51.458Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/bc/f4c65fbe9d868244326c7c3fb72d7e6bf69eab5af39d8b3cd0b88de1280d/pyisyntax-0.1.7-cp310-abi3-macosx_10_9_x86_64.whl", hash = "sha256:3569c34dfc05d032c27588b42b8570238ba848017c3768dbb617605cf7f3a8e9", size = 159015, upload-time = "2026-09-13T04:36:38.628Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/64/c5a1c87d0cb1164fc45395ce3d0dfda886ffdcd44e6ffa2c91d5b57205d1/pyisyntax-0.1.7-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:75ae31bebecc179fdb6c79787d0a572684e6c9e5ccd5fc5fd430a399d5e0c8cb", size = 147266, upload-time = "2026-09-13T04:36:40.669Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/25/1aba5858e4e74f874d50c565f12262a8efd211667620e8bfd2f35c385620/pyisyntax-0.1.7-cp310-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c3e0e5848069b37e37c236853beb744098f3c63751ff11bc4e46482aca41d820", size = 619138, upload-time = "2026-09-13T04:36:44.332Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/cb/cf8576423ec63bebaddc9cbb21f7bfab7dfac9a4ab2cc3caeab9b4ec4876/pyisyntax-0.1.7-cp310-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0e837dbb19faa95b5b461f4f2a2620aa1bfc1befc6354d00519f557bdebc99a3", size = 643284, upload-time = "2026-09-13T04:36:47.376Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/e4/87feeea23b02ae8530a0963e983e51fbdf2bc07f7e8c52caa5dfdc17e4e1/pyisyntax-0.1.7-cp310-abi3-win_amd64.whl", hash = "sha256:63a485108a277a7f4e1e55da1abfcc8333b77258e1ae97f69f9a98bf1f08d6bf", size = 93706, upload-time = "2026-09-13T04:36:49.365Z" },
+]
+
+[[package]]
 name = "pynndescent"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3133,6 +3148,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pillow" },
     { name = "pydantic-autocli" },
+    { name = "pyisyntax" },
     { name = "pyqt6" },
     { name = "python-igraph" },
     { name = "rich" },
