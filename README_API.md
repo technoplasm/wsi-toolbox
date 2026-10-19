@@ -328,7 +328,7 @@ Convert a WSI to a DZI-optimised tiled pyramidal TIFF (in-process, streaming; op
 tifffile). **CLI:** `wt pyramid`.
 
 ```python
-wt.PyramidCommand(tile_size=512, quality=85, bigtiff=True, concurrency=8)   # concurrency: reader / encoder threads
+wt.PyramidCommand(tile_size=512, quality=85, bigtiff=True, concurrency=4)   # concurrency: reader / encoder threads
 cmd(wsi_path, output_path, *, on_progress=UNSET, should_cancel=None) -> PyramidResult
 
 wt.read_pyramid_info(path) -> PyramidInfo      # tifffile; bytes / width / height / levels / tile_size

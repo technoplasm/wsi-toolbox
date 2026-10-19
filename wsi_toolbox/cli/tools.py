@@ -111,7 +111,7 @@ class ToolsMixin:
         )
         tile_size: int = param(512, l="--tile-size", s="-t", description="Tile size in pixels")
         quality: int = param(85, s="-q", description="JPEG quality (1-100)")
-        concurrency: int = param(8, l="--concurrency", description="Reader threads and JPEG encoder threads")
+        concurrency: int = param(4, l="--concurrency", description="Reader threads and JPEG encoder threads")
 
     def run_pyramid(self, a: PyramidArgs):
         """Convert a WSI to a DZI-optimised tiled pyramid TIFF"""

@@ -26,6 +26,9 @@
   one; DZI tiles ~30 % faster), and sizes libisyntax's coefficient cache for the width of its reads (20 tiles
   per tile column; with fewer, the ancestors are evicted before their next child and every tile repeats the
   inverse-DWT cascade: pyisyntax's fixed 2000 tiles thrashed on full-width reads of this slide).
+- `PyramidCommand` default `concurrency` 8 -> 4 (also the `pyramid` CLI's `--concurrency`): on testslide.isyntax
+  4 threads build the pyramid about as fast as 8 (12.5 s vs 11.4-12.0 s) for 70 s of CPU instead of 107-112 s.
+  The output does not depend on `concurrency`.
 
 ### Fixed
 

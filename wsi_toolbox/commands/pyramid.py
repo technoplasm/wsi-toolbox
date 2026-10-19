@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 # - BigTIFF: required above 4 GB; openslide and tifffile both read it
 DEFAULT_TILE_SIZE = 512
 DEFAULT_QUALITY = 85
-DEFAULT_CONCURRENCY = 8  # reader threads and JPEG encoder threads
+DEFAULT_CONCURRENCY = 4  # reader threads and JPEG encoder threads
 FULL_CHROMA_QUALITY = 90  # from this JPEG quality on, chroma is not subsampled
 
 PHASE = "Building pyramid"
@@ -400,7 +400,7 @@ class PyramidCommand:
             tile_size: Tile width / height in pixels (a multiple of 16).
             quality: JPEG quality (1-100). Chroma is subsampled 4:2:0 below 90.
             bigtiff: Write BigTIFF (needed for outputs above 4 GB).
-            concurrency: Reader threads and JPEG encoder threads (None -> 8).
+            concurrency: Reader threads and JPEG encoder threads (None -> 4).
         """
         self.tile_size = tile_size
         self.quality = quality
