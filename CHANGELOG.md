@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.0 (2026-10-23)
+
+Breaking release: `TileEncoder.encode()` returns a dict (`enc.encode(b)['cls']` for the old features).
+
+### Added
+
+- `outputs=` on `FeatureExtractionCommand` / `TileEncoder` (CLI `wt extract --outputs cls,latent,proj`): pick the
+  outputs saved from one forward pass. `cls` (default) -> `{model}/features`, `latent` -> `{model}/latent_features`
+  (only together with `cls`), `proj` (`conch15`: CONCH v1.5 attn-pool + LayerNorm, 768 dims, TITAN input) ->
+  `{model}_768/features`. `wt extract --preset conch15 --outputs cls,proj` writes the 1024- and 768-dim features
+  in one run. Each group gets an `output` attr next to `preset`; `FeatureExtractResult` has `outputs` and
+  `feature_dims`.
+- `TilePreset` is a class: built-in presets are subclasses (`Conch15Preset`, ...) that own their model factory,
+  normalization and heads. `preset(model, x)` gives the default output, `preset.outputs(model, x, names)` the
+  selected ones as a dict. New: `TileHead`, `PRESET_ALIASES`. `TilePreset(name=..., create_model=...,
+  extract_fn=...)` for custom models works as before.
+
+### Changed
+
+- `TileEncoder.encode()` returns `{"cls": ..., "latent": ..., "proj": ...}` (only the selected outputs) instead of
+  `(features, latent | None)`.
+- `TilePreset` is no longer a frozen dataclass (no `==` / `hash` by value).
+- TITAN's tile source is `(preset, output) = ("conch15", "proj")` (`SLIDE_PRESET_TILE_SOURCES`); groups written
+  with `preset="conch15_768"` are still picked up.
+- With `accel="compile"` / `"graphs"` the compiled function now includes the CLS slice and the heads; eager
+  features are bit-identical to 0.6.4.
+
+### Deprecated
+
+- `with_latent=True` / CLI `-L`: use `outputs=("cls", "latent")`.
+- Preset `conch15_768`: an alias of `conch15` with `outputs=("proj",)` (still written to `conch15_768/features`);
+  moved from `PRESET_NAMES` to `PRESET_ALIASES`.
+
 ## 0.6.4 (2026-10-20)
 
 ### Added
