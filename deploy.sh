@@ -14,13 +14,13 @@ echo ""
 
 # Build package
 echo "Building package..."
-python -m build
+uv build
 echo "✓ Build completed"
 echo ""
 
 # Check package integrity
 echo "Checking package integrity..."
-python -m twine check dist/*
+uvx twine check dist/*
 echo "✓ Package check passed"
 echo ""
 
@@ -35,11 +35,11 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]
 then
     echo "Uploading to PyPI..."
-    python -m twine upload dist/*
+    uvx twine upload dist/*
     echo "✓ Deployment completed successfully!"
 else
     echo "Upload cancelled."
     echo ""
     echo "To upload manually, run:"
-    echo "  python -m twine upload dist/*"
+    echo "  uvx twine upload dist/*"
 fi
