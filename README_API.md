@@ -22,7 +22,7 @@ pip install wsi-toolbox
 | DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
 | Region reads | `read_region_at_mpp` |
 | Patch readers | `PatchReader`, `WSIPatchReader`, `CachePatchReader`, `PrefetchReader`, `get_patch_reader` |
-| Presets | `TilePreset`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model` |
+| Presets | `TilePreset`, `TileHead`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_ALIASES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model` |
 | Utilities | `leiden_cluster`, `reorder_clusters_by_pca`, `rename_namespace`, `remove_namespace` |
 
 ## Defaults
@@ -138,7 +138,7 @@ wt.FeatureExtractionCommand(
     preset: str | TilePreset | None = None,  # foundation model; None -> defaults.preset (ValueError if unset)
     device: str | None = None,               # None -> defaults.device
     batch_size: int = 256,
-    with_latent: bool = False,
+    with_latent: bool = False,               # deprecated: same as adding 'latent' to outputs (warns)
     overwrite: bool = False,
     patch_size: int = 256,
     target_mpp: float = 0.5,
@@ -147,12 +147,29 @@ wt.FeatureExtractionCommand(
     read_workers: int | None = None,         # WSI read threads; None -> min(4, CPUs / 2)
     accel: str = 'none',                     # 'none' | 'compile' | 'graphs' for the encoder the command builds itself
     encoder: TileEncoder | None = None,      # reuse a prebuilt encoder (then preset/device must be None, accel 'none')
+    outputs: tuple[str, ...] | None = None,  # None -> preset.default_outputs (('cls',)); e.g. ('cls', 'proj')
 )
 cmd(hdf5_path: str, wsi_path: str | None = None, *, on_progress=UNSET, should_cancel=None) -> FeatureExtractResult
 ```
 
-`FeatureExtractResult`: `feature_dim`, `patch_count`, `total_patches`, `total_batches`, `elapsed`,
-`batch_time_mean`, `batch_time_std`, `model`, `with_latent`, `accel`, `skipped`; `.summary()` gives a one-line
+Outputs, all from one forward pass (`model` = the storage key):
+
+| output | written to | presets |
+|---|---|---|
+| `cls` | `{model}/features` + `{model}/coordinates` | all (with `extract_fn`: what it returns) |
+| `latent` | `{model}/latent_features` (float16 patch tokens) | without `extract_fn`; only together with `cls` |
+| head, e.g. `proj` | `{model}{key_suffix}/features` + its own `coordinates` copy | the preset's `heads` (`conch15`: `proj` → `{model}_768`, 768 dims) |
+
+Anything else raises `ValueError` listing `preset.output_names`. Each features group gets the attrs `preset`
+(preset name), `output` (`'cls'` / head name), `patch_count`, `accel` and the reader metadata. All requested
+features present → skipped; some present → `ValueError` naming them unless `overwrite=True`, which rewrites all of
+them. A cancelled / failed run removes every dataset it was going to write. The deprecated preset name
+`'conch15_768'` resolves to `conch15` with `outputs=('proj',)` written to `{model}/features` itself (no suffix), so
+`model='conch15_768'` lands where it always did, with attrs `preset='conch15'`, `output='proj'`.
+
+`FeatureExtractResult`: `feature_dim` (of the first non-latent output), `feature_dims` (`{output: dim}`),
+`patch_count`, `total_patches`, `total_batches`, `elapsed`, `batch_time_mean`, `batch_time_std`, `model`,
+`outputs` (list), `with_latent` (= `'latent' in outputs`), `accel`, `skipped`; `.summary()` gives a one-line
 string. `accel` (also written to the H5 group attrs) is what actually ran: `'none'` when a compiled mode was
 requested on the CPU.
 
@@ -169,18 +186,24 @@ wt.TileEncoder(
     accel: str = 'none',                     # 'none' (eager) | 'compile' (torch.compile, dynamic=False)
                                              # | 'graphs' (+ mode='reduce-overhead', CUDA graphs); CUDA only
     buckets: tuple[int, ...] = (64, 128, 256, 512),  # batch shapes the compiled model is specialised for
-    with_latent: bool = False,               # must match the command's with_latent
+    outputs: tuple[str, ...] | None = None,  # None -> preset.default_outputs; must match the command's outputs
+    with_latent: bool = False,               # deprecated: adds 'latent' to outputs
 )
 enc.preset: TilePreset
+enc.outputs: tuple[str, ...]                 # validated, in preset.output_names order
+enc.with_latent: bool                        # 'latent' in enc.outputs
 enc.devices: list[str]
 enc.accel: str                               # what actually runs ('none' on the CPU)
-enc.feature_dim: int | None                  # known after warmup() / the first encode()
+enc.feature_dim: int | None                  # first non-latent output; known after warmup() / the first encode()
 enc.warmup(patch_size: int = 256) -> None    # compile every bucket shape now (no-op for 'none')
-enc.encode(batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]  # uint8 (n, H, W, 3) -> (features (n, dim) float32, latent float16 | None)
+enc.encode(batch: np.ndarray) -> dict[str, np.ndarray]  # uint8 (n, H, W, 3) -> {output: array}
+                                             # 'cls' / heads float32 (n, dim), 'latent' float16 (n, tokens, dim)
 enc.close() -> None                          # also a context manager
 ```
 
-`encode` is thread-safe (one lock per device; CUDA graphs use static buffers). With `accel != 'none'` each
+`encode` returned a `(features, latent | None)` tuple before `outputs=` existed; it now returns a dict keyed by
+output name (`enc.encode(b)['cls']` is the old `features`). The whole `preset.outputs(...)` call, heads included,
+is what `torch.compile` compiles. `encode` is thread-safe (one lock per device; CUDA graphs use static buffers). With `accel != 'none'` each
 batch is padded to the smallest bucket >= its size (larger batches: chunks of the largest bucket) by repeating
 the last patch, and the padding is sliced off again. The command never closes an encoder it was given.
 
@@ -381,28 +404,50 @@ than level 0 are upsampled. `ValueError` for a non-positive mpp or an empty box.
 ## Presets
 
 ```python
-@dataclass(frozen=True)
-class TilePreset:
-    name: str                                         # stored in {model}/.attrs['preset']
-    create_model: Callable[[], torch.nn.Module]       # fresh module; not moved to a device, not .eval()
-    norm_mean: tuple[float, float, float] = ImageNet mean
-    norm_std: tuple[float, float, float] = ImageNet std
-    extract_fn: Callable[[model, x], features] | None = None   # None -> forward_features(x)[:, 0]
+class TilePreset:                                     # a plain class (was a frozen dataclass); built-ins subclass it
+    def __init__(
+        self,
+        name: str,                                    # stored in {model}/.attrs['preset']
+        create_model: Callable[[], torch.nn.Module] | None = None,  # fresh module; not on a device, not .eval()
+        norm_mean: tuple[float, float, float] = ImageNet mean,
+        norm_std: tuple[float, float, float] = ImageNet std,
+        extract_fn: Callable[[model, x], features] | None = None,   # None -> forward_features(x)[:, 0]
+        heads: Mapping[str, TileHead] | None = None,  # extra outputs; not with extract_fn
+        default_outputs: Iterable[str] = ('cls',),
+    )
+    name, norm_mean, norm_std, extract_fn, heads, default_outputs   # attributes
+    create_model() -> torch.nn.Module                 # subclasses override this method
+    output_names: tuple[str, ...]                     # ('cls', 'latent', *heads); ('cls',) with extract_fn
+    resolve_outputs(outputs=None, *, with_latent=False) -> tuple[str, ...]   # validate (ValueError) + order
+    key_suffix(output: str) -> str                    # '' for cls / latent, the head's key_suffix otherwise
+    __call__(model, x) -> Tensor                      # default features (B, D) = first of default_outputs
+    outputs(model, x, names) -> dict[str, Tensor]     # selected outputs from ONE forward pass
 
-get_tile_preset(name: str) -> TilePreset      # built-in preset by name; ValueError lists PRESET_NAMES
+@dataclass(frozen=True)
+class TileHead:
+    key_suffix: str                                   # storage key = {model}{key_suffix}
+    fn: Callable[[model, tokens], Tensor]             # tokens = forward_features(x) (CLS first) -> (B, D)
+
+get_tile_preset(name: str) -> TilePreset      # registered instance; ValueError lists PRESET_NAMES
 PRESET_NAMES: list[str]
 # ['uni', 'uni2', 'gigapath', 'gigapath-flash', 'virchow', 'virchow2', 'h-optimus-0',
-#  'conch15', 'conch15_768', 'midnight', 'phikon2', 'hibou-b', 'hibou-l', 'h0-mini', 'phikon',
-#  'kaiko-midnight']
+#  'conch15', 'midnight', 'phikon2', 'hibou-b', 'hibou-l', 'h0-mini', 'phikon', 'kaiko-midnight']
+PRESET_ALIASES: dict[str, tuple[str, tuple[str, ...]]]
+# {'conch15_768': ('conch15', ('proj',))} — deprecated names; get_tile_preset() warns (DeprecationWarning)
+# and returns conch15 with default_outputs=('proj',) and proj stored without the '_768' suffix
 
-# Compatibility tables derived from the presets
+# Compatibility tables derived from the presets (aliases included)
 create_preset_model(name: str) -> torch.nn.Module      # == get_tile_preset(name).create_model()
 PRESET_NORMALIZATION: dict[str, (mean, std)]
-PRESET_EXTRACT_FN: dict[str, Callable]                  # only presets with a custom extract_fn
+PRESET_EXTRACT_FN: dict[str, Callable[[model, x], features]]
+# presets whose default features are not forward_features(x)[:, 0]: {'conch15_768', 'kaiko-midnight'}
 
 # Slide-level aggregators (uv-only)
 SLIDE_PRESET_NAMES: list[str]                           # ['titan']
-SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[str, ...]]   # {'titan': ('conch15_768',)}
+SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[tuple[str, str], ...]]
+# {'titan': (('conch15', 'proj'),)} — (tile preset, output) pairs (was {'titan': ('conch15_768',)});
+# groups without an 'output' attr (older files) are read as preset='conch15_768' -> ('conch15', 'proj'),
+# anything else -> (preset, 'cls')
 create_slide_preset_model(name: str)
 ```
 

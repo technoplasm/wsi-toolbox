@@ -65,6 +65,13 @@ def _pad_to_bucket(batch: np.ndarray, buckets: tuple[int, ...]) -> tuple[np.ndar
     return np.concatenate([batch, pad], axis=0), n
 
 
+def _concat_outputs(parts: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    """Concatenate per-chunk ``{output: array}`` dicts along the patch axis (order preserved)."""
+    if len(parts) == 1:
+        return parts[0]
+    return {name: np.concatenate([p[name] for p in parts], axis=0) for name in parts[0]}
+
+
 class _DeviceWorker:
     """One model copy on one device, with its forward callable (eager or compiled) and a lock."""
 
@@ -76,7 +83,7 @@ class _DeviceWorker:
         *,
         accel: str,
         buckets: tuple[int, ...],
-        with_latent: bool,
+        outputs: tuple[str, ...],
     ):
         import torch  # noqa: PLC0415
 
@@ -84,7 +91,7 @@ class _DeviceWorker:
         self.preset = preset
         self.accel = accel
         self.buckets = buckets
-        self.with_latent = with_latent
+        self.outputs = outputs
         self.lock = threading.Lock()
         self.model = model.to(device, memory_format=torch.channels_last)
         self.mean = torch.tensor(preset.norm_mean).view(1, 3, 1, 1).to(device)
@@ -97,16 +104,12 @@ class _DeviceWorker:
             self.autocast_dtype = torch.bfloat16
         self.device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-        extract_fn = preset.extract_fn
-        if extract_fn is None:
-            self.latent_size = model.patch_embed.proj.kernel_size[0]
-            forward = self.model.forward_features
-        else:
-            self.latent_size = 0
-            model_ref = self.model
+        # One forward pass -> every selected output; the preset owns how (CLS / latent slice / heads).
+        # Compiling this whole function keeps the heads inside the compiled graph.
+        model_ref = self.model
 
-            def forward(x):
-                return extract_fn(model_ref, x)
+        def forward(x):
+            return preset.outputs(model_ref, x, outputs)
 
         if accel != "none":
             # One compiled graph per bucket shape (x patch size). The default recompile limit (8) is
@@ -119,7 +122,7 @@ class _DeviceWorker:
         logger.debug(f"Worker {device}: autocast={self.autocast_dtype}, channels_last, accel={accel}")
 
     def _forward(self, batch: np.ndarray):
-        """uint8 BHWC batch -> the model's output tensor (on the device, autocast dtype)."""
+        """uint8 BHWC batch -> ``{output: tensor}`` (on the device, autocast dtype)."""
         import torch  # noqa: PLC0415
 
         # Upload uint8 and scale / normalise on the device: converting to float32 on the CPU first
@@ -130,38 +133,32 @@ class _DeviceWorker:
         with torch.inference_mode(), torch.autocast(device_type=self.device_type, dtype=self.autocast_dtype):
             return self.forward(x)
 
-    def _split(self, out, n: int) -> tuple[np.ndarray, np.ndarray | None]:
-        """Model output -> (features, latent | None) for the first ``n`` rows, copied to the host.
+    def _split(self, out: dict, n: int) -> dict[str, np.ndarray]:
+        """Model outputs -> host arrays for the first ``n`` rows (float32; ``latent`` float16).
 
         Copies right away: with CUDA graphs the output buffers are overwritten by the next replay.
+        Only the selected outputs leave the device (the full token tensor only for ``latent``).
         """
-        if self.preset.extract_fn is not None:
-            return out[:n].float().cpu().numpy(), None
-        # Only the CLS token leaves the device unless the latent tokens are wanted
-        features = out[:n, 0, ...].float().cpu().numpy()
-        latent = None
-        if self.with_latent:
-            latent_index = out.shape[1] - self.latent_size**2
-            latent = out[:n, latent_index:, ...].float().cpu().numpy().astype(np.float16)
-        return features, latent
+        result = {}
+        for name in self.outputs:
+            arr = out[name][:n].float().cpu().numpy()
+            result[name] = arr.astype(np.float16) if name == "latent" else arr
+        return result
 
-    def infer(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
-        """Run inference on a uint8 BHWC batch. Returns (features, latent_or_None)."""
+    def infer(self, batch: np.ndarray) -> dict[str, np.ndarray]:
+        """Run inference on a uint8 BHWC batch. Returns ``{output: array}`` for every selected output."""
         with self.lock:
             if self.accel == "none":
                 return self._split(self._forward(batch), len(batch))
 
             padded, n = _pad_to_bucket(batch, self.buckets)
             largest = max(self.buckets)
-            feats, lats = [], []
+            parts = []
             for start in range(0, len(padded), largest):
                 chunk = padded[start : start + largest]
                 keep = min(len(chunk), n - start)  # real rows in this chunk
-                f, latent = self._split(self._forward(chunk), keep)
-                feats.append(f)
-                if latent is not None:
-                    lats.append(latent)
-            return np.concatenate(feats, axis=0), (np.concatenate(lats, axis=0) if lats else None)
+                parts.append(self._split(self._forward(chunk), keep))
+            return _concat_outputs(parts)
 
     def close(self) -> None:
         """Release the device resources held by this worker."""
@@ -185,8 +182,12 @@ class TileEncoder:
         accel: ``"none"`` (eager), ``"compile"`` or ``"graphs"`` (see the module docstring).
             Anything but ``"none"`` on the CPU logs a warning and runs eager.
         buckets: Batch sizes the compiled model is specialised for (ascending after sorting).
-        with_latent: Also return the patch-token latents from ``encode`` (float16). Ignored (with a
-            warning) for presets with a custom ``extract_fn``.
+        outputs: Outputs ``encode`` returns, all from one forward pass: ``"cls"`` (the default features),
+            ``"latent"`` (patch tokens, float16; only with ``"cls"``) and the preset's heads (``"proj"`` for
+            ``conch15``). None -> the preset's ``default_outputs`` (``("cls",)``). ValueError lists what the
+            preset supports otherwise.
+        with_latent: Deprecated; same as adding ``"latent"`` to ``outputs`` (ignored with a warning for
+            presets without a latent output).
 
     Usage:
         enc = wt.TileEncoder('gigapath-flash', device='cuda', accel='graphs')
@@ -203,6 +204,7 @@ class TileEncoder:
         *,
         accel: str = "none",
         buckets: tuple[int, ...] = DEFAULT_BUCKETS,
+        outputs: tuple[str, ...] | list[str] | None = None,
         with_latent: bool = False,
     ):
         validate_accel(accel)
@@ -213,16 +215,12 @@ class TileEncoder:
         self.preset: TilePreset = resolve_preset(preset)
         self.devices: list[str] = resolve_devices(device)
         self.buckets = buckets
-        self.with_latent = with_latent
+        self.outputs: tuple[str, ...] = self.preset.resolve_outputs(outputs, with_latent=with_latent)
 
         if accel != "none" and not all(d.startswith("cuda") for d in self.devices):
             logger.warning(f"accel={accel!r} is only supported on CUDA devices ({self.devices}); running eager")
             accel = "none"
         self.accel: str = accel
-
-        if with_latent and self.preset.extract_fn is not None:
-            logger.warning("with_latent is not supported with custom extract_fn, skipping latent extraction")
-            self.with_latent = False
 
         if len(self.devices) > 1:
             logger.info(f"Using {len(self.devices)} GPUs for parallel inference: {self.devices}")
@@ -234,15 +232,24 @@ class TileEncoder:
         for i, dev in enumerate(self.devices):
             model = base_model if i == 0 else copy.deepcopy(base_model)
             self._workers.append(
-                _DeviceWorker(model, dev, self.preset, accel=self.accel, buckets=buckets, with_latent=self.with_latent)
+                _DeviceWorker(model, dev, self.preset, accel=self.accel, buckets=buckets, outputs=self.outputs)
             )
         self._executor = ThreadPoolExecutor(max_workers=len(self._workers)) if len(self._workers) > 1 else None
         self._closed = False
 
     @property
+    def with_latent(self) -> bool:
+        """True when ``"latent"`` is among the outputs (compat)."""
+        return "latent" in self.outputs
+
+    @property
     def feature_dim(self) -> int | None:
-        """Feature dimension once known (after the first ``encode`` / ``warmup``), else None."""
+        """Dimension of the first non-latent output once known (after the first ``encode`` / ``warmup``), else None."""
         return getattr(self, "_feature_dim", None)
+
+    def _note_dim(self, result: dict[str, np.ndarray]) -> None:
+        first = next(name for name in self.outputs if name != "latent")
+        self._feature_dim = int(result[first].shape[-1])
 
     def warmup(self, patch_size: int = 256) -> None:
         """Run every bucket shape once per device so the compile cost is paid now (no-op for ``"none"``).
@@ -259,13 +266,14 @@ class TileEncoder:
             for b in self.buckets:
                 batch = rng.integers(0, 256, (b, patch_size, patch_size, 3), dtype=np.uint8)
                 for _ in range(repeats):
-                    features, _ = worker.infer(batch)
-                self._feature_dim = int(features.shape[-1])
+                    result = worker.infer(batch)
+                self._note_dim(result)
                 logger.debug(f"warmup {worker.device}: bucket {b} x {patch_size}px done")
 
-    def encode(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
-        """uint8 BHWC patches -> (features float32 (n, dim), latent float16 (n, tokens, dim) | None).
+    def encode(self, batch: np.ndarray) -> dict[str, np.ndarray]:
+        """uint8 BHWC patches -> ``{output: array}`` for every output in ``self.outputs``.
 
+        ``cls`` / heads are float32 ``(n, dim)``, ``latent`` float16 ``(n, tokens, dim)``.
         Row order is preserved. The batch is split across the devices when there are several.
         """
         if self._closed:
@@ -274,7 +282,7 @@ class TileEncoder:
             raise ValueError("空のバッチです: batch has no patches")
 
         if self._executor is None:
-            features, latent = self._workers[0].infer(batch)
+            result = self._workers[0].infer(batch)
         else:
             chunks = np.array_split(batch, len(self._workers))
             futures = [
@@ -282,12 +290,9 @@ class TileEncoder:
                 for worker, chunk in zip(self._workers, chunks)
                 if len(chunk) > 0
             ]
-            results = [f.result() for f in futures]
-            features = np.concatenate([f for f, _ in results], axis=0)
-            latents = [lat for _, lat in results if lat is not None]
-            latent = np.concatenate(latents, axis=0) if latents else None
-        self._feature_dim = int(features.shape[-1])
-        return features, latent
+            result = _concat_outputs([f.result() for f in futures])
+        self._note_dim(result)
+        return result
 
     def close(self) -> None:
         """Release the models (idempotent)."""
@@ -309,7 +314,10 @@ class TileEncoder:
         self.close()
 
     def __repr__(self) -> str:
-        return f"TileEncoder(preset={self.preset.name!r}, devices={self.devices}, accel={self.accel!r})"
+        return (
+            f"TileEncoder(preset={self.preset.name!r}, outputs={list(self.outputs)}, "
+            f"devices={self.devices}, accel={self.accel!r})"
+        )
 
 
 __all__ = ["ACCEL_NAMES", "DEFAULT_BUCKETS", "TileEncoder", "validate_accel"]

@@ -88,8 +88,8 @@ def test_encoder_attributes_and_repr(tiny_preset):
         assert enc.feature_dim is None
         assert "tiny" in repr(enc)
         enc.warmup()  # no-op for accel="none"
-        feats, latent = enc.encode(_rand_batch(3))
-        assert feats.shape == (3, FEATURE_DIM) and latent is None
+        out = enc.encode(_rand_batch(3))
+        assert set(out) == {"cls"} and out["cls"].shape == (3, FEATURE_DIM)
         assert enc.feature_dim == FEATURE_DIM
     with pytest.raises(RuntimeError):
         enc.encode(_rand_batch(1))
@@ -98,19 +98,18 @@ def test_encoder_attributes_and_repr(tiny_preset):
 
 def test_encoder_batch_equals_per_patch(tiny_preset):
     batch = _rand_batch(5, size=256)  # the latent slice assumes 256 px patches (16 x 16 tokens)
-    for with_latent in (False, True):
-        enc = wt.TileEncoder(tiny_preset, device="cpu", with_latent=with_latent)
+    for outputs in (("cls",), ("cls", "latent")):
+        enc = wt.TileEncoder(tiny_preset, device="cpu", outputs=outputs)
         try:
-            feats, latent = enc.encode(batch)
-            assert feats.shape == (5, FEATURE_DIM)
+            out = enc.encode(batch)
+            assert tuple(out) == outputs
+            assert out["cls"].shape == (5, FEATURE_DIM)
             singles = [enc.encode(batch[i : i + 1]) for i in range(5)]
-            assert np.array_equal(feats, np.concatenate([f for f, _ in singles]))
-            if with_latent:
-                assert latent is not None and latent.dtype == np.float16
-                assert latent.shape == (5, 256, FEATURE_DIM)
-                assert np.array_equal(latent, np.concatenate([lat for _, lat in singles]))
-            else:
-                assert latent is None
+            assert np.array_equal(out["cls"], np.concatenate([s["cls"] for s in singles]))
+            if "latent" in outputs:
+                assert out["latent"].dtype == np.float16
+                assert out["latent"].shape == (5, 256, FEATURE_DIM)
+                assert np.array_equal(out["latent"], np.concatenate([s["latent"] for s in singles]))
         finally:
             enc.close()
 

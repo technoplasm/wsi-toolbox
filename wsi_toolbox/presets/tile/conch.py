@@ -73,11 +73,14 @@ class CONCHVisionTower(nn.Module):
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         return self.trunk.forward_features(x)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.forward_features(x)
-        x = self.attn_pool_contrast(x)[:, 0]
+    def project(self, tokens: torch.Tensor) -> torch.Tensor:
+        """forward_features tokens -> the 768-dim contrastive embedding (TITAN's input)."""
+        x = self.attn_pool_contrast(tokens)[:, 0]
         x = self.ln_contrast(x)
         return x
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.project(self.forward_features(x))
 
 
 def create_conch_model() -> CONCHVisionTower:

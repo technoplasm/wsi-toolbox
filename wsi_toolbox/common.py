@@ -13,7 +13,7 @@ from typing import Any
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, ConfigDict, Field
 
-from .presets.tile import PRESET_NAMES, TilePreset, get_tile_preset
+from .presets.tile import PRESET_NAMES, TilePreset, get_tile_preset, is_tile_preset_name
 from .progress import SINK_NAMES, ProgressSink
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def get_defaults() -> Defaults:
 def set_default_preset(preset: str | TilePreset) -> None:
     """Set the default tile preset (a built-in name or a ``TilePreset``)."""
     if isinstance(preset, str):
-        if preset not in PRESET_NAMES:
+        if not is_tile_preset_name(preset):
             raise ValueError(f"Invalid preset: {preset}. Must be one of {PRESET_NAMES}")
     elif not isinstance(preset, TilePreset):
         raise TypeError(f"preset must be a preset name or TilePreset, got {type(preset).__name__}")

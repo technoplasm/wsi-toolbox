@@ -22,11 +22,31 @@ def test_unknown_preset_raises_with_names():
 
 
 def test_compat_tables_derive_from_presets():
-    assert set(PRESET_NORMALIZATION) == set(PRESET_NAMES)
+    assert set(PRESET_NORMALIZATION) == set(PRESET_NAMES) | {"conch15_768"}
     assert PRESET_NORMALIZATION["h-optimus-0"][0] == get_tile_preset("h-optimus-0").norm_mean
+    # presets whose default features are not forward_features(x)[:, 0]
     assert set(PRESET_EXTRACT_FN) == {"conch15_768", "kaiko-midnight"}
-    assert get_tile_preset("conch15_768").extract_fn is not None
+    assert get_tile_preset("kaiko-midnight").extract_fn is not None
     assert get_tile_preset("uni").extract_fn is None
+
+
+def test_preset_output_names():
+    assert get_tile_preset("uni").output_names == ("cls", "latent")
+    assert get_tile_preset("conch15").output_names == ("cls", "latent", "proj")
+    assert get_tile_preset("kaiko-midnight").output_names == ("cls",)
+    assert get_tile_preset("conch15").key_suffix("proj") == "_768"
+    assert "conch15_768" not in PRESET_NAMES
+
+
+def test_conch15_768_alias_warns_and_maps_to_conch15_proj():
+    with pytest.warns(DeprecationWarning):
+        preset = get_tile_preset("conch15_768")
+    assert preset.name == "conch15"
+    assert preset.default_outputs == ("proj",)
+    assert preset.key_suffix("proj") == ""  # stays at {model}/features, not {model}_768
+    with pytest.raises(ValueError):
+        preset.resolve_outputs(("cls", "proj"))  # both would land in {model}/features
+    wt.set_default_preset("conch15_768")  # accepted as a name
 
 
 def test_set_default_preset_accepts_name_and_tilepreset(tiny_preset):

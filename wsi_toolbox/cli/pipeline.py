@@ -74,7 +74,13 @@ class PipelineMixin:
         output_path: str = param("", l="--out", s="-o", description="Output HDF5 path (for WSI input)")
         batch_size: int = param(512, s="-B")
         overwrite: bool = param(False, s="-O")
-        with_latent_features: bool = param(False, s="-L")
+        outputs: str = param(
+            "",
+            l="--outputs",
+            description="Comma-separated outputs: cls, latent (with cls), or a preset head like conch15's proj "
+            "(-> {model}_768). Empty = the preset's default (cls)",
+        )
+        with_latent_features: bool = param(False, s="-L", description="Deprecated: same as adding latent to --outputs")
         patch_size: int = param(256, s="-S", description="Patch size")
         target_mpp: float = param(0.5, l="--mpp", description="Target mpp")
         prefetch: int = param(2, l="--prefetch", description="Batches to prefetch (0 to disable)")
@@ -108,6 +114,7 @@ class PipelineMixin:
             device=self.device,
             batch_size=a.batch_size,
             with_latent=a.with_latent_features,
+            outputs=[o.strip() for o in a.outputs.split(",") if o.strip()] or None,
             overwrite=a.overwrite,
             patch_size=a.patch_size,
             target_mpp=a.target_mpp,

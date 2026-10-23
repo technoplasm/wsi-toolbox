@@ -10,9 +10,11 @@ from .slide import (
     create_slide_preset_model,
 )
 from .tile import (
+    PRESET_ALIASES,
     PRESET_EXTRACT_FN,
     PRESET_NAMES,
     PRESET_NORMALIZATION,
+    TileHead,
     TilePreset,
     create_preset_model,
     get_tile_preset,
@@ -21,6 +23,8 @@ from .tile import (
 __all__ = [
     # Tile
     "PRESET_NAMES",
+    "PRESET_ALIASES",
+    "TileHead",
     "TilePreset",
     "get_tile_preset",
     "PRESET_NORMALIZATION",

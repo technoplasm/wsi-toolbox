@@ -96,11 +96,13 @@ from .patch_reader import (
 
 # Presets
 from .presets import (
+    PRESET_ALIASES,
     PRESET_EXTRACT_FN,
     PRESET_NAMES,
     PRESET_NORMALIZATION,
     SLIDE_PRESET_NAMES,
     SLIDE_PRESET_TILE_SOURCES,
+    TileHead,
     TilePreset,
     create_preset_model,
     create_slide_preset_model,
@@ -233,8 +235,10 @@ __all__ = [
     "get_patch_reader",
     # Presets
     "TilePreset",
+    "TileHead",
     "get_tile_preset",
     "PRESET_NAMES",
+    "PRESET_ALIASES",
     "PRESET_NORMALIZATION",
     "PRESET_EXTRACT_FN",
     "create_preset_model",

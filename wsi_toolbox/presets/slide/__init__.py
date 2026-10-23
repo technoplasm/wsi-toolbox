@@ -7,6 +7,8 @@ import logging
 
 import h5py
 
+from ..tile import canonical_tile_source
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,10 +16,19 @@ SLIDE_PRESET_NAMES = [
     "titan",
 ]
 
-# Tile-preset compatibility: which tile feature spaces each slide preset accepts.
-SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[str, ...]] = {
-    "titan": ("conch15_768",),
+# Tile-preset compatibility: which tile feature spaces each slide preset accepts, as (tile preset, output).
+# A group written before the ``output`` attr existed is mapped with ``canonical_tile_source`` first, so the
+# old ``preset="conch15_768"`` groups count as ("conch15", "proj").
+SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
+    "titan": (("conch15", "proj"),),
 }
+
+
+def _group_source(grp: h5py.Group) -> tuple[str, str]:
+    """``(preset, output)`` of a tile feature group from its attrs (old groups have no ``output``)."""
+    preset = grp.attrs.get("preset", "")
+    output = grp.attrs.get("output", "")
+    return canonical_tile_source(str(preset), str(output) if output else None)
 
 
 def create_slide_preset_model(preset: str):
@@ -45,7 +56,8 @@ def resolve_tile_model(
         slide_preset: Name of the slide aggregator (e.g., "titan").
         explicit: When set, return as-is (just warn if attrs/preset mismatches).
             When None, scan top-level groups in the file for one whose
-            attrs["preset"] is in the compatible-source list for slide_preset.
+            (attrs["preset"], attrs["output"]) is in the compatible-source list for slide_preset
+            (old groups without ``output``: ``preset="conch15_768"`` counts as ``("conch15", "proj")``).
 
     Returns:
         Tile model (the h5 top-level storage key).
@@ -66,10 +78,10 @@ def resolve_tile_model(
             grp = f.get(explicit)
             if grp is None or not isinstance(grp, h5py.Group) or "features" not in grp:
                 raise RuntimeError(f"Tile model '{explicit}' not found or has no features in {hdf5_path}")
-            preset_attr = grp.attrs.get("preset", "")
-            if preset_attr not in allowed:
+            source = _group_source(grp)
+            if source not in allowed:
                 logger.warning(
-                    f"Tile group '{explicit}' has preset='{preset_attr}', "
+                    f"Tile group '{explicit}' has (preset, output)={source}, "
                     f"but slide preset '{slide_preset}' expects {allowed}. Proceeding anyway."
                 )
             return explicit
@@ -82,13 +94,15 @@ def resolve_tile_model(
                 continue
             if "features" not in obj:
                 continue
-            if obj.attrs.get("preset", "") in allowed:
+            if _group_source(obj) in allowed:
                 candidates.append(k)
 
         if not candidates:
+            preset, output = allowed[0]
             raise RuntimeError(
                 f"No tile features compatible with slide preset '{slide_preset}' "
-                f"(required preset: {allowed}). Run 'wsi-toolbox extract --preset {allowed[0]}' first."
+                f"(required (preset, output): {allowed}). "
+                f"Run 'wsi-toolbox extract --preset {preset} --outputs {output}' first."
             )
         if len(candidates) > 1:
             raise RuntimeError(

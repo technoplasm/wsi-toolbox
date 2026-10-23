@@ -28,8 +28,7 @@ pip install git+https://github.com/technoplasm/wsi-toolbox.git
 | `virchow` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow](https://huggingface.co/paige-ai/Virchow) |
 | `virchow2` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
 | `h-optimus-0` | ViT-g/14 | 1.1B | 1536 | [bioptimus/H-optimus-0](https://huggingface.co/bioptimus/H-optimus-0) |
-| `conch15` | ViT-L/16 | 300M | 1024 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
-| `conch15_768` | ViT-L/16 | 300M | 768 | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
+| `conch15` | ViT-L/16 | 300M | 1024 (`proj`: 768) | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
 | `midnight` | ViT-g/14 | 1.1B | 1536 | [SophontAI/OpenMidnight](https://huggingface.co/SophontAI/OpenMidnight) |
 | `phikon2` | ViT-L/16 | 300M | 1024 | [owkin/phikon-v2](https://huggingface.co/owkin/phikon-v2) |
 | `hibou-b` | ViT-B/14 (4 reg) | 86M | 768 | [histai/hibou-b](https://huggingface.co/histai/hibou-b) |
@@ -38,7 +37,11 @@ pip install git+https://github.com/technoplasm/wsi-toolbox.git
 | `phikon` | ViT-B/16 | 86M | 768 | [owkin/phikon](https://huggingface.co/owkin/phikon) |
 | `kaiko-midnight` | ViT-g/14 | 1.1B | 3072 | [kaiko-ai/midnight](https://huggingface.co/kaiko-ai/midnight) |
 
-`conch15_768` outputs FC-projected features (not cls_token), intended for [TITAN](https://huggingface.co/MahmoodLab/TITAN) input.
+`conch15` has an extra output `proj`: the contrastive projection (attentional pooler + LayerNorm, 768 dims, not the
+CLS token), the input of [TITAN](https://huggingface.co/MahmoodLab/TITAN). `--outputs cls,proj` writes both from
+one forward pass (`conch15/features` and `conch15_768/features`); `--outputs proj` only the 768-dim one. The old
+preset name `conch15_768` still works (deprecated): it is `conch15` with `--outputs proj`, written to
+`conch15_768/features` as before.
 
 `kaiko-midnight` is kaiko.ai's Midnight-12k and outputs the CLS token concatenated with the mean of the patch tokens
 (the model card's classification embedding, 2 x 1536), so it has no latent output. `midnight` is a different model
@@ -49,7 +52,7 @@ neither `trust_remote_code` nor network access once the weights are in the HF ca
 
 | Preset | Tile source | Dim | HuggingFace |
 |-------|-------------|-----|-------------|
-| `titan` | `conch15_768` | 768 | [MahmoodLab/TITAN](https://huggingface.co/MahmoodLab/TITAN) |
+| `titan` | `conch15` output `proj` (e.g. `conch15_768`) | 768 | [MahmoodLab/TITAN](https://huggingface.co/MahmoodLab/TITAN) |
 
 ### Preset vs model
 
@@ -303,8 +306,13 @@ cmd('sample.h5', wsi_path='sample.ndpi')
 ```
 
 With `extract_fn=None` the module must expose `forward_features(x)` returning `(B, 1 + tokens, dim)` with the CLS
-token first, and `patch_embed.proj.kernel_size` (used for `with_latent=True`). For any other interface give
-`extract_fn=lambda model, x: ...` returning the `(B, dim)` features; latent extraction is then skipped.
+token first, and `patch_embed.proj.kernel_size` (used for the `latent` output). For any other interface give
+`extract_fn=lambda model, x: ...` returning the `(B, dim)` features; the only output is then `cls`.
+
+Extra outputs from the same forward pass are heads: `heads={'proj': wt.TileHead(key_suffix='_proj', fn=lambda
+model, tokens: ...)}` (tokens = `forward_features(x)`, returns `(B, D)`), selected with `outputs=('cls', 'proj')`
+and written to `{model}_proj/features`. Built-in presets are `TilePreset` subclasses that override
+`create_model()` (e.g. `conch15` declares the `proj` head).
 
 ### Phase names
 
@@ -359,18 +367,27 @@ wt extract -i sample.ndpi -o sample.h5
 wt extract -i sample.ndpi --preset gigapath        # Use Gigapath
 wt extract -i sample.ndpi --preset gigapath-flash  # GigaPath-Flash (ViT-S, ~50x cheaper)
 wt extract -i sample.ndpi --preset virchow2        # Use Virchow2
-wt extract -i sample.ndpi --preset conch15_768     # CONCH v1.5 (768D, TITAN-ready)
+wt extract -i sample.ndpi --preset conch15 --outputs cls,proj  # CONCH v1.5: 1024D CLS + 768D (TITAN-ready), one pass
 wt extract -i sample.ndpi --preset midnight        # OpenMidnight
 wt extract -i sample.ndpi --preset kaiko-midnight  # Midnight-12k (kaiko.ai), CLS + mean patch tokens
-wt extract -i sample.ndpi -L                       # Include latent features
+wt extract -i sample.ndpi --outputs cls,latent    # Include latent features (patch tokens; -L is the old spelling)
 wt extract -i sample.ndpi -D cuda:0,1              # Multi-GPU parallel
 ```
 
 ```python
-cmd = wt.FeatureExtractionCommand(model='uni2', preset='uni2', batch_size=256, with_latent=True)
+cmd = wt.FeatureExtractionCommand(model='uni2', preset='uni2', batch_size=256, outputs=('cls', 'latent'))
 result = cmd('sample.h5', wsi_path='sample.ndpi')
 # result.feature_dim, result.patch_count
+
+cmd = wt.FeatureExtractionCommand(model='conch15', preset='conch15', outputs=('cls', 'proj'))
+cmd('sample.h5', wsi_path='sample.ndpi')
+# -> conch15/features (N, 1024), conch15_768/features (N, 768)
 ```
+
+Outputs (`--outputs` / `outputs=`, default `cls`): `cls` → `{model}/features`; `latent` → `{model}/latent_features`
+(only together with `cls`); a preset head such as conch15's `proj` → `{model}_768/features` with its own copy of
+the coordinates. Presets with a custom feature function (`kaiko-midnight`) only have `cls`. When some of the
+requested outputs already exist and others do not, the command stops; `-O` rewrites all of them.
 
 ---
 
@@ -383,7 +400,8 @@ Run a slide-level aggregator (e.g. TITAN) on tile features to produce a single s
 | `wt aggregate -i sample.h5` | `AggregateCommand(slide_preset='titan', tile_model='conch15_768')('sample.h5')` |
 
 ```bash
-# Auto-resolve: scans the h5 for a tile preset compatible with titan (= conch15_768)
+# Auto-resolve: scans the h5 for tile features compatible with titan (preset conch15, output proj;
+# also old files with preset=conch15_768)
 wt aggregate -i sample.h5
 
 # Explicit storage key (multiple compatible groups → required)
@@ -396,7 +414,7 @@ result = cmd('sample.h5')
 # → conch15_768/aggregates/titan/feature  (D=768)
 ```
 
-Requires `conch15_768/features` to exist (run `wt extract --preset conch15_768 -S 512` first).
+Requires `conch15_768/features` to exist (run `wt extract --preset conch15 --outputs proj -S 512` first).
 
 ---
 
@@ -656,26 +674,27 @@ with h5py.File('sample.h5', 'r') as f:
 
 ### Tile features
 
-Features are stored under `{model}/`. `model` (the storage key) defaults to the preset name (e.g. `uni`, `conch15_768`) but is a free string when `-M` is given.
+Features are stored under `{model}/`. `model` (the storage key) defaults to the preset name (e.g. `uni`) but is a free string when `-M` is given. A head output goes to `{model}` plus the head's suffix (`conch15` `proj` → `conch15_768/`), with the same attrs and its own `coordinates`.
 
 ```
-{model}/                  attrs: preset, patch_size, target_mpp, mpp, cols, rows, patch_count
+{model}/                  attrs: preset, output, patch_size, target_mpp, mpp, cols, rows, patch_count, accel
 ├── features                   # [N, D]
 ├── coordinates                # [N, 2] level-0 (x, y) in pixels
-├── latent_features            # [N, L, D] optional (with -L flag)
+├── latent_features            # [N, L, D] optional (--outputs cls,latent)
 ├── aggregates/                # slide-level aggregator outputs
 │   └── {slide_preset}/
 │       └── feature            # [D_slide]
 └── {namespace}/               # analysis results (see below)
 ```
 
-Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `gigapath-flash: 384`, `virchow/2: 1280`, `h-optimus-0: 1536`, `conch15: 1024`, `conch15_768: 768`, `midnight: 1536`, `phikon2: 1024`, `hibou-b: 768`, `hibou-l: 1024`, `h0-mini: 768`, `phikon: 768`, `kaiko-midnight: 3072`.
+Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `gigapath-flash: 384`, `virchow/2: 1280`, `h-optimus-0: 1536`, `conch15: 1024` (`proj` → `conch15_768`: 768), `midnight: 1536`, `phikon2: 1024`, `hibou-b: 768`, `hibou-l: 1024`, `h0-mini: 768`, `phikon: 768`, `kaiko-midnight: 3072`.
 
 ```python
 with h5py.File('sample.h5', 'r') as f:
     features = f['uni/features'][:]                              # (N, 1024)
     coords   = f['uni/coordinates'][:]                           # (N, 2)
     preset   = f['uni'].attrs['preset']                          # which foundation model
+    output   = f['uni'].attrs.get('output', 'cls')               # 'cls' / 'proj' (absent in files before outputs=)
     slide    = f['conch15_768/aggregates/titan/feature'][:]      # (768,)
 ```
 
