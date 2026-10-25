@@ -1,11 +1,14 @@
-"""Slide-level aggregation presets (TITAN, GigaPath LongNet, etc.).
+"""Slide-level aggregation presets (TITAN, PRISM).
 
-These take per-tile features+coordinates and produce a single slide-level vector.
+These take per-tile features (+ coordinates for TITAN) and produce a single slide-level vector:
+``model = create_slide_preset_model(name)`` then ``aggregate_slide(name, model, features, coords, patch_size_lv0)``.
+Each preset's module is imported on first use (TITAN pulls in transformers).
 """
 
 import logging
 
 import h5py
+import torch
 
 from ..tile import canonical_tile_source
 
@@ -14,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 SLIDE_PRESET_NAMES = [
     "titan",
+    "prism",
 ]
 
 # Tile-preset compatibility: which tile feature spaces each slide preset accepts, as (tile preset, output).
@@ -21,6 +25,7 @@ SLIDE_PRESET_NAMES = [
 # old ``preset="conch15_768"`` groups count as ("conch15", "proj").
 SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
     "titan": (("conch15", "proj"),),
+    "prism": (("virchow", "concat"),),
 }
 
 
@@ -40,8 +45,33 @@ def create_slide_preset_model(preset: str):
         from .titan import create_titan_model  # noqa: PLC0415
 
         return create_titan_model()
+    if preset == "prism":
+        from .prism import create_prism_model  # noqa: PLC0415
+
+        return create_prism_model()
 
     raise ValueError(f"Invalid slide preset: {preset}. Must be one of {SLIDE_PRESET_NAMES}")
+
+
+def aggregate_slide(preset: str, model, features: torch.Tensor, coords: torch.Tensor, patch_size_lv0: int):
+    """Slide embedding ``(B, D)`` from tile features, with ``model`` from ``create_slide_preset_model(preset)``.
+
+    Args:
+        preset: Slide preset name.
+        model: The preset's model, already on the device of ``features``, in eval mode.
+        features: (B, N, D) tile features.
+        coords: (B, N, 2) tile (x, y) pixel coordinates, ``{tile_model}/coordinates`` (used by TITAN, ignored by
+            PRISM).
+        patch_size_lv0: Patch side length in the pixels of ``coords``, the group's ``patch_size`` attr (used by
+            TITAN, ignored by PRISM).
+    """
+    if preset == "titan":
+        from .titan import aggregate  # noqa: PLC0415
+    elif preset == "prism":
+        from .prism import aggregate  # noqa: PLC0415
+    else:
+        raise ValueError(f"Invalid slide preset: {preset}. Must be one of {SLIDE_PRESET_NAMES}")
+    return aggregate(model, features, coords, patch_size_lv0)
 
 
 def resolve_tile_model(

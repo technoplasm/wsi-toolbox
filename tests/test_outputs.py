@@ -236,7 +236,7 @@ def test_storage_keys_for_conch15_and_alias():
     assert cmd._groups(preset, outputs) == {"proj": "conch15_768"}  # not conch15_768_768
 
 
-# ----- TITAN tile-source resolution -----
+# ----- slide-preset tile-source resolution (TITAN, PRISM) -----
 
 
 def _write_group(path, name, **attrs):
@@ -269,3 +269,17 @@ def test_resolve_tile_model_new_and_legacy_attrs(tmp_path):
     with pytest.raises(RuntimeError, match="Multiple"):
         resolve_tile_model(both, "titan")
     assert resolve_tile_model(both, "titan", explicit="b") == "b"
+
+
+def test_resolve_tile_model_prism(tmp_path):
+    h5 = str(tmp_path / "v.h5")
+    _write_group(h5, "virchow", preset="virchow", output="cls")
+    with pytest.raises(RuntimeError, match="--preset virchow --outputs concat"):
+        resolve_tile_model(h5, "prism")
+    _write_group(h5, "virchow_2560", preset="virchow", output="concat")
+    _write_group(h5, "virchow2_2560", preset="virchow2", output="concat")  # Virchow2 is not PRISM's input
+    _write_group(h5, "conch15_768", preset="conch15", output="proj")
+    assert resolve_tile_model(h5, "prism") == "virchow_2560"
+    assert resolve_tile_model(h5, "titan") == "conch15_768"
+    assert wt.SLIDE_PRESET_TILE_SOURCES["prism"] == (("virchow", "concat"),)
+    assert "prism" in wt.SLIDE_PRESET_NAMES

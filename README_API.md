@@ -22,7 +22,7 @@ pip install wsi-toolbox
 | DZI serving | `DziGenerator`, `DziLayout`, `DziTileNotFound`, `encode_tile` |
 | Region reads | `read_region_at_mpp` |
 | Patch readers | `PatchReader`, `WSIPatchReader`, `CachePatchReader`, `PrefetchReader`, `get_patch_reader` |
-| Presets | `TilePreset`, `TileHead`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_ALIASES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model` |
+| Presets | `TilePreset`, `TileHead`, `get_tile_preset`, `PRESET_NAMES`, `PRESET_ALIASES`, `PRESET_NORMALIZATION`, `PRESET_EXTRACT_FN`, `create_preset_model`, `SLIDE_PRESET_NAMES`, `SLIDE_PRESET_TILE_SOURCES`, `create_slide_preset_model`, `aggregate_slide` |
 | Utilities | `leiden_cluster`, `reorder_clusters_by_pca`, `rename_namespace`, `remove_namespace` |
 
 ## Defaults
@@ -158,12 +158,12 @@ Outputs, all from one forward pass (`model` = the storage key):
 |---|---|---|
 | `cls` | `{model}/features` + `{model}/coordinates` | all (with `extract_fn`: what it returns) |
 | `latent` | `{model}/latent_features` (float16 patch tokens) | without `extract_fn`; only together with `cls` |
-| head, e.g. `proj` | `{model}{key_suffix}/features` + its own `coordinates` copy | the preset's `heads` (`conch15`: `proj` → `{model}_768`, 768 dims) |
+| head, e.g. `proj` | `{model}{key_suffix}/features` + its own `coordinates` copy | the preset's `heads` (`conch15`: `proj` → `{model}_768`, 768 dims; `virchow` / `virchow2`: `concat` → `{model}_2560`, 2560 dims) |
 
 Anything else raises `ValueError` listing `preset.output_names`. Each features group gets the attrs `preset`
-(preset name), `output` (`'cls'` / head name), `patch_count`, `accel` and the reader metadata. All requested
-features present → skipped; some present → `ValueError` naming them unless `overwrite=True`, which rewrites all of
-them. A cancelled / failed run removes every dataset it was going to write. The deprecated preset name
+(preset name), `output` (`'cls'` / head name, e.g. `'proj'`, `'concat'`), `patch_count`, `accel` and the reader
+metadata. All requested features present → skipped; some present → `ValueError` naming them unless
+`overwrite=True`, which rewrites all of them. A cancelled / failed run removes every dataset it was going to write. The deprecated preset name
 `'conch15_768'` resolves to `conch15` with `outputs=('proj',)` written to `{model}/features` itself (no suffix), so
 `model='conch15_768'` lands where it always did, with attrs `preset='conch15'`, `output='proj'`.
 
@@ -242,8 +242,14 @@ partial cache is removed.
 
 ### AggregateCommand
 
-Run a slide-level aggregator (e.g. TITAN) over tile features, writing `{tile_model}/aggregates/{slide_preset}/feature`.
-**CLI:** `wt aggregate`. Slide presets are uv-only (not in the PyPI package).
+Run a slide-level aggregator (`'titan'`, `'prism'`) over tile features, writing
+`{tile_model}/aggregates/{slide_preset}/feature`. **CLI:** `wt aggregate` (`--slide-preset`, default `titan`). Slide
+presets are uv-only (not in the PyPI package).
+
+| slide preset | tile source `(preset, output)` | slide feature |
+|---|---|---|
+| `titan` | `('conch15', 'proj')` (e.g. `conch15_768`; patches 512 px at 0.5 mpp) | 768, uses the coordinates and `patch_size` |
+| `prism` | `('virchow', 'concat')` (e.g. `virchow_2560`; patches 224 px at 0.5 mpp) | 1280 (`image_embedding`), no coordinates |
 
 ```python
 wt.AggregateCommand(slide_preset: str, tile_model: str, device: str | None = None, overwrite=False)
@@ -252,7 +258,8 @@ cmd(hdf5_path: str, *, on_progress=UNSET, should_cancel=None) -> AggregateResult
 
 `AggregateResult`: `slide_preset`, `tile_model`, `target_path`, `feature_dim`, `n_patches`, `skipped`. Use
 `wsi_toolbox.presets.slide.resolve_tile_model(hdf5_path, slide_preset)` to find the compatible `tile_model`
-automatically (raises when 0 or more than one group is compatible).
+automatically (raises when 0 or more than one group is compatible). The model runs in float32 on one device; the
+command calls `aggregate_slide(slide_preset, model, features, coords, patch_size_lv0)` (see Presets).
 
 ### ClusteringCommand
 
@@ -443,13 +450,22 @@ PRESET_EXTRACT_FN: dict[str, Callable[[model, x], features]]
 # presets whose default features are not forward_features(x)[:, 0]: {'conch15_768', 'kaiko-midnight'}
 
 # Slide-level aggregators (uv-only)
-SLIDE_PRESET_NAMES: list[str]                           # ['titan']
+SLIDE_PRESET_NAMES: list[str]                           # ['titan', 'prism']
 SLIDE_PRESET_TILE_SOURCES: dict[str, tuple[tuple[str, str], ...]]
-# {'titan': (('conch15', 'proj'),)} — (tile preset, output) pairs (was {'titan': ('conch15_768',)});
-# groups without an 'output' attr (older files) are read as preset='conch15_768' -> ('conch15', 'proj'),
-# anything else -> (preset, 'cls')
-create_slide_preset_model(name: str)
+# {'titan': (('conch15', 'proj'),), 'prism': (('virchow', 'concat'),)} — (tile preset, output) pairs
+# (was {'titan': ('conch15_768',)}); groups without an 'output' attr (older files) are read as
+# preset='conch15_768' -> ('conch15', 'proj'), anything else -> (preset, 'cls')
+create_slide_preset_model(name: str)   # bare model (not on a device, not .eval()); 'prism' -> PerceiverResampler
+aggregate_slide(name: str, model, features, coords, patch_size_lv0: int) -> Tensor
+# (B, N, D) features, (B, N, 2) coords -> (B, D_slide); PRISM ignores coords / patch_size_lv0
 ```
+
+PRISM (`wsi_toolbox.presets.slide.prism`) is only its Perceiver resampler, rebuilt in plain torch (the HF remote
+code does not load under transformers 5): `PerceiverResampler()(tile_embeddings, tile_mask=None)` returns
+`{'image_embedding': (B, 1280), 'image_latents': (B, 512, 1280)}` like `Prism.slide_representations`
+(`tile_mask` (B, N) bool is required for B > 1). `create_prism_model()` reads only the `image_resampler.*` tensors of
+`model.safetensors`; `load_resampler_state_dict(model, sd)` requires exactly one name per shared tensor (the
+checkpoint's layout) and raises on anything missing or extra.
 
 A custom model is a `TilePreset` you construct yourself; see [README.md](README.md#custom-models-tilepreset).
 

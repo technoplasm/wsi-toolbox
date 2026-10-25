@@ -77,8 +77,8 @@ class PipelineMixin:
         outputs: str = param(
             "",
             l="--outputs",
-            description="Comma-separated outputs: cls, latent (with cls), or a preset head like conch15's proj "
-            "(-> {model}_768). Empty = the preset's default (cls)",
+            description="Comma-separated outputs: cls, latent (with cls), or a preset head: conch15's proj "
+            "(-> {model}_768), virchow/virchow2's concat (-> {model}_2560). Empty = the preset's default (cls)",
         )
         with_latent_features: bool = param(False, s="-L", description="Deprecated: same as adding latent to --outputs")
         patch_size: int = param(256, s="-S", description="Patch size")
@@ -133,12 +133,12 @@ class PipelineMixin:
         slide_preset: str = param(
             "titan",
             l="--slide-preset",
-            description="Slide-level aggregator preset (e.g., titan)",
+            description="Slide-level aggregator preset: titan (conch15 proj), prism (virchow concat)",
         )
         overwrite: bool = param(False, s="-O")
 
     def run_aggregate(self, a: AggregateArgs):
-        """Run a slide-level aggregator (TITAN, etc.) on tile features."""
+        """Run a slide-level aggregator (TITAN, PRISM) on tile features."""
         hdf5_path = resolve_h5_path(a.input_path)
         tile_model = resolve_tile_model(
             hdf5_path,

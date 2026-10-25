@@ -6,7 +6,8 @@ the default features, ``preset.outputs(model, x, names)`` for several from one f
 are subclasses registered by name and looked up with ``get_tile_preset(name)``; custom models are plain
 ``TilePreset(...)`` instances.
 
-Building a preset is cheap: timm / torch are imported only inside ``create_model()``.
+Building a preset is cheap: timm and the model code are imported only inside ``create_model()`` (torch is
+imported for the Virchow ``concat`` head, but the package imports it anyway).
 """
 
 import logging
@@ -15,6 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ._base import BASE_OUTPUTS, IMAGENET_MEAN, IMAGENET_STD, TileHead, TilePreset
+from .virchow import virchow_concat
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +40,21 @@ logging.getLogger("timm").setLevel(logging.WARNING)
 class TimmHubPreset(TilePreset):
     """A timm model loaded from the HF hub (``timm.create_model(hub_id, pretrained=True, **kwargs)``).
 
-    ``swiglu=True`` adds ``mlp_layer=SwiGLUPacked, act_layer=torch.nn.SiLU`` (imported lazily).
+    ``swiglu=True`` adds ``mlp_layer=SwiGLUPacked, act_layer=torch.nn.SiLU`` (imported lazily). ``heads`` are extra
+    outputs from the same ``forward_features`` (see ``TileHead``).
     """
 
-    def __init__(self, name: str, hub_id: str, *, norm=(IMAGENET_MEAN, IMAGENET_STD), swiglu=False, **timm_kwargs):
-        super().__init__(name, norm_mean=norm[0], norm_std=norm[1])
+    def __init__(
+        self,
+        name: str,
+        hub_id: str,
+        *,
+        norm=(IMAGENET_MEAN, IMAGENET_STD),
+        swiglu=False,
+        heads: dict[str, TileHead] | None = None,
+        **timm_kwargs,
+    ):
+        super().__init__(name, norm_mean=norm[0], norm_std=norm[1], heads=heads)
         self.hub_id = hub_id
         self.swiglu = swiglu
         self.timm_kwargs = timm_kwargs
@@ -143,6 +155,9 @@ class KaikoMidnightPreset(TilePreset):
 
 _DYN = {"dynamic_img_size": True, "dynamic_img_pad": True}
 
+# Virchow / Virchow2: concat(CLS, mean of the patch tokens), 2 x 1280 (the model cards' embedding, PRISM's input)
+_VIRCHOW_HEADS = {"concat": TileHead(key_suffix="_2560", fn=virchow_concat)}
+
 _BUILTIN: list[TilePreset] = [
     TimmHubPreset("uni", "hf-hub:MahmoodLab/uni", dynamic_img_size=True, init_values=1e-5),
     TimmHubPreset(
@@ -163,8 +178,8 @@ _BUILTIN: list[TilePreset] = [
     ),
     TimmHubPreset("gigapath", "hf_hub:prov-gigapath/prov-gigapath", **_DYN),
     GigapathFlashPreset(),
-    TimmHubPreset("virchow", "hf-hub:paige-ai/Virchow", swiglu=True, **_DYN),
-    TimmHubPreset("virchow2", "hf-hub:paige-ai/Virchow2", swiglu=True, **_DYN),
+    TimmHubPreset("virchow", "hf-hub:paige-ai/Virchow", swiglu=True, heads=_VIRCHOW_HEADS, **_DYN),
+    TimmHubPreset("virchow2", "hf-hub:paige-ai/Virchow2", swiglu=True, heads=_VIRCHOW_HEADS, **_DYN),
     TimmHubPreset(
         "h-optimus-0", "hf-hub:bioptimus/H-optimus-0", norm=(_HOPTIMUS_MEAN, _HOPTIMUS_STD), init_values=1e-5, **_DYN
     ),

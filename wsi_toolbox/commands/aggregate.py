@@ -1,7 +1,7 @@
 """Slide-level aggregation command.
 
 Loads tile features+coordinates from a tile-preset group and runs a slide-level
-aggregator (TITAN, etc.) to produce one vector per WSI. Writes the result to:
+aggregator (TITAN, PRISM) to produce one vector per WSI. Writes the result to:
 
     {tile_model}/aggregates/{slide_preset}/feature
 """
@@ -15,7 +15,7 @@ import torch
 from pydantic import BaseModel
 
 from ..common import resolve_devices
-from ..presets.slide import SLIDE_PRESET_NAMES, create_slide_preset_model
+from ..presets.slide import SLIDE_PRESET_NAMES, aggregate_slide, create_slide_preset_model
 from ..progress import UNSET, ProgressSink, Reporter, Unset
 from ..utils import safe_del
 from ._base import make_reporter
@@ -44,7 +44,7 @@ class AggregateCommand:
     ):
         """
         Args:
-            slide_preset: Slide aggregator preset (e.g., "titan")
+            slide_preset: Slide aggregator preset ("titan", "prism")
             tile_model: HDF5 storage key for the tile features to aggregate.
                 Resolve compatibility/availability at the call site (see
                 ``wsi_toolbox.presets.slide.resolve_tile_model``).
@@ -121,7 +121,7 @@ class AggregateCommand:
         coord_t = torch.from_numpy(coords).long().unsqueeze(0).to(device)
 
         with torch.inference_mode():
-            slide_emb = model.encode_slide_from_patch_features(feat_t, coord_t, patch_size_lv0)
+            slide_emb = aggregate_slide(self.slide_preset, model, feat_t, coord_t, patch_size_lv0)
         slide_emb_np = slide_emb.squeeze(0).cpu().numpy().astype(np.float32)
 
         # 4. Cleanup

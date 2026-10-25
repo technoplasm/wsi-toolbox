@@ -25,8 +25,8 @@ pip install git+https://github.com/technoplasm/wsi-toolbox.git
 | `uni2` (default) | ViT-H/14 | 681M | 1536 | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
 | `gigapath` | ViT-g/14 | 1.1B | 1536 | [prov-gigapath/prov-gigapath](https://huggingface.co/prov-gigapath/prov-gigapath) |
 | `gigapath-flash` | ViT-S/16 | 22M | 384 | [prov-gigapath/prov-gigapath-flash](https://huggingface.co/prov-gigapath/prov-gigapath-flash) |
-| `virchow` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow](https://huggingface.co/paige-ai/Virchow) |
-| `virchow2` | ViT-H/14 | 632M | 1280 | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
+| `virchow` | ViT-H/14 | 632M | 1280 (`concat`: 2560) | [paige-ai/Virchow](https://huggingface.co/paige-ai/Virchow) |
+| `virchow2` | ViT-H/14 | 632M | 1280 (`concat`: 2560) | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
 | `h-optimus-0` | ViT-g/14 | 1.1B | 1536 | [bioptimus/H-optimus-0](https://huggingface.co/bioptimus/H-optimus-0) |
 | `conch15` | ViT-L/16 | 300M | 1024 (`proj`: 768) | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
 | `midnight` | ViT-g/14 | 1.1B | 1536 | [SophontAI/OpenMidnight](https://huggingface.co/SophontAI/OpenMidnight) |
@@ -43,6 +43,12 @@ one forward pass (`conch15/features` and `conch15_768/features`); `--outputs pro
 preset name `conch15_768` still works (deprecated): it is `conch15` with `--outputs proj`, written to
 `conch15_768/features` as before.
 
+`virchow` / `virchow2` have an extra output `concat`: the CLS token concatenated with the mean of the patch tokens
+(2 x 1280, the embedding of the Virchow model cards; Virchow2's 4 register tokens are left out of the mean), written
+to `{model}_2560/features`. The `virchow` one is the input of [PRISM](https://huggingface.co/paige-ai/Prism):
+`--preset virchow --outputs cls,concat -S 224` writes `virchow/features` (1280) and `virchow_2560/features` (2560) in
+one pass (Virchow was trained on 224 px tiles at 0.5 mpp).
+
 `kaiko-midnight` is kaiko.ai's Midnight-12k and outputs the CLS token concatenated with the mean of the patch tokens
 (the model card's classification embedding, 2 x 1536), so it has no latent output. `midnight` is a different model
 (SophontAI's OpenMidnight). `hibou-b` / `hibou-l` are rebuilt in timm from the transformers weights, so they need
@@ -53,6 +59,11 @@ neither `trust_remote_code` nor network access once the weights are in the HF ca
 | Preset | Tile source | Dim | HuggingFace |
 |-------|-------------|-----|-------------|
 | `titan` | `conch15` output `proj` (e.g. `conch15_768`) | 768 | [MahmoodLab/TITAN](https://huggingface.co/MahmoodLab/TITAN) |
+| `prism` | `virchow` output `concat` (e.g. `virchow_2560`) | 1280 | [paige-ai/Prism](https://huggingface.co/paige-ai/Prism) |
+
+PRISM's slide embedding is its Perceiver resampler's output (`image_embedding`, no coordinates); only that part is
+built (in plain torch, weights from `model.safetensors`; the repo's remote code does not load under transformers 5),
+so it needs no `trust_remote_code` and runs with `HF_HUB_OFFLINE=1` once the weights are cached.
 
 ### Preset vs model
 
@@ -368,6 +379,7 @@ wt extract -i sample.ndpi --preset gigapath        # Use Gigapath
 wt extract -i sample.ndpi --preset gigapath-flash  # GigaPath-Flash (ViT-S, ~50x cheaper)
 wt extract -i sample.ndpi --preset virchow2        # Use Virchow2
 wt extract -i sample.ndpi --preset conch15 --outputs cls,proj  # CONCH v1.5: 1024D CLS + 768D (TITAN-ready), one pass
+wt extract -i sample.ndpi --preset virchow --outputs cls,concat -S 224  # Virchow: 1280D CLS + 2560D (PRISM-ready)
 wt extract -i sample.ndpi --preset midnight        # OpenMidnight
 wt extract -i sample.ndpi --preset kaiko-midnight  # Midnight-12k (kaiko.ai), CLS + mean patch tokens
 wt extract -i sample.ndpi --outputs cls,latent    # Include latent features (patch tokens; -L is the old spelling)
@@ -385,19 +397,22 @@ cmd('sample.h5', wsi_path='sample.ndpi')
 ```
 
 Outputs (`--outputs` / `outputs=`, default `cls`): `cls` → `{model}/features`; `latent` → `{model}/latent_features`
-(only together with `cls`); a preset head such as conch15's `proj` → `{model}_768/features` with its own copy of
-the coordinates. Presets with a custom feature function (`kaiko-midnight`) only have `cls`. When some of the
-requested outputs already exist and others do not, the command stops; `-O` rewrites all of them.
+(only together with `cls`); a preset head such as conch15's `proj` → `{model}_768/features` (virchow's `concat` →
+`{model}_2560/features`) with its own copy of the coordinates. Presets with a custom feature function
+(`kaiko-midnight`) only have `cls`. When some of the requested outputs already exist and others do not, the command
+stops; `-O` rewrites all of them.
 
 ---
 
 ### aggregate
 
-Run a slide-level aggregator (e.g. TITAN) on tile features to produce a single slide embedding.
+Run a slide-level aggregator (TITAN, PRISM; `--slide-preset`, default `titan`) on tile features to produce a single
+slide embedding.
 
 | CLI | Python |
 |-----|--------|
 | `wt aggregate -i sample.h5` | `AggregateCommand(slide_preset='titan', tile_model='conch15_768')('sample.h5')` |
+| `wt aggregate -i sample.h5 --slide-preset prism` | `AggregateCommand(slide_preset='prism', tile_model='virchow_2560')('sample.h5')` |
 
 ```bash
 # Auto-resolve: scans the h5 for tile features compatible with titan (preset conch15, output proj;
@@ -406,15 +421,22 @@ wt aggregate -i sample.h5
 
 # Explicit storage key (multiple compatible groups → required)
 wt aggregate -i sample.h5 -M conch15_768
+
+# PRISM: scans for preset virchow, output concat (virchow_2560)
+wt aggregate -i sample.h5 --slide-preset prism
 ```
 
 ```python
 cmd = wt.AggregateCommand(slide_preset='titan', tile_model='conch15_768')
 result = cmd('sample.h5')
 # → conch15_768/aggregates/titan/feature  (D=768)
+
+wt.AggregateCommand(slide_preset='prism', tile_model='virchow_2560')('sample.h5')
+# → virchow_2560/aggregates/prism/feature  (D=1280)
 ```
 
-Requires `conch15_768/features` to exist (run `wt extract --preset conch15 --outputs proj -S 512` first).
+TITAN requires `conch15_768/features` (run `wt extract --preset conch15 --outputs proj -S 512` first), PRISM
+`virchow_2560/features` (`wt extract --preset virchow --outputs concat -S 224`).
 
 ---
 
@@ -674,7 +696,7 @@ with h5py.File('sample.h5', 'r') as f:
 
 ### Tile features
 
-Features are stored under `{model}/`. `model` (the storage key) defaults to the preset name (e.g. `uni`) but is a free string when `-M` is given. A head output goes to `{model}` plus the head's suffix (`conch15` `proj` → `conch15_768/`), with the same attrs and its own `coordinates`.
+Features are stored under `{model}/`. `model` (the storage key) defaults to the preset name (e.g. `uni`) but is a free string when `-M` is given. A head output goes to `{model}` plus the head's suffix (`conch15` `proj` → `conch15_768/`, `virchow` `concat` → `virchow_2560/`), with the same attrs and its own `coordinates`.
 
 ```
 {model}/                  attrs: preset, output, patch_size, target_mpp, mpp, cols, rows, patch_count, accel
@@ -687,15 +709,16 @@ Features are stored under `{model}/`. `model` (the storage key) defaults to the 
 └── {namespace}/               # analysis results (see below)
 ```
 
-Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `gigapath-flash: 384`, `virchow/2: 1280`, `h-optimus-0: 1536`, `conch15: 1024` (`proj` → `conch15_768`: 768), `midnight: 1536`, `phikon2: 1024`, `hibou-b: 768`, `hibou-l: 1024`, `h0-mini: 768`, `phikon: 768`, `kaiko-midnight: 3072`.
+Feature dim per tile preset: `uni: 1024`, `uni2: 1536`, `gigapath: 1536`, `gigapath-flash: 384`, `virchow/2: 1280` (`concat` → `virchow_2560` / `virchow2_2560`: 2560), `h-optimus-0: 1536`, `conch15: 1024` (`proj` → `conch15_768`: 768), `midnight: 1536`, `phikon2: 1024`, `hibou-b: 768`, `hibou-l: 1024`, `h0-mini: 768`, `phikon: 768`, `kaiko-midnight: 3072`.
 
 ```python
 with h5py.File('sample.h5', 'r') as f:
     features = f['uni/features'][:]                              # (N, 1024)
     coords   = f['uni/coordinates'][:]                           # (N, 2)
     preset   = f['uni'].attrs['preset']                          # which foundation model
-    output   = f['uni'].attrs.get('output', 'cls')               # 'cls' / 'proj' (absent in files before outputs=)
+    output   = f['uni'].attrs.get('output', 'cls')               # 'cls' / 'proj' / 'concat' (absent in files before outputs=)
     slide    = f['conch15_768/aggregates/titan/feature'][:]      # (768,)
+    slide    = f['virchow_2560/aggregates/prism/feature'][:]     # (1280,)
 ```
 
 ### Analysis Results (Hierarchical)

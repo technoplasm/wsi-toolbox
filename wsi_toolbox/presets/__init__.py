@@ -7,6 +7,7 @@ Slide presets (slide-level aggregators) live under ``presets.slide``.
 from .slide import (
     SLIDE_PRESET_NAMES,
     SLIDE_PRESET_TILE_SOURCES,
+    aggregate_slide,
     create_slide_preset_model,
 )
 from .tile import (
@@ -34,4 +35,5 @@ __all__ = [
     "SLIDE_PRESET_NAMES",
     "SLIDE_PRESET_TILE_SOURCES",
     "create_slide_preset_model",
+    "aggregate_slide",
 ]

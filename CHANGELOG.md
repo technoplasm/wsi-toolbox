@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Slide preset `prism` (Paige [PRISM](https://huggingface.co/paige-ai/Prism)): the slide embedding (1280 dims,
+  `image_embedding`) from Virchow v1 tile embeddings, no coordinates. `wt aggregate --slide-preset prism` finds the
+  `virchow_2560` group (`preset='virchow'`, `output='concat'`) and writes `virchow_2560/aggregates/prism/feature`.
+  Only PRISM's Perceiver resampler is built, in plain torch (`presets/slide/prism.py`, weights read from the
+  `image_resampler.*` tensors of `model.safetensors`): the HF remote code fails under transformers 5.x, and this needs
+  neither `trust_remote_code` nor network access once the weights are cached. Shared modules are loaded with a check
+  that the only names left over are their aliases. Checked against the official model (transformers 4.53.3):
+  identical `image_embedding` and `image_latents` in float32 on CUDA for a random (1, 300, 2560) input.
+- Tile output `concat` for `virchow` / `virchow2`: concat(CLS, mean of the patch tokens), 2560 dims, the model
+  cards' tile embedding (Virchow2's 4 register tokens are left out of the mean), written to `{model}_2560/features`.
+  `wt extract --preset virchow --outputs cls,concat -S 224` writes `virchow/features` (1280) and
+  `virchow_2560/features` (2560) in one pass. The default output stays `cls`.
+- `aggregate_slide(preset, model, features, coords, patch_size_lv0)` (`wsi_toolbox.presets.slide`, also `wt.`):
+  each slide preset runs its own aggregation; `AggregateCommand` calls it (TITAN's call is unchanged).
+- `TimmHubPreset(..., heads=...)`.
+
 ## 0.7.0 (2026-10-23)
 
 Breaking release: `TileEncoder.encode()` returns a dict (`enc.encode(b)['cls']` for the old features).

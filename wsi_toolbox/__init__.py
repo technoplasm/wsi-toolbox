@@ -104,6 +104,7 @@ from .presets import (
     SLIDE_PRESET_TILE_SOURCES,
     TileHead,
     TilePreset,
+    aggregate_slide,
     create_preset_model,
     create_slide_preset_model,
     get_tile_preset,
@@ -245,6 +246,7 @@ __all__ = [
     "SLIDE_PRESET_NAMES",
     "SLIDE_PRESET_TILE_SOURCES",
     "create_slide_preset_model",
+    "aggregate_slide",
     # Utilities
     "leiden_cluster",
     "reorder_clusters_by_pca",

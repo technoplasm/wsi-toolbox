@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -36,6 +38,23 @@ def test_preset_output_names():
     assert get_tile_preset("kaiko-midnight").output_names == ("cls",)
     assert get_tile_preset("conch15").key_suffix("proj") == "_768"
     assert "conch15_768" not in PRESET_NAMES
+
+
+@pytest.mark.parametrize(("name", "prefix"), [("virchow", 1), ("virchow2", 5)])
+def test_virchow_concat_head(name, prefix):
+    preset = get_tile_preset(name)
+    assert preset.output_names == ("cls", "latent", "concat")
+    assert preset.default_outputs == ("cls",)  # unchanged: virchow/features stays the 1280-dim CLS
+    assert preset.key_suffix("concat") == "_2560"
+    cmd = wt.FeatureExtractionCommand(model=name, preset=name, outputs=("cls", "concat"))
+    assert cmd._groups(*cmd._resolve()) == {"cls": name, "concat": f"{name}_2560"}
+
+    # concat(CLS, mean of the patch tokens); registers (Virchow2) are left out of the mean
+    model = SimpleNamespace(num_prefix_tokens=prefix)
+    tokens = torch.randn(2, prefix + 6, 4)
+    out = preset.heads["concat"].fn(model, tokens)
+    assert out.shape == (2, 8)
+    assert torch.equal(out, torch.cat([tokens[:, 0], tokens[:, prefix:].mean(dim=1)], dim=-1))
 
 
 def test_conch15_768_alias_warns_and_maps_to_conch15_proj():
