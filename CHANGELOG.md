@@ -4,6 +4,10 @@
 
 ### Added
 
+- Philips `.i2syntax` slides open like `.isyntax`: the same format under another name (the same `DPUfsImport` XML
+  header; libisyntax reads it as is, checked on Philips UFS B300 slides). `create_wsi_file` picks `ISyntaxFile` for it,
+  so `PyramidCommand` and the rest read it too; it is in `WSI_EXTENSIONS` (new `ISYNTAX_EXTENSIONS`) and the watcher
+  picks it up.
 - Slide preset `prism` (Paige [PRISM](https://huggingface.co/paige-ai/Prism)): the slide embedding (1280 dims,
   `image_embedding`) from Virchow v1 tile embeddings, no coordinates. `wt aggregate --slide-preset prism` finds the
   `virchow_2560` group (`preset='virchow'`, `output='concat'`) and writes `virchow_2560/aggregates/prism/feature`.

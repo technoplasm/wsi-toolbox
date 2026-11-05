@@ -479,7 +479,7 @@ wt.WSIFile               # abstract base
 wt.PyramidalWSIFile      # base for multi-level files (needed by DziCommand)
 wt.OpenSlideFile         # openslide-backed
 wt.PyramidalTiffFile     # tifffile-backed (OME-TIFF, pyramid.tif, ...). One instance per thread
-wt.ISyntaxFile           # Philips iSyntax (.isyntax) via pyisyntax / libisyntax. One instance per thread
+wt.ISyntaxFile           # Philips iSyntax (.isyntax / .i2syntax) via pyisyntax / libisyntax. One instance per thread
 wt.StandardImage         # plain PNG/JPEG treated as a single-level slide
 wt.NativeLevel           # one pyramid level (dimensions, downsample)
 ```

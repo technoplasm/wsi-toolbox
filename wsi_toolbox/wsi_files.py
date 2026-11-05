@@ -4,7 +4,7 @@ WSI (Whole Slide Image) file handling classes.
 Provides unified interface for different WSI formats:
 - OpenSlide compatible formats (.svs, .tiff, etc.)
 - TIFF files (.ndpi, .tif)
-- Philips iSyntax (.isyntax, via pyisyntax / libisyntax; openslide does not read it)
+- Philips iSyntax (.isyntax / .i2syntax, via pyisyntax / libisyntax; openslide does not read it)
 - Standard images (.jpg, .png)
 
 Class hierarchy:
@@ -719,7 +719,10 @@ class OpenSlideFile(PyramidalWSIFile):
 
 
 class ISyntaxFile(PyramidalWSIFile):
-    """Philips iSyntax (.isyntax) reader using pyisyntax (Python bindings for libisyntax)
+    """Philips iSyntax (.isyntax / .i2syntax) reader using pyisyntax (Python bindings for libisyntax)
+
+    ``.i2syntax`` is the same container under another name (``ISYNTAX_EXTENSIONS``): its header is the same
+    ``DPUfsImport`` XML and libisyntax opens it as is (checked on Philips UFS B300 slides).
 
     iSyntax stores a wavelet pyramid, not JPEG tiles: libisyntax decodes a tile by running the
     inverse DWT down from its ancestors, keeping the coefficients in a per-handle tile cache.
@@ -762,7 +765,7 @@ class ISyntaxFile(PyramidalWSIFile):
     def __init__(self, path, cache_size: int | None = None, read_width: int | None = None):
         """
         Args:
-            path: Path to the .isyntax file
+            path: Path to the .isyntax / .i2syntax file
             cache_size: Tiles kept in libisyntax's coefficient cache. None: enough for reads
                 ``read_width`` level-0 px wide; without ``read_width``, enough for reads as wide
                 as the first one and at least pyisyntax's default of 2000
@@ -1047,7 +1050,7 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
                 engine = "standard"
         elif ext in [".jpg", ".jpeg", ".png"]:
             engine = "standard"
-        elif ext == ".isyntax":
+        elif ext in ISYNTAX_EXTENSIONS:
             # Philips iSyntax: openslide does not read it
             engine = "isyntax"
         else:
@@ -1074,7 +1077,10 @@ def create_wsi_file(image_path: str, engine: str = "auto", mpp: float = 0.5) -> 
         raise ValueError(f"Invalid engine: {engine}")
 
 
-# WSI formats (OpenSlide supported formats, plus .isyntax read by ISyntaxFile)
+# Philips iSyntax, read by ISyntaxFile. .i2syntax is the same format under another name (see ISyntaxFile)
+ISYNTAX_EXTENSIONS = (".isyntax", ".i2syntax")
+
+# WSI formats (OpenSlide supported formats, plus the iSyntax ones read by ISyntaxFile)
 WSI_EXTENSIONS = [
     ".ndpi",  # Hamamatsu
     ".vms",  # Hamamatsu
@@ -1088,7 +1094,7 @@ WSI_EXTENSIONS = [
     ".tiff",
     ".ome.tiff",
     ".ome.tif",
-    ".isyntax",  # Philips (ISyntaxFile)
+    *ISYNTAX_EXTENSIONS,  # Philips (ISyntaxFile)
 ]
 
 

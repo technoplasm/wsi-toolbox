@@ -2,6 +2,8 @@
 
 The reader tests need the sample slide ``data/isyntax/testslide.isyntax`` (Zenodo 5037046, MIT,
 495 MB; ``data/`` is not in git) or ``WT_ISYNTAX_SAMPLE=<path>``, and are skipped without it.
+``.i2syntax`` (the same format under another name) has no public sample: ``WT_I2SYNTAX_SAMPLE=<path>``
+runs its test, and ``WT_ISYNTAX_SAMPLE=<path to an .i2syntax>`` runs all the reader tests on it.
 """
 
 import os
@@ -20,6 +22,7 @@ from wsi_toolbox.wsi_files import WSI_EXTENSIONS, ISyntaxFile, _rgba_to_rgb, cre
 DEFAULT_SAMPLE = Path(__file__).resolve().parents[1] / "data" / "isyntax" / "testslide.isyntax"
 DEFAULT_SAMPLE_BYTES = 495125898  # Zenodo 5037046 testslide.isyntax; smaller = download still running
 SAMPLE = Path(os.environ.get("WT_ISYNTAX_SAMPLE", DEFAULT_SAMPLE))
+I2SYNTAX_SAMPLE = os.environ.get("WT_I2SYNTAX_SAMPLE")
 
 
 def _sample_missing() -> str | None:
@@ -49,10 +52,31 @@ def test_rgba_to_rgb():
     assert rgb[0, 2].tolist() == [127, 127, 127]  # half: blended onto white
 
 
-def test_isyntax_is_a_wsi_extension(tmp_path):
-    assert ".isyntax" in WSI_EXTENSIONS
-    (tmp_path / "s.isyntax").touch()
-    assert find_wsi_for_h5(str(tmp_path / "s.h5")) == str(tmp_path / "s.isyntax")
+@pytest.mark.parametrize("ext", [".isyntax", ".i2syntax"])
+def test_isyntax_is_a_wsi_extension(tmp_path, ext):
+    assert ext in WSI_EXTENSIONS
+    (tmp_path / f"s{ext}").touch()
+    assert find_wsi_for_h5(str(tmp_path / "s.h5")) == str(tmp_path / f"s{ext}")
+
+
+@pytest.mark.skipif(not I2SYNTAX_SAMPLE, reason="WT_I2SYNTAX_SAMPLE is not set")
+def test_i2syntax_opens_as_isyntax():
+    """.i2syntax goes to ISyntaxFile with engine="auto" and reads tissue at level 0 and the coarsest level."""
+    wsi = create_wsi_file(I2SYNTAX_SAMPLE)
+    try:
+        assert isinstance(wsi, ISyntaxFile)
+        assert 0.1 < wsi.get_mpp() < 1.0
+        coarsest = wsi._get_native_levels()[-1]
+        overview = wsi._read_native_region(coarsest.index, 0, 0, coarsest.width, coarsest.height)
+        assert overview.shape == (coarsest.height, coarsest.width, 3)
+        # the darkest overview pixel is tissue: read 512 px of level 0 around it
+        y, x = np.unravel_index(overview.sum(axis=2).argmin(), overview.shape[:2])
+        scale = 2**coarsest.index
+        region = wsi.read_region((max(0, x * scale - 256), max(0, y * scale - 256), 512, 512))
+        assert region.shape == (512, 512, 3) and region.dtype == np.uint8
+        assert region.mean() < 230  # not the white of a skipped / missing tile
+    finally:
+        wsi.close()
 
 
 @needs_sample
