@@ -67,30 +67,11 @@ Homepage = "https://github.com/technoplasm/wsi-toolbox"
 Repository = "https://github.com/technoplasm/wsi-toolbox"
 Documentation = "https://github.com/technoplasm/wsi-toolbox/blob/master/README.md"
 
-# [[tool.uv.index]]
-# name = "pytorch"
-# url = "https://download.pytorch.org/whl/cu121"
-# explicit = true
-
-[project.optional-dependencies]
-build = ["torch", "packaging", "wheel", "setuptools"]
-compile = ["flash-attn"]
-
 [tool.uv]
-no-build-isolation-package = ["flash-attn"]
 preview = true
 # torch.compile (TileEncoder accel="compile"/"graphs") needs triton, which compiles against Python.h;
 # the system Python on the hosts ships without headers, uv-managed CPython has them.
 python-preference = "only-managed"
-
-# [tool.uv.sources]
-# # x86_64 Linux: use CUDA 12.1 wheels, otherwise: use default PyPI (CPU)
-# torch = [
-#     { index = "pytorch", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-# ]
-# torchvision = [
-#     { index = "pytorch", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-# ]
 
 # Linux: CUDA 13.0 wheels for every architecture (x86_64 and aarch64). The cu128 wheels have no
 # usable bf16 Tensor Core GEMM on Blackwell GB10 (sm_121): 10.7 vs 97 TFLOPS, extract 1.4x slower
@@ -108,15 +89,6 @@ torchvision = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux'" },
 ]
 
-[tool.uv.extra-build-dependencies]
-flash-attn = ["setuptools", "wheel", "packaging", "ninja", "torch"]
-
-[[tool.uv.dependency-metadata]]
-name = "flash-attn"
-version = "2.7.4"
-requires-dist = ["torch", "einops"]
-
-
 [tool.taskipy.tasks]
 cli = "python -m wsi_toolbox.cli"
 app = "streamlit run wsi_toolbox/app/main.py --server.address 0.0.0.0 --server.port ${PORT:-8501}"
@@ -128,9 +100,6 @@ lint = "ruff check . --extend-ignore F401"
 test = "pytest -q"
 lint-strict = "ruff check ."
 fix = "ruff check --fix . && ruff format ."
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 exclude = [
@@ -156,19 +125,6 @@ dev = [
     "ruff>=0.8.0",
     "taskipy>=1.14.1",
     "uvicorn>=0.32.0",
-]
-build = [
-    "build>=1.0.0",
-    "twine>=5.0.0",
-]
-
-# Slide-level encoding (CLI only) - uv-only feature, not uploaded to PyPI
-# $ uv sync --group gigapath
-gigapath = [
-    "gigapath @ git+https://github.com/prov-gigapath/prov-gigapath.git@5d77be0",
-    "flash-attn>=2.7.4",
-    "einops>=0.8.1",
-    "fairscale>=0.4.13",
 ]
 
 [tool.ruff]
