@@ -14,6 +14,15 @@
   single-threaded, 3-4x slower on 80k patches). The CLI passes `--seed` to all of them, but to UMAP only when it is
   given; without `--seed` the rest still use 42.
 
+### Changed
+
+- `numpy>=2` (was `numpy<2`, a leftover from the torch 2.0 days). uv ignores the upper bound of `requires-python`
+  (`==3.12.*`), so on Python 3.13 it installed numpy 1.26.4, which has no cp313 wheel: built from source against the
+  reference BLAS, a 2000x2000 matmul took seconds and `wt cluster` on ~20k patches did not finish. All dependencies have
+  numpy 2 wheels for cp312 on x86_64 and aarch64 (checked on DGX Spark); the lock moves numpy 1.26.4 -> 2.5.5, numba
+  0.63.1 -> 0.68.1, llvmlite 0.46.0 -> 0.50.0. A fresh install from PyPI may now pick opencv-python-headless 5.x
+  (4.12+ needs numpy 2); tests pass with 5.1.0.
+
 ### Fixed
 
 - `leiden_cluster` builds an unweighted kNN graph. The edge weights were meant to fall with distance, but each edge's
