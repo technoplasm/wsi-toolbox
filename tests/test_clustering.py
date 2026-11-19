@@ -1,8 +1,10 @@
 import h5py
+import leidenalg
 import numpy as np
 import pytest
 
 import wsi_toolbox as wt
+from wsi_toolbox.commands import clustering as clustering_mod
 from wsi_toolbox.progress import Cancelled
 
 MODEL = "m"
@@ -37,6 +39,22 @@ def test_umap_phases_and_output(features_h5, collect):
         assert f[result.target_path].shape == (N_SAMPLES, 2)
 
 
+def test_umap_seed(features_h5):
+    """Unseeded by default (umap-learn stays parallel); a seed gives the same coordinates and is saved."""
+    result = wt.UmapCommand(model=MODEL, n_neighbors=10)(features_h5, on_progress=None)
+    with h5py.File(features_h5, "r") as f:
+        assert "seed" not in f[result.target_path].attrs
+
+    coords = []
+    for _ in range(2):
+        cmd = wt.UmapCommand(model=MODEL, n_neighbors=10, seed=0, overwrite=True)
+        result = cmd(features_h5, on_progress=None)
+        coords.append(cmd.get_embeddings())
+        with h5py.File(features_h5, "r") as f:
+            assert f[result.target_path].attrs["seed"] == 0
+    np.testing.assert_array_equal(coords[0], coords[1])
+
+
 def test_clustering_phases_and_output(features_h5, collect):
     result = wt.ClusteringCommand(model=MODEL, resolution=1.0)(features_h5, on_progress=collect)
     assert result.feature_count == N_SAMPLES
@@ -48,6 +66,41 @@ def test_clustering_phases_and_output(features_h5, collect):
         assert clusters.shape == (N_SAMPLES,)
         assert (clusters >= 0).all()
         assert f[result.target_path].attrs["resolution"] == 1.0
+        assert f[result.target_path].attrs["seed"] == 42
+
+
+def test_leiden_cluster_seed(monkeypatch):
+    """The seed reaches leidenalg, and a fixed seed gives the same partition on unstructured features
+    (without one, Leiden splits these differently from run to run)."""
+    seeds = []
+    real = leidenalg.find_partition
+
+    def spy(*args, **kwargs):
+        seeds.append(kwargs.get("seed"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(leidenalg, "find_partition", spy)
+    feats = np.random.default_rng(1).normal(size=(300, DIM)).astype(np.float32)
+    runs = [wt.leiden_cluster(feats, seed=3) for _ in range(3)]
+    assert seeds == [3, 3, 3]
+    for r in runs[1:]:
+        np.testing.assert_array_equal(runs[0], r)
+
+
+@pytest.mark.parametrize("seed", [7, None])
+def test_clustering_passes_seed(features_h5, monkeypatch, seed):
+    seen = []
+    real = clustering_mod.leiden_cluster
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("seed"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(clustering_mod, "leiden_cluster", spy)
+    result = wt.ClusteringCommand(model=MODEL, seed=seed)(features_h5, on_progress=None)
+    assert seen == [seed]
+    with h5py.File(features_h5, "r") as f:
+        assert f[result.target_path].attrs.get("seed") == seed
 
 
 def test_cluster_with_umap_single_reporter(features_h5, collect):
@@ -82,6 +135,12 @@ def test_clustering_cancel_at_phase_boundary(features_h5):
         wt.ClusteringCommand(model=MODEL)(features_h5, on_progress=None, should_cancel=lambda: True)
     with h5py.File(features_h5, "r") as f:
         assert f"{MODEL}/default/clusters" not in f
+
+
+def test_pca_seed_attr(features_h5):
+    result = wt.PCACommand(model=MODEL, n_components=2, seed=5)(features_h5, on_progress=None)
+    with h5py.File(features_h5, "r") as f:
+        assert f[result.target_path].attrs["seed"] == 5
 
 
 def test_pca_phases(features_h5, collect):

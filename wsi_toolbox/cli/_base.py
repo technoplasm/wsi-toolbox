@@ -21,6 +21,10 @@ warnings.filterwarnings("ignore", category=UserWarning, message=".*cuda capabili
 
 DEFAULT_PRESET = os.getenv("WT_PRESET", "uni2")
 
+# Default of --seed meaning "not given" (pydantic_autocli cannot take ``int | None``): clustering / PCA /
+# plots then use the global default seed, while UMAP stays unseeded (seeding makes umap-learn single-threaded).
+SEED_NOT_GIVEN = -1
+
 
 def build_output_path(input_path: str, namespace: str, filename: str) -> str:
     """
@@ -39,7 +43,10 @@ def build_output_path(input_path: str, namespace: str, filename: str) -> str:
 
 
 class CommonArgs(BaseModel):
-    seed: int = get_global_seed()
+    seed: int = param(
+        SEED_NOT_GIVEN,
+        description=f"Random seed (not given: {get_global_seed()}, and UMAP runs unseeded in parallel)",
+    )
     preset: str = param(
         DEFAULT_PRESET,
         l="--preset",
@@ -65,7 +72,10 @@ class CLIBase(AutoCLI):
     CommonArgs = CommonArgs
 
     def prepare(self, a: CommonArgs):
-        fix_global_seed(a.seed)
+        # self.seed: for clustering / PCA / plots. self.umap_seed: only an explicit --seed.
+        self.seed = get_global_seed() if a.seed == SEED_NOT_GIVEN else a.seed
+        self.umap_seed = None if a.seed == SEED_NOT_GIVEN else a.seed
+        fix_global_seed(self.seed)
         # Session-level settings are held here and passed explicitly to each
         # Command (preset= / device= / on_progress=); the CLI never writes the
         # process-wide defaults in wsi_toolbox.common.

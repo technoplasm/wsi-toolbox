@@ -44,11 +44,11 @@ class ClusteringCommand:
 
     Output:
         - clusters written to deepest level
-        - metadata (resolution) saved as HDF5 attributes
+        - metadata (resolution, model, seed) saved as HDF5 attributes
 
     Example hierarchy:
         uni/default/filter/1+2+3/filter/4+5/clusters
-            ↑ with attributes: resolution=1.0
+            ↑ with attributes: resolution=1.0, seed=42
 
     Progress phases: "Loading features" -> "PCA" -> "KNN" -> "Building graph"
     -> "Leiden clustering" -> "Finalizing" -> "Sorting clusters" -> "Writing".
@@ -71,6 +71,7 @@ class ClusteringCommand:
         parent_filters: list[list[int]] | None = None,
         sort_clusters: bool = True,
         overwrite: bool = False,
+        seed: int | None = 42,
     ):
         """
         Args:
@@ -80,6 +81,8 @@ class ClusteringCommand:
             parent_filters: Hierarchical filters, e.g., [[1,2,3], [4,5]]
             sort_clusters: Reorder cluster IDs by PCA distribution (default: True)
             overwrite: Overwrite existing clusters
+            seed: Seed for Leiden and the PCAs (same seed + same features -> same clusters).
+                None -> a different partition on each run. Saved as the ``seed`` attribute.
         """
         self.model = model
         self.resolution = resolution
@@ -87,6 +90,7 @@ class ClusteringCommand:
         self.parent_filters = parent_filters or []
         self.sort_clusters = sort_clusters
         self.overwrite = overwrite
+        self.seed = seed
 
         # Internal state
         self.hdf5_paths = []
@@ -149,14 +153,14 @@ class ClusteringCommand:
         data = ctx.load_features(source="features")
 
         # Perform clustering using analysis module (phases: PCA / KNN / Building graph / Leiden clustering / Finalizing)
-        self.clusters = leiden_cluster(data, resolution=self.resolution, reporter=reporter)
+        self.clusters = leiden_cluster(data, resolution=self.resolution, reporter=reporter, seed=self.seed)
 
         # Reorder cluster IDs by PCA distribution for consistent visualization
         if self.sort_clusters:
             reporter.phase("Sorting clusters")
             from sklearn.decomposition import PCA  # noqa: PLC0415
 
-            pca = PCA(n_components=1)
+            pca = PCA(n_components=1, random_state=self.seed)
             pca1 = pca.fit_transform(data).flatten()
             self.clusters = reorder_clusters_by_pca(self.clusters, pca1)
 
@@ -190,6 +194,8 @@ class ClusteringCommand:
                 ds = f.create_dataset(target_path, data=full_clusters)
                 ds.attrs["resolution"] = self.resolution
                 ds.attrs["model"] = self.model
+                if self.seed is not None:
+                    ds.attrs["seed"] = self.seed
 
 
 class ClusterWithUmapResult(BaseModel):

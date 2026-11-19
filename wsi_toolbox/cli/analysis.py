@@ -40,6 +40,7 @@ class AnalysisMixin:
             parent_filters=parent_filters,
             sort_clusters=not a.no_sort,
             overwrite=a.overwrite,
+            seed=self.seed,
         )
         result = cmd(input_paths, on_progress=self.sink)
 
@@ -78,6 +79,7 @@ class AnalysisMixin:
             n_neighbors=a.n_neighbors,
             min_dist=a.min_dist,
             overwrite=a.overwrite,
+            seed=self.umap_seed,
         )
         result = cmd(input_paths, on_progress=self.sink)
 
@@ -188,6 +190,7 @@ class AnalysisMixin:
             parent_filters=parent_filters,
             scaler=a.scaler,
             overwrite=a.overwrite,
+            seed=self.seed,
         )
         result = cmd(input_paths, on_progress=self.sink)
 
@@ -261,6 +264,7 @@ class AnalysisMixin:
                 clusters_list,
                 title="Distribution of PCA Values by Cluster",
                 ylabel="PCA Value",
+                seed=self.seed,
             )
         elif a.n_components == 2:
             plot_scatter_2d(

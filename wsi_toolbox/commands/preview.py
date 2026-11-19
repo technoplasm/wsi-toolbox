@@ -402,6 +402,22 @@ class PreviewLatentPCACommand(BasePreviewCommand):
         image = cmd(hdf5_path='data.h5', alpha=0.5)
     """
 
+    def __init__(
+        self,
+        model: str,
+        size: int = 64,
+        font_size: int = 16,
+        rotate: bool = False,
+        patch_size: int | None = None,
+        seed: int | None = 42,
+    ):
+        """
+        Args: as ``BasePreviewCommand``, plus
+            seed: PCA random_state (None -> the colors may differ slightly per run)
+        """
+        super().__init__(model, size=size, font_size=font_size, rotate=rotate, patch_size=patch_size)
+        self.seed = seed
+
     def _prepare(self, f: h5py.File, alpha: float = 0.5):
         """
         Prepare latent PCA visualization data
@@ -430,7 +446,7 @@ class PreviewLatentPCACommand(BasePreviewCommand):
             logger.warning(f"{self.size} is not divisible by {latent_size}")
 
         # Apply PCA
-        pca = PCA(n_components=3)
+        pca = PCA(n_components=3, random_state=self.seed)
         latent_pca = pca.fit_transform(h.reshape(s[0] * s[1], s[-1]))  # B*L, 3
 
         # Normalize to [0, 1]

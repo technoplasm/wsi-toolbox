@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Clustering takes a seed: `ClusteringCommand(..., seed=42)` and `leiden_cluster(..., seed=42)` pass it to Leiden
+  (`leidenalg.find_partition`) and to the PCAs, so the same features and seed give the same clusters. Until now
+  Leiden got no seed and the partition changed from run to run, `--seed` included. `wt cluster` passes `--seed`;
+  the seed is saved as the `seed` attribute of `.../clusters`. `seed=None` keeps the old behaviour.
+- `seed=` on the other commands that draw random numbers: `PCACommand` and `PreviewLatentPCACommand` (default 42, the
+  PCA's `random_state`; sklearn picks the randomized solver for >1000-dim features), `plot_violin_1d` (the jitter,
+  default 42, no longer the global numpy RNG) and `UmapCommand` (`random_state`, **default None**: seeded UMAP is
+  single-threaded, 3-4x slower on 80k patches). The CLI passes `--seed` to all of them, but to UMAP only when it is
+  given; without `--seed` the rest still use 42.
+
 ## 0.7.1 (2026-11-05)
 
 ### Added

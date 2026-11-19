@@ -57,6 +57,7 @@ class UmapCommand:
         min_dist: float = 0.1,
         metric: str = "euclidean",
         overwrite: bool = False,
+        seed: int | None = None,
     ):
         """
         Initialize UMAP command
@@ -70,6 +71,9 @@ class UmapCommand:
             min_dist: UMAP min_dist parameter (default: 0.1)
             metric: UMAP metric (default: "euclidean")
             overwrite: Whether to overwrite existing UMAP coordinates
+            seed: UMAP random_state. None (default) -> parallel, but the coordinates differ per run.
+                An int gives the same coordinates for the same features, but umap-learn then runs
+                single-threaded (3-4x slower on 80k patches). Saved as the ``seed`` attribute.
         """
         self.model = model
         self.namespace = namespace
@@ -79,6 +83,7 @@ class UmapCommand:
         self.min_dist = min_dist
         self.metric = metric
         self.overwrite = overwrite
+        self.seed = seed
 
         # Internal state
         self.hdf5_paths = []
@@ -147,6 +152,9 @@ class UmapCommand:
             n_neighbors=self.n_neighbors,
             min_dist=self.min_dist,
             metric=self.metric,
+            random_state=self.seed,
+            # umap-learn forces n_jobs=1 when seeded (and warns unless we ask for it)
+            n_jobs=1 if self.seed is not None else -1,
         )
         self.umap_embeddings = reducer.fit_transform(features)
 
@@ -182,6 +190,8 @@ class UmapCommand:
                 ds.attrs["min_dist"] = self.min_dist
                 ds.attrs["metric"] = self.metric
                 ds.attrs["model"] = self.model
+                if self.seed is not None:
+                    ds.attrs["seed"] = self.seed
 
     def get_embeddings(self):
         """Get computed UMAP embeddings"""

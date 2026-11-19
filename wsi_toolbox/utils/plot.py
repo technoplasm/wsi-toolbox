@@ -151,6 +151,7 @@ def plot_violin_1d(
     title: str = "Distribution by Cluster",
     ylabel: str = "Value",
     figsize: tuple = (12, 8),
+    seed: int | None = 42,
 ):
     """
     Plot 1D violin plot with cluster distribution
@@ -161,10 +162,12 @@ def plot_violin_1d(
         title: Plot title
         ylabel: Y-axis label
         figsize: Figure size
+        seed: Seed for the horizontal jitter of the points (None -> differs per call)
 
     Returns:
         matplotlib Figure
     """
+    rng = np.random.default_rng(seed)
 
     # Combine all data
     all_values = np.concatenate(values_list)
@@ -210,7 +213,7 @@ def plot_violin_1d(
 
     # Scatter: first is "All" with gray, then clusters
     for i, d in enumerate(data):
-        x = np.random.normal(i, 0.05, size=len(d))
+        x = rng.normal(i, 0.05, size=len(d))
         if i == 0:
             color = "gray"  # All
         else:

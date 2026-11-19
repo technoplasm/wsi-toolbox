@@ -70,6 +70,7 @@ class PCACommand:
         parent_filters: list[list[int]] | None = None,
         scaler: str = "minmax",
         overwrite: bool = False,
+        seed: int | None = 42,
     ):
         """
         Args:
@@ -79,6 +80,8 @@ class PCACommand:
             parent_filters: Hierarchical filters, e.g., [[1,2,3], [4,5]]
             scaler: Scaling method ("minmax" or "std")
             overwrite: Overwrite existing PCA scores
+            seed: PCA random_state (used when sklearn picks the randomized solver, e.g. >1000-dim
+                features). None -> may differ slightly per run. Saved as the ``seed`` attribute.
         """
         self.model = model
         self.n_components = n_components
@@ -86,6 +89,7 @@ class PCACommand:
         self.parent_filters = parent_filters or []
         self.scaler = scaler
         self.overwrite = overwrite
+        self.seed = seed
 
         # Validate
         if self.n_components not in [1, 2, 3]:
@@ -177,7 +181,7 @@ class PCACommand:
         from sklearn.decomposition import PCA  # noqa: PLC0415
         from sklearn.preprocessing import MinMaxScaler, StandardScaler  # noqa: PLC0415
 
-        pca = PCA(n_components=self.n_components)
+        pca = PCA(n_components=self.n_components, random_state=self.seed)
         pca_values = pca.fit_transform(features)
 
         if self.scaler == "minmax":
@@ -213,3 +217,5 @@ class PCACommand:
                 ds.attrs["n_components"] = self.n_components
                 ds.attrs["scaler"] = self.scaler
                 ds.attrs["model"] = self.model
+                if self.seed is not None:
+                    ds.attrs["seed"] = self.seed

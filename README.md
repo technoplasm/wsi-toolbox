@@ -362,6 +362,8 @@ wt extract -i sample.ndpi --progress none    # no bars (logs only)
 
 CLI is available as `wsi-toolbox` or `wt`. Each command has `--help`. Options shared by all subcommands:
 `--preset`, `-M/--model`, `-D/--device`, `--progress rich|tqdm|none`, `--seed`, `-v`.
+`--seed` (default 42) seeds clustering, PCA and plots; UMAP is seeded only when `--seed` is given (seeded UMAP is
+single-threaded, 3-4x slower).
 
 ---
 
@@ -451,6 +453,7 @@ Run Leiden clustering on embeddings.
 ```bash
 wt cluster -i sample.h5
 wt cluster -i sample.h5 --resolution 0.5   # Fewer clusters
+wt cluster -i sample.h5 --seed 0 -O        # Another seed (default 42; same seed -> same clusters)
 ```
 
 ```python

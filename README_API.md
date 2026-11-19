@@ -273,6 +273,7 @@ wt.ClusteringCommand(
     parent_filters: list[list[int]] | None = None,   # sub-clustering, e.g. [[1, 2, 3]]
     sort_clusters: bool = True,               # reorder cluster ids by PCA
     overwrite: bool = False,
+    seed: int | None = 42,                    # Leiden + PCA seed; None -> differs per run. Saved as attrs['seed']
 )
 cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> ClusteringResult
 ```
@@ -285,7 +286,9 @@ UMAP projection of features. **CLI:** `wt umap`.
 
 ```python
 wt.UmapCommand(model: str, namespace=None, parent_filters=None, n_components=2, n_neighbors=15,
-               min_dist=0.1, metric='euclidean', overwrite=False)
+               min_dist=0.1, metric='euclidean', overwrite=False, seed=None)
+# seed: UMAP random_state. None (default) -> parallel, coordinates differ per run. An int -> reproducible,
+#       but umap-learn runs single-threaded (3-4x slower on 80k patches). Saved as attrs['seed']
 cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> UmapResult
 cmd.get_embeddings() -> np.ndarray     # (N, n_components) after a run
 ```
@@ -309,7 +312,8 @@ cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> Cl
 PCA scores of features. **CLI:** `wt pca`.
 
 ```python
-wt.PCACommand(model: str, n_components: int = 2, namespace=None, parent_filters=None, scaler='minmax', overwrite=False)
+wt.PCACommand(model: str, n_components: int = 2, namespace=None, parent_filters=None, scaler='minmax', overwrite=False,
+              seed=42)
 cmd(hdf5_paths: str | list[str], *, on_progress=UNSET, should_cancel=None) -> PCAResult
 ```
 
@@ -327,7 +331,7 @@ cmd(hdf5_path: str, *, on_progress=UNSET, should_cancel=None, **prepare_kwargs) 
 wt.PreviewClustersCommand(...)(hdf5_path, namespace='default', filter_path='')                      # wt preview
 wt.PreviewScoresCommand(...)(hdf5_path, score_name='pca1', namespace='default', filter_path='',
                              cmap_name='jet', invert=False)                                        # wt preview-score
-wt.PreviewLatentPCACommand(...)(hdf5_path, alpha=0.5)
+wt.PreviewLatentPCACommand(..., seed=42)(hdf5_path, alpha=0.5)                                   # seed: the PCA
 wt.PreviewLatentClusterCommand(...)(hdf5_path, alpha=0.5)
 ```
 
@@ -507,7 +511,7 @@ wt.PrefetchReader       # wraps a reader with a background prefetch queue
 
 ```python
 wt.leiden_cluster(features: np.ndarray, resolution: float = 1.0, n_jobs: int = -1,
-                  reporter: Reporter | None = None) -> np.ndarray
+                  reporter: Reporter | None = None, seed: int | None = 42) -> np.ndarray
 # phases on the reporter: "PCA" / "KNN" / "Building graph" / "Leiden clustering" / "Finalizing"
 wt.reorder_clusters_by_pca(clusters: np.ndarray, pca_values: np.ndarray) -> np.ndarray
 wt.rename_namespace(hdf5_path: str, old_namespace: str, new_namespace: str, model: str | None = None)

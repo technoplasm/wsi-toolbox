@@ -57,9 +57,12 @@ def reorder_clusters_by_pca(clusters: np.ndarray, pca_values: np.ndarray) -> np.
     return np.array([old_to_new.get(c, c) for c in clusters])
 
 
-def find_optimal_components(features, threshold=0.95):
+def find_optimal_components(features, threshold=0.95, seed: int | None = 42):
     """
     PCAをfitして最適成分数とPCAオブジェクトを返す。
+
+    Args:
+        seed: randomized SVD の random_state（None = 非決定的）
 
     Returns:
         tuple: (optimal_n, pca) - 最適成分数とffit済みPCAオブジェクト
@@ -67,7 +70,7 @@ def find_optimal_components(features, threshold=0.95):
     # Lazy import: sklearn is slow to load (~600ms), defer until needed
     from sklearn.decomposition import PCA  # noqa: PLC0415
 
-    pca = PCA(svd_solver="randomized", random_state=42)
+    pca = PCA(svd_solver="randomized", random_state=seed)
     pca.fit(features)
 
     # 累積寄与率がthresholdを超える次元数を選択
@@ -111,6 +114,7 @@ def leiden_cluster(
     resolution: float = 1.0,
     n_jobs: int = -1,
     reporter: Reporter | None = None,
+    seed: int | None = 42,
 ) -> np.ndarray:
     """
     Perform Leiden clustering on feature embeddings.
@@ -121,6 +125,8 @@ def leiden_cluster(
         n_jobs: Number of parallel jobs (-1 = all CPUs)
         reporter: Optional progress Reporter. Phases: "PCA" / "KNN" / "Building graph" /
             "Leiden clustering" / "Finalizing"
+        seed: Seed for the PCA (randomized SVD) and Leiden's RNG. None -> a different
+            partition on each run (leidenalg picks a random seed).
 
     Returns:
         np.ndarray: Cluster labels for each sample
@@ -142,7 +148,7 @@ def leiden_cluster(
 
     # 1. PCA
     _phase("PCA")
-    n_components, pca = find_optimal_components(features)
+    n_components, pca = find_optimal_components(features, seed=seed)
     target_features = pca.transform(features)[:, :n_components]
 
     # 2. KNN
@@ -177,6 +183,7 @@ def leiden_cluster(
         la.RBConfigurationVertexPartition,
         weights="weight",
         resolution_parameter=resolution,
+        seed=seed,
     )
 
     # 5. Finalize
