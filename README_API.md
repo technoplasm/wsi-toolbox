@@ -512,6 +512,8 @@ wt.PrefetchReader       # wraps a reader with a background prefetch queue
 ```python
 wt.leiden_cluster(features: np.ndarray, resolution: float = 1.0, n_jobs: int = -1,
                   reporter: Reporter | None = None, seed: int | None = 42) -> np.ndarray
+# Leiden (RBConfiguration) on the unweighted kNN graph (k = sqrt(N)) of the PCA components that cover 95% of the
+# variance. n_jobs: the KNN search
 # phases on the reporter: "PCA" / "KNN" / "Building graph" / "Leiden clustering" / "Finalizing"
 wt.reorder_clusters_by_pca(clusters: np.ndarray, pca_values: np.ndarray) -> np.ndarray
 wt.rename_namespace(hdf5_path: str, old_namespace: str, new_namespace: str, model: str | None = None)

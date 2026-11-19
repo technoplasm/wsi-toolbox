@@ -84,31 +84,6 @@ def find_optimal_components(features, threshold=0.95, seed: int | None = 42):
     return optimal_n, pca
 
 
-def process_edges_batch(batch_indices, all_indices, h, use_umap_embs, pca=None):
-    """Process a batch of nodes and their edges"""
-    edges = []
-    weights = []
-
-    for i in batch_indices:
-        for j in all_indices[i]:
-            if i == j:  # skip self loop
-                continue
-
-            if use_umap_embs:
-                distance = np.linalg.norm(h[i] - h[j])
-                weight = np.exp(-distance)
-            else:
-                explained_variance_ratio = pca.explained_variance_ratio_
-                weighted_diff = (h[i] - h[j]) * np.sqrt(explained_variance_ratio[: len(h[i])])
-                distance = np.linalg.norm(weighted_diff)
-                weight = np.exp(-distance / distance.mean())
-
-            edges.append((i, j))
-            weights.append(weight)
-
-    return edges, weights
-
-
 def leiden_cluster(
     features: np.ndarray,
     resolution: float = 1.0,
@@ -122,7 +97,7 @@ def leiden_cluster(
     Args:
         features: Feature matrix (n_samples, n_features)
         resolution: Leiden clustering resolution parameter
-        n_jobs: Number of parallel jobs (-1 = all CPUs)
+        n_jobs: Parallel jobs for the KNN search (-1 = all CPUs)
         reporter: Optional progress Reporter. Phases: "PCA" / "KNN" / "Building graph" /
             "Leiden clustering" / "Finalizing"
         seed: Seed for the PCA (randomized SVD) and Leiden's RNG. None -> a different
@@ -131,11 +106,9 @@ def leiden_cluster(
     Returns:
         np.ndarray: Cluster labels for each sample
     """
-    # Lazy import: sklearn/igraph/networkx are slow to load, defer until needed
+    # Lazy import: sklearn/igraph are slow to load, defer until needed
     import igraph as ig  # noqa: PLC0415
     import leidenalg as la  # noqa: PLC0415
-    import networkx as nx  # noqa: PLC0415
-    from joblib import Parallel, delayed  # noqa: PLC0415
     from sklearn.neighbors import NearestNeighbors  # noqa: PLC0415
 
     if n_jobs < 0:
@@ -154,34 +127,28 @@ def leiden_cluster(
     # 2. KNN
     _phase("KNN")
     k = int(np.sqrt(len(target_features)))
-    nn = NearestNeighbors(n_neighbors=k).fit(target_features)
-    distances, indices = nn.kneighbors(target_features)
+    nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs).fit(target_features)
+    indices = nn.kneighbors(target_features, return_distance=False)
 
-    # 3. Build graph
+    # 3. Build graph: undirected, unweighted kNN graph (i-j is an edge when either is among the
+    # other's k nearest; no self loops). Earlier versions weighted each edge with
+    # exp(-d / d.mean()) on the edge's own scalar distance, i.e. exp(-1) on every edge (NaN at d=0);
+    # a uniform weight gives the same partition as no weight, so dropping it keeps the clusters.
     _phase("Building graph")
-    G = nx.Graph()
-    G.add_nodes_from(range(n_samples))
-
-    batch_size = max(1, n_samples // n_jobs)
-    batches = [list(range(i, min(i + batch_size, n_samples))) for i in range(0, n_samples, batch_size)]
-    results = Parallel(n_jobs=n_jobs)(
-        [delayed(process_edges_batch)(batch, indices, target_features, False, pca) for batch in batches]
-    )
-
-    for batch_edges, batch_weights in results:
-        for (i, j), weight in zip(batch_edges, batch_weights):
-            G.add_edge(i, j, weight=weight)
+    src = np.repeat(np.arange(n_samples, dtype=np.int64), k)
+    dst = indices.ravel().astype(np.int64)
+    keep = src != dst
+    lo = np.minimum(src[keep], dst[keep])
+    hi = np.maximum(src[keep], dst[keep])
+    keys = np.unique(lo * n_samples + hi)
+    edges = np.stack([keys // n_samples, keys % n_samples], axis=1)
+    ig_graph = ig.Graph(n=n_samples, edges=edges)
 
     # 4. Leiden clustering
     _phase("Leiden clustering")
-    edges = list(G.edges())
-    weights = [G[u][v]["weight"] for u, v in edges]
-    ig_graph = ig.Graph(n=n_samples, edges=edges, edge_attrs={"weight": weights})
-
     partition = la.find_partition(
         ig_graph,
         la.RBConfigurationVertexPartition,
-        weights="weight",
         resolution_parameter=resolution,
         seed=seed,
     )

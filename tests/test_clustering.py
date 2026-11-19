@@ -87,6 +87,16 @@ def test_leiden_cluster_seed(monkeypatch):
         np.testing.assert_array_equal(runs[0], r)
 
 
+def test_leiden_cluster_duplicate_features():
+    """Exact duplicate feature vectors (distance 0) used to give NaN edge weights, which leidenalg rejects."""
+    feats = np.random.default_rng(2).normal(size=(200, DIM)).astype(np.float32)
+    feats[1] = feats[0]
+    feats[50:60] = feats[49]
+    clusters = wt.leiden_cluster(feats)
+    assert clusters.shape == (200,) and (clusters >= 0).all()
+    assert clusters[1] == clusters[0] and (clusters[50:60] == clusters[49]).all()
+
+
 @pytest.mark.parametrize("seed", [7, None])
 def test_clustering_passes_seed(features_h5, monkeypatch, seed):
     seen = []

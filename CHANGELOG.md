@@ -14,6 +14,15 @@
   single-threaded, 3-4x slower on 80k patches). The CLI passes `--seed` to all of them, but to UMAP only when it is
   given; without `--seed` the rest still use 42.
 
+### Fixed
+
+- `leiden_cluster` builds an unweighted kNN graph. The edge weights were meant to fall with distance, but each edge's
+  distance was divided by itself (`exp(-d / d.mean())` on a scalar), so every weight was `exp(-1)` and the graph was
+  effectively unweighted. Same clusters as before: identical partitions to the old code for the same seed (UNI2
+  features of 5,955 and 10,126 patches, seeds 0-2). An exact duplicate feature vector (distance 0) gave a NaN weight
+  and leidenalg raised `Cannot accept NaN weights`; that is gone. The graph is now built from the kNN indices with
+  numpy instead of networkx + joblib per edge (10,126 patches: 3-5 s -> 0.2 s), and `n_jobs` goes to the KNN search.
+
 ## 0.7.1 (2026-11-05)
 
 ### Added
