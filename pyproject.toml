@@ -69,7 +69,6 @@ Repository = "https://github.com/technoplasm/wsi-toolbox"
 Documentation = "https://github.com/technoplasm/wsi-toolbox/blob/master/README.md"
 
 [tool.uv]
-preview = true
 # torch.compile (TileEncoder accel="compile"/"graphs") needs triton, which compiles against Python.h;
 # the system Python on the hosts ships without headers, uv-managed CPython has them.
 python-preference = "only-managed"

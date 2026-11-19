@@ -54,6 +54,11 @@
   `uv sync --all-groups` / `--all-extras` no longer builds flash-attn. The `build` group (build, twine) too:
   `deploy.sh` uses `uv build` / `uvx twine`.
 
+- `[tool.uv] preview = true` (it was there for flash-attn). It turned on all of uv's preview features, the visible
+  one being the project environment kept in uv's cache (`~/.cache/uv/environments-v2/`, one per Python version) with
+  `.venv` a symlink to it. The environment is a plain `.venv` in the repo again; old ones left in the cache can be
+  deleted. The lock only changes in format.
+
 ### Fixed
 
 - TITAN (the default slide preset) loads in a fresh environment: its remote code imports `einops_exts`, which was not
