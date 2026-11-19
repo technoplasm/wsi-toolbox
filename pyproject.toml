@@ -39,15 +39,15 @@ dependencies = [
     "pandas>=2.2.3",
     "pillow>=11.0.0",
     "pydantic>=2.10.6",
-    "pydantic-autocli>=0.2.0",
+    "pydantic-autocli>=0.3.0",
     "pyisyntax>=0.1.7",
     "rich>=14.0.0",
     "safetensors>=0.4.1",
     "scikit-learn>=1.6.1",
     "seaborn>=0.13.2",
     "streamlit>=1.43.2",
-    "streamlit-aggrid>=0.3.4.post3",
-    "tifffile>=2025.2.18",
+    "streamlit-aggrid>=1.0.0",
+    "tifffile>=2025.5.21",
     "timm>=0.9.16",
     "torch>=2.5.1",
     # Not imported here (timm needs it), but listed so that [tool.uv.sources] takes it from the same cu130 index as torch.
@@ -55,7 +55,7 @@ dependencies = [
     "tqdm>=4.66.0",
     "transformers>=4.40.0",
     "umap-learn>=0.5.7",
-    "zarr>=3",
+    "zarr>=3.0.7",
 ]
 
 [project.scripts]
