@@ -22,9 +22,41 @@
   numpy 2 wheels for cp312 on x86_64 and aarch64 (checked on DGX Spark); the lock moves numpy 1.26.4 -> 2.5.5, numba
   0.63.1 -> 0.68.1, llvmlite 0.46.0 -> 0.50.0. A fresh install from PyPI may now pick opencv-python-headless 5.x
   (4.12+ needs numpy 2); tests pass with 5.1.0.
+- `requires-python = ">=3.12"` (was `==3.12.*`). pip honours the upper bound, so on Python 3.13+ `pip install
+  wsi-toolbox` fell back to 0.3.0 (the last release without it, `numpy<2`); uv ignores it anyway. Tested on 3.12, 3.13
+  and 3.14, Linux x86_64 and aarch64 (DGX Spark), with the lock and with a plain install of the wheel from PyPI; every
+  dependency has wheels for them. 3.15 is untested: h5py, numcodecs and PyYAML have no cp315 wheels yet, and torch
+  2.14 (cu130) installs without triton there, so no `torch.compile`. The repo's `.python-version` sets 3.14 for
+  development; without it uv took the newest managed Python installed. 3.12 stays supported.
+- Dependencies are what `wsi_toolbox/` imports, plus `einops-exts` (TITAN's remote code), `openslide-bin` (the
+  library openslide-python loads) and `torchvision` (timm needs it; listed so uv takes it from the cu130 index with
+  torch). `python-igraph` -> `igraph` (the old name is an empty package that depends on `igraph`). Now direct:
+  `huggingface-hub`, `pydantic`, `safetensors`, `tqdm` (imported, but came only through timm / transformers /
+  pydantic-autocli).
+- Lower bounds raised to versions that work (found with `uv lock --resolution lowest-direct` + the tests):
+  `pydantic-autocli>=0.3.0` (0.2.x: `-h` of `--height` clashes with argparse's help and `wt` does not start),
+  `tifffile>=2025.5.21` and `zarr>=3.0.7` (older pairs: `TypeError: Unsupported type for store_like:
+  'ZarrTiffStore'`), `streamlit-aggrid>=1.0.0` (the app reads `selected_rows` as a DataFrame). At all the lower bounds
+  (torch 2.5.1, timm 0.9.16, transformers 4.40.0, numpy 2.0.0, ...) the tests pass and real tile presets load.
+- Lock: typer-slim 0.21.1 -> 0.24.0. Up to 0.21 it shipped its own copy of `typer/`, the same files as typer
+  (transformers needs typer, huggingface-hub 1.3 typer-slim), and `uv sync` warned about the overlap; since 0.22 it is
+  an empty package that depends on typer.
+
+### Removed
+
+- Dependencies nothing imports: `joblib`, `networkx` (unused since the kNN graph is built with numpy; both still come
+  with scikit-learn / torch), `openpyxl`, `pyqt6`, `streamlit-antd-components`, `taskipy` (dev group only). Without
+  PyQt6 matplotlib picks TkAgg for `--show` (uv's managed CPython ships Tk); pyqt6-qt6 (~100 MB) is no longer
+  installed.
+- The extras `compile` (flash-attn) and `build`, the `gigapath` dependency group (prov-gigapath, flash-attn,
+  fairscale) and their uv settings: nothing has used them since the slide-level Prov-GigaPath code went in 2025-11.
+  `uv sync --all-groups` / `--all-extras` no longer builds flash-attn. The `build` group (build, twine) too:
+  `deploy.sh` uses `uv build` / `uvx twine`.
 
 ### Fixed
 
+- TITAN (the default slide preset) loads in a fresh environment: its remote code imports `einops_exts`, which was not
+  a dependency (`ModuleNotFoundError: No module named 'einops_exts'`). `einops-exts` is now one.
 - `leiden_cluster` builds an unweighted kNN graph. The edge weights were meant to fall with distance, but each edge's
   distance was divided by itself (`exp(-d / d.mean())` on a scalar), so every weight was `exp(-1)` and the graph was
   effectively unweighted. Same clusters as before: identical partitions to the old code for the same seed (UNI2

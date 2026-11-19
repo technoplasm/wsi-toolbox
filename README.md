@@ -15,6 +15,10 @@ pip install wsi-toolbox
 pip install git+https://github.com/technoplasm/wsi-toolbox.git
 ```
 
+Tested on Python 3.12, 3.13 and 3.14 (Linux x86_64 and aarch64). `requires-python` is `>=3.12` with no upper
+bound; 3.15 is not tested yet (h5py, numcodecs and PyYAML have no wheels for it). In this repo `uv sync` uses
+Python 3.14 (`.python-version`) and the locked versions.
+
 ## Presets
 
 ### Tile presets (per-patch feature extractors)
