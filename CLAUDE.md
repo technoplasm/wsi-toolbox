@@ -13,6 +13,12 @@ WSIデータを様々な形で活用する
 - `cli` は下記のように `pydantic-autocli` を使ってサブコマンドベースのコマンドラインツールとしている
 - **importは必ずファイル先頭に書く**。関数内でのimportは禁止
 - 未使用の変数・importは削除する
+- **Python は `requires-python = ">=3.12"`、上限を付けない**（pip は上限があると新しい Python で古い版へ遡る。
+  上限が無ければ依存の wheel が無い版ではインストールが失敗するだけで済む。uv はそもそも上限を無視する）。
+  開発は `.python-version` の 3.14（無いと uv は入っている最新の Python を選ぶ）。下限の 3.12 は vision
+  （`technoplasm/vision` の compute が wt を PyPI から入れている）のために落とさない。テストした版は README に書く
+- 依存は `wsi_toolbox/` が import するものだけを直接依存にする（例外は `pyproject.toml` のコメント参照）。
+  依存を変えたら lock ありの `uv sync` だけでなく、wheel を空の venv に `uv pip install` する経路（PyPI 利用者）も確かめる
 - **進捗・プリセット・デバイスはコマンドの引数で渡す**（`on_progress=` / `should_cancel=` は `__call__`、
   `preset=` / `device=` はコンストラクタ）。`wt.defaults` を書き換えるコードを新たに書かない
   （`set_default_*` は notebook 利用者のためのもの。ライブラリ内・cli・app・watcher・外部サービスは
@@ -47,7 +53,7 @@ uv run ruff format wsi_toolbox/
 - PyPI への公開は `./deploy.sh` を使う（clean → build → `twine check` → `y/N` 確認 → upload）
   - `~/.pypirc` の `[pypi]` トークンで認証
   - **PyPI への upload は Claude が勝手に実行しない。ken 本人が実行する**（`! ./deploy.sh`）
-- slide-level encoding (TITAN 等) は uv-only 機能で PyPI パッケージには含めない（`pyproject.toml` 参照）
+- slide-level encoding（TITAN / PRISM）も PyPI パッケージに入っている（TITAN は HF の remote code を使い、`einops-exts` はその依存）
 
 ### AutoCLI の使い方
 
