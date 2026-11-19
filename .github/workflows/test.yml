@@ -1,0 +1,33 @@
+name: Test
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main, develop ]
+
+jobs:
+  pytest:
+    # The versions README calls tested: Python 3.12-3.14 on Linux x86_64 and aarch64 (DGX Spark).
+    # The tests need no GPU and download no model (tests/conftest.py).
+    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, ubuntu-24.04-arm ]
+        python-version: [ "3.12", "3.13", "3.14" ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies (from the lock, in a fresh environment)
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run task test

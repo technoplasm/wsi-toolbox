@@ -36,6 +36,9 @@ uv run task test    # pytest。GPU 不要・モデルのダウンロード不要
 
 - fixture は `tests/conftest.py`（`tiny_preset` / `png_path` / `collect`）。GPU や HF のモデルに依存する
   テストを追加しない
+- CI（`.github/workflows/test.yml`）が x86_64 / aarch64 × Python 3.12 / 3.13 / 3.14 で、まっさらな環境に
+  `uv sync --locked` してから同じテストを回す。サポートする版（`requires-python`・README）を変えたら matrix も合わせる。
+  lint（`lint.yml`）は 3.14
 
 ### Lint
 
