@@ -23,9 +23,10 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
-# What wsi_toolbox/ imports, and nothing else except openslide-bin and torchvision (see their comments).
+# What wsi_toolbox/ imports, and nothing else except einops-exts, openslide-bin and torchvision (see their comments).
 dependencies = [
     "einops>=0.8.1",
+    "einops-exts>=0.0.4",  # imported by TITAN's remote code (MahmoodLab/TITAN, trust_remote_code), not by wsi_toolbox/
     "h5py>=3.13.0",
     "huggingface-hub>=0.23.0",
     "igraph>=0.11.8",
