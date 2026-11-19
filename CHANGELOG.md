@@ -22,11 +22,13 @@
   numpy 2 wheels for cp312 on x86_64 and aarch64 (checked on DGX Spark); the lock moves numpy 1.26.4 -> 2.5.5, numba
   0.63.1 -> 0.68.1, llvmlite 0.46.0 -> 0.50.0. A fresh install from PyPI may now pick opencv-python-headless 5.x
   (4.12+ needs numpy 2); tests pass with 5.1.0.
-- `requires-python = ">=3.12"` (was `==3.12.*`). pip honours the upper bound, so on Python 3.13+ `pip install
-  wsi-toolbox` fell back to 0.3.0 (the last release without it, `numpy<2`); uv ignores it anyway. Tested on 3.12, 3.13
-  and 3.14, Linux x86_64 and aarch64 (DGX Spark), with the lock and with a plain install of the wheel from PyPI; every
-  dependency has wheels for them. 3.15 is untested: h5py, numcodecs and PyYAML have no cp315 wheels yet, and torch
-  2.14 (cu130) installs without triton there, so no `torch.compile`. 3.12 stays supported.
+- `requires-python = ">=3.12,<3.15"` (was `==3.12.*`). Tested on 3.12, 3.13 and 3.14, Linux x86_64 and aarch64
+  (DGX Spark), with the lock and with a plain install of the wheel from PyPI; every dependency has wheels for them.
+  3.15 is left out until it is tested: h5py, numcodecs and PyYAML have no cp315 wheels yet, and torch 2.14 (cu130)
+  installs without triton there, so no `torch.compile`. The upper bound also makes `uv sync` in this repo pick 3.14
+  when 3.15 is installed (uv honours the project's own bound when it picks the interpreter, though it ignores the
+  bounds of dependencies). pip honours it too: on a Python above the bound it falls back to the newest release that
+  allows that Python, which is 0.3.0 (`>=3.11`, `numpy<2`) unless 0.1.0-0.3.0 are yanked. 3.12 stays supported.
 - Dependencies are what `wsi_toolbox/` imports, plus `einops-exts` (TITAN's remote code), `openslide-bin` (the
   library openslide-python loads) and `torchvision` (timm needs it; listed so uv takes it from the cu130 index with
   torch). `python-igraph` -> `igraph` (the old name is an empty package that depends on `igraph`). Now direct:

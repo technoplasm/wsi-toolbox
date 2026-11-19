@@ -13,11 +13,12 @@ WSIデータを様々な形で活用する
 - `cli` は下記のように `pydantic-autocli` を使ってサブコマンドベースのコマンドラインツールとしている
 - **importは必ずファイル先頭に書く**。関数内でのimportは禁止
 - 未使用の変数・importは削除する
-- **Python は `requires-python = ">=3.12"`、上限を付けない**（pip は上限があると新しい Python で古い版へ遡る。
-  上限が無ければ依存の wheel が無い版ではインストールが失敗するだけで済む。uv はそもそも上限を無視する）。
-  `.python-version` は repo に入れない（uv は条件を満たす最新の Python を選ぶ。3.15 などを入れた機械では
-  `uv python pin 3.14` を手元だけで）。下限の 3.12 は vision
-  （`technoplasm/vision` の compute が wt を PyPI から入れている）のために落とさない。テストした版は README に書く
+- **Python は `requires-python = ">=3.12,<3.15"`**。上限は「テストして依存の wheel が揃っている最新版」の次にする
+  （3.15 は h5py などの wheel がまだ無い）。uv は依存の上限は無視するが、repo 自身の上限は守って Python を選ぶので、
+  3.15 が入った機械でも `uv sync` は 3.14 を使う。`.python-version` は repo に入れない。
+  新しい Python の wheel が揃ったら、lock あり / なしの両方でテストしてから上限を上げる（pip は上限外の Python だと
+  古い版へ遡るので、上げ遅れない）。下限の 3.12 は vision（`technoplasm/vision` の compute が wt を PyPI から
+  入れている）のために落とさない。テストした版は README に書く
 - 依存は `wsi_toolbox/` が import するものだけを直接依存にする（例外は `pyproject.toml` のコメント参照）。
   依存を変えたら lock ありの `uv sync` だけでなく、wheel を空の venv に `uv pip install` する経路（PyPI 利用者）も確かめる
 - **進捗・プリセット・デバイスはコマンドの引数で渡す**（`on_progress=` / `should_cancel=` は `__call__`、
