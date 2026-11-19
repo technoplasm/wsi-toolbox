@@ -1,7 +1,7 @@
 """
 Pyramid command: convert a WSI into a tiled pyramidal TIFF optimised for DZI serving.
 
-The output (512 px JPEG Q85 tiles, one page per 2x level down to one tile, BigTIFF) lets a
+The output (512 px JPEG Q85 tiles, one page per 2x level down to one tile) lets a
 256 px DZI tile be one contiguous read of one 512 px tile, so ``DziGenerator`` over it is much
 faster than over NDPI / SVS originals on slow storage. toolbox opens it with ``create_wsi_file``
 like any ``.tif`` (tifffile reader); openslide opens it as generic-tiff.
@@ -22,12 +22,26 @@ How it is built, streaming (memory stays at a few bands of rows, whatever the sl
   the lower levels' tiles are spooled to an unnamed temporary file next to the output, then written
   as pages 1..n
 
+Container: classic TIFF for slides below 2**31 pixels, BigTIFF from there on, unless ``bigtiff``
+says which (BIGTIFF_MIN_PIXELS has the reason). The pages are the same in both. A classic TIFF ends
+at 4 GB: a build that turns out larger is started over as BigTIFF.
+
+Metadata: the resolution tags (pixels per inch, from the slide's mpp) and the ImageDescription of
+page 0, a small JSON object with the provenance (``{"wsi_toolbox": {...}}``).
+
+``ome=True`` writes a file that is also an OME-TIFF: the ImageDescription is OME-XML instead of the
+JSON and the lower levels are written twice, as SubIFDs of page 0 (where Bio-Formats / QuPath look
+for the pyramid) and as the same top-level pages as before (where openslide and toolbox look).
+
 Everything runs in the calling process with libraries toolbox already loads (openslide, OpenCV,
 imagecodecs, tifffile). ``should_cancel`` is checked after every band.
 """
 
+import json
 import logging
+import math
 import os
+import re
 import struct
 import tempfile
 import time
@@ -35,7 +49,9 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from importlib.metadata import version
 from pathlib import Path
+from xml.sax.saxutils import quoteattr
 
 import cv2
 import imagecodecs
@@ -53,11 +69,19 @@ logger = logging.getLogger(__name__)
 # Defaults chosen by measurement (vision issue #47, _docs/14_pyramid_benchmark.md):
 # - tile 512: four 256 px DZI tiles per stored tile, one read each
 # - JPEG Q85 with 4:2:0 chroma: NDPI 187 MB -> 151-153 MB. Q90 and above keep full chroma (486 MB)
-# - BigTIFF: required above 4 GB; openslide and tifffile both read it
 DEFAULT_TILE_SIZE = 512
 DEFAULT_QUALITY = 85
 DEFAULT_CONCURRENCY = 4  # reader threads and JPEG encoder threads
 FULL_CHROMA_QUALITY = 90  # from this JPEG quality on, chroma is not subsampled
+
+# The container when ``bigtiff`` is not given: BigTIFF from this many pixels (width x height) on,
+# classic TIFF below. openslide, tifffile and toolbox read both alike; the threshold is QuPath's
+# (0.5.1). QuPath reads the levels of a page-per-level TIFF only through openslide, and prefers
+# Bio-Formats (which shows one level) for a BigTIFF unless that single level has 2**31 - 1 pixels
+# or more; a classic TIFF it gives to openslide at any size. Measured on a 36864 x 35840 slide:
+# BigTIFF -> Bio-Formats, 1 level; classic -> openslide, 8 levels.
+BIGTIFF_MIN_PIXELS = 2**31
+CLASSIC_TIFF_MAX_BYTES = 2**32  # a classic TIFF addresses its bytes with 32-bit offsets
 
 PHASE = "Building pyramid"
 
@@ -68,6 +92,10 @@ _HALVE_COLUMNS = 2048  # output columns per 2x2-mean task (cv2's own threads sta
 
 class PyramidError(RuntimeError):
     """The input cannot be opened or read, or the output cannot be written."""
+
+
+class _TooLargeForClassicTiff(Exception):
+    """The output being written as classic TIFF reaches CLASSIC_TIFF_MAX_BYTES."""
 
 
 # Alias for callers that catch VipsError
@@ -108,6 +136,11 @@ def read_pyramid_info(path: str | Path) -> PyramidInfo:
             levels=len(tif.pages),
             tile_size=int(base.tilewidth) if base.is_tiled else 0,
         )
+
+
+def auto_bigtiff(width: int, height: int) -> bool:
+    """The container for a slide of this size when ``bigtiff`` is not given: True for BigTIFF."""
+    return width * height >= BIGTIFF_MIN_PIXELS
 
 
 def pyramid_sizes(width: int, height: int, tile_size: int) -> list[tuple[int, int]]:
@@ -171,6 +204,9 @@ class _Level0:
             self.mpp_x = _float_or_zero(props.get(openslide.PROPERTY_NAME_MPP_X))
             self.mpp_y = _float_or_zero(props.get(openslide.PROPERTY_NAME_MPP_Y))
             bg = props.get(openslide.PROPERTY_NAME_BACKGROUND_COLOR) or "ffffff"
+            # only what the slide says: the objective power is never derived from the mpp
+            self.objective_power = _positive(_float_or_zero(props.get(openslide.PROPERTY_NAME_OBJECTIVE_POWER)))
+            self.vendor = props.get(openslide.PROPERTY_NAME_VENDOR) or None
         else:
             self.wsi = create_wsi_file(str(path))
             self.width, self.height = self.wsi.get_original_size()
@@ -180,6 +216,8 @@ class _Level0:
             except Exception:  # noqa: BLE001 - no resolution in the file
                 self.mpp_x = self.mpp_y = 0.0
             bg = "ffffff"
+            self.objective_power = None  # toolbox readers have no notion of magnification
+            self.vendor = None
         self.background = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.uint8)
 
     def _column_blocks(self) -> list["_Block"]:
@@ -259,6 +297,90 @@ def _float_or_zero(value: str | None) -> float:
         return float(value) if value else 0.0
     except ValueError:
         return 0.0
+
+
+def _positive(value: float) -> float | None:
+    """``value`` if it is a usable measurement (finite, above zero), else None."""
+    return value if math.isfinite(value) and value > 0 else None
+
+
+# --- ImageDescription -----------------------------------------------------------------------
+#
+# Readers pick the format of a TIFF from the ImageDescription of page 0, so its text is chosen with
+# them in mind. It must not start with "Aperio" (openslide would take the file as aperio, and so
+# would toolbox, which follows openslide's detection), and the JSON must contain neither "<OME " nor
+# "imagej" (QuPath hands such files to Bio-Formats). Both descriptions start with fixed text; a
+# source file name is spelled with escapes where it would spell one of the markers. tifffile wants
+# 7-bit ASCII, so everything else is escaped too.
+
+_OME_SCHEMA = "http://www.openmicroscopy.org/Schemas/OME/2016-06"
+_NOT_XML_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")  # not allowed in XML 1.0
+
+
+def _provenance_json(source: _Level0, name: str, tile_size: int, quality: int) -> str:
+    """ImageDescription of the default output: where the file comes from, as ASCII JSON.
+
+    Nested under one key because tifffile takes JSON that starts with ``{"shape":`` for its own
+    shaped metadata. ``objective_power`` and ``vendor`` are there only when openslide gave them.
+    """
+    info: dict = {
+        "version": version("wsi-toolbox"),
+        "source": name,
+        "mpp_x": _positive(source.mpp_x),
+        "mpp_y": _positive(source.mpp_y),
+        "tile_size": tile_size,
+        "quality": quality,
+    }
+    if source.objective_power is not None:
+        info["objective_power"] = source.objective_power
+    if source.vendor is not None:
+        info["vendor"] = source.vendor
+    text = json.dumps({"wsi_toolbox": info})  # ensure_ascii: non-ASCII becomes \uXXXX
+    # the same JSON values, spelled without the markers
+    return text.replace("<", "\\u003c").replace("imagej", "image\\u006a")
+
+
+def _ome_xml(source: _Level0, name: str) -> str:
+    """ImageDescription of the ``ome=True`` output: ASCII OME-XML for the image in IFD 0.
+
+    Bio-Formats takes the file as OME-TIFF only with a UUID on the root element. ``TiffData`` points
+    at IFD 0 alone (its SubIFDs are the pyramid), so the top-level pages of the lower levels are
+    ignored. The Instrument / Objective carry the magnification and are left out when it is unknown.
+    """
+
+    def attr(value: str) -> str:  # quoted attribute value
+        quoted = quoteattr(_NOT_XML_CHARS.sub("\ufffd", value))
+        return quoted.replace("imagej", "image&#106;")  # QuPath ranks Bio-Formats lower on "imagej"
+
+    instrument = instrument_ref = ""
+    if source.objective_power is not None:
+        instrument = (
+            '<Instrument ID="Instrument:0">'
+            f'<Objective ID="Objective:0" NominalMagnification="{source.objective_power!r}"/>'
+            "</Instrument>"
+        )
+        instrument_ref = '<InstrumentRef ID="Instrument:0"/><ObjectiveSettings ID="Objective:0"/>'
+    physical = "".join(
+        f' PhysicalSize{axis}="{mpp!r}"'  # micrometres, the schema's default unit
+        for axis, mpp in (("X", _positive(source.mpp_x)), ("Y", _positive(source.mpp_y)))
+        if mpp is not None
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<OME xmlns="{_OME_SCHEMA}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        f' xsi:schemaLocation="{_OME_SCHEMA} {_OME_SCHEMA}/ome.xsd"'
+        f' UUID="urn:uuid:{uuid.uuid4()}" Creator={attr("wsi-toolbox " + version("wsi-toolbox"))}>'
+        f"{instrument}"
+        f'<Image ID="Image:0" Name={attr(name)}>'
+        f"{instrument_ref}"
+        '<Pixels ID="Pixels:0" DimensionOrder="XYCZT" Type="uint8"'
+        f' SizeX="{source.width}" SizeY="{source.height}" SizeC="3" SizeZ="1" SizeT="1"'
+        f' Interleaved="true"{physical}>'
+        '<Channel ID="Channel:0:0" SamplesPerPixel="3"><LightPath/></Channel>'
+        '<TiffData IFD="0" PlaneCount="1"/>'
+        "</Pixels></Image></OME>"
+    )
+    return xml.encode("ascii", "xmlcharrefreplace").decode("ascii")
 
 
 # --- JPEG tiles -----------------------------------------------------------------------------
@@ -379,8 +501,11 @@ class PyramidCommand:
     Convert a WSI to a tiled pyramidal TIFF (JPEG tiles, every 2x level).
 
     Usage:
-        cmd = PyramidCommand()                            # tile 512, JPEG Q85, BigTIFF
+        cmd = PyramidCommand()                            # tile 512, JPEG Q85
         result = cmd("slide.ndpi", "slide.pyramid.tif")
+
+        cmd = PyramidCommand(ome=True)                    # also an OME-TIFF (QuPath / Bio-Formats)
+        result = cmd("slide.ndpi", "slide.ome.tif")
 
     The output is written to a temporary file next to ``output_path`` and moved into place
     with ``os.replace``: an interrupted or failed run never leaves a partial ``output_path``
@@ -392,20 +517,29 @@ class PyramidCommand:
         self,
         tile_size: int = DEFAULT_TILE_SIZE,
         quality: int = DEFAULT_QUALITY,
-        bigtiff: bool = True,
+        bigtiff: bool | None = None,
         concurrency: int | None = DEFAULT_CONCURRENCY,
+        ome: bool = False,
     ):
         """
         Args:
             tile_size: Tile width / height in pixels (a multiple of 16).
             quality: JPEG quality (1-100). Chroma is subsampled 4:2:0 below 90.
-            bigtiff: Write BigTIFF (needed for outputs above 4 GB).
+            bigtiff: True writes BigTIFF, False classic TIFF. None (default) picks by the size of
+                the slide (``auto_bigtiff``): classic TIFF below 2**31 pixels, BigTIFF from there
+                on. A classic TIFF cannot exceed 4 GB: with None the build is then started over as
+                BigTIFF, with False it fails (``PyramidError``).
             concurrency: Reader threads and JPEG encoder threads (None -> 4).
+            ome: Also make the output an OME-TIFF, so that Bio-Formats (QuPath) reads every level,
+                the mpp and the objective magnification. openslide and toolbox read the file as
+                before; it is about a third larger (the lower levels are in it twice).
+                Name the output ``*.ome.tif`` so that QuPath prefers Bio-Formats for it.
         """
         self.tile_size = tile_size
         self.quality = quality
         self.bigtiff = bigtiff
         self.concurrency = concurrency
+        self.ome = ome
 
     def __call__(
         self,
@@ -429,8 +563,9 @@ class PyramidCommand:
                 temporary file and raises ``Cancelled``.
 
         Raises:
-            PyramidError: the input cannot be opened or read, or writing failed (the temporary
-                file is removed).
+            PyramidError: the input cannot be opened or read, writing failed, or the output does
+                not fit in the classic TIFF asked for with ``bigtiff=False`` (the temporary file
+                is removed).
         """
         reporter = make_reporter(on_progress, should_cancel)
         with reporter:
@@ -440,7 +575,8 @@ class PyramidCommand:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         _remove_stale_tmp(output_path)
         tmp = tmp_path_for(output_path)
-        logger.info(f"pyramid: {wsi_path.name} -> {output_path.name} (tile={self.tile_size} Q={self.quality})")
+        layout = " ome" if self.ome else ""
+        logger.info(f"pyramid: {wsi_path.name} -> {output_path.name} (tile={self.tile_size} Q={self.quality}{layout})")
 
         reporter.phase(PHASE, total=100)
         t0 = time.monotonic()
@@ -453,8 +589,22 @@ class PyramidCommand:
                 source = _Level0(wsi_path, read_pool, workers)
             except Exception as e:
                 raise PyramidError(f"cannot open {wsi_path}: {type(e).__name__}: {e}") from e
+            bigtiff = auto_bigtiff(source.width, source.height) if self.bigtiff is None else self.bigtiff
             try:
-                self._write(source, tmp, reporter, encode_pool, band_pool)
+                try:
+                    self._write(source, wsi_path.name, tmp, bigtiff, reporter, encode_pool, band_pool)
+                except _TooLargeForClassicTiff as e:
+                    if self.bigtiff is not None:
+                        raise PyramidError(
+                            f"{output_path.name} does not fit in a classic TIFF (4 GB): "
+                            "leave bigtiff unset or pass bigtiff=True"
+                        ) from e
+                    # classic was our choice: build again as BigTIFF (level 0 is read a second time)
+                    logger.warning(f"pyramid: {output_path.name} exceeds 4 GB, starting over as BigTIFF")
+                    tmp.unlink(missing_ok=True)
+                    bigtiff = True
+                    reporter.phase(PHASE, total=100)
+                    self._write(source, wsi_path.name, tmp, bigtiff, reporter, encode_pool, band_pool)
             finally:
                 band_pool.shutdown(wait=True, cancel_futures=True)
                 source.close()
@@ -475,13 +625,16 @@ class PyramidCommand:
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
-        logger.info(f"pyramid: {output_path.name} {info.bytes} bytes, {info.levels} levels, {elapsed:.1f}s")
+        container = "BigTIFF" if bigtiff else "TIFF"
+        logger.info(f"pyramid: {output_path.name} {container} {info.bytes} bytes, {info.levels} levels, {elapsed:.1f}s")
         return PyramidResult(path=str(output_path), elapsed=round(elapsed, 3), **info.model_dump())
 
     def _write(
         self,
         source: _Level0,
+        name: str,
         tmp: Path,
+        bigtiff: bool,
         reporter: Reporter,
         encode_pool: ThreadPoolExecutor,
         band_pool: ThreadPoolExecutor,
@@ -533,13 +686,22 @@ class PyramidCommand:
             ys = list(range(0, source.height, t))
             ahead = deque(start(y) for y in ys[: _READ_AHEAD + 1])
             done = 0
+            written = 0  # bytes of page 0's tiles
             for i in range(len(ys)):
                 band = ahead.popleft().result()
                 if i + _READ_AHEAD + 1 < len(ys):
                     ahead.append(start(ys[i + _READ_AHEAD + 1]))
                 levels[0].push(band, final=i == len(ys) - 1)
-                while page0:
-                    yield page0.popleft().result()
+                tiles = [f.result() for f in page0]
+                page0.clear()
+                written += sum(map(len, tiles))
+                # With the last band every tile of every level is encoded, so this is the size of
+                # the whole file (before that, of what there is of it). A classic TIFF that will
+                # not fit is given up here, before the tiles that would overflow it are written.
+                # (Checked before the yield: tifffile stops iterating at the last tile.)
+                if not bigtiff and overhead + written + passes * spool.tell() >= CLASSIC_TIFF_MAX_BYTES:
+                    raise _TooLargeForClassicTiff
+                yield from tiles
                 percent = min(99, (i + 1) * 100 // len(ys))
                 if percent > done:
                     reporter.advance(percent - done)
@@ -566,8 +728,30 @@ class PyramidCommand:
             options["resolution"] = tuple((round(25400.0 / mpp * 256), 256) for mpp in (source.mpp_x, source.mpp_y))
             options["resolutionunit"] = "INCH"
 
-        with spool, tifffile.TiffWriter(tmp, bigtiff=self.bigtiff) as tw:
-            tw.write(page0_tiles(), shape=(source.height, source.width, 3), **options)
-            for i in range(1, len(sizes)):
-                w, h = sizes[i]
-                tw.write(spooled_tiles(i), shape=(h, w, 3), subfiletype=1, **options)
+        # page 0 alone carries the description
+        first = dict(options)
+        if self.ome:
+            first["description"] = _ome_xml(source, name)
+            if len(sizes) > 1:
+                first["subifds"] = len(sizes) - 1
+        else:
+            first["description"] = _provenance_json(source, name, t, self.quality)
+        # ome: the lower levels go in twice. tifffile makes the writes that follow page 0 its
+        # SubIFDs (as many as announced), the ones after that top-level pages again.
+        passes = 2 if "subifds" in first else 1
+        # What a classic TIFF holds besides the tiles, generously: per tile an offset and a byte
+        # count (4 bytes each), per page the IFD, its tag values and the JPEGTables.
+        tiles = [-(-w // t) * -(-h // t) for w, h in sizes]
+        pages = 1 + passes * (len(sizes) - 1)
+        overhead = (
+            8 * (tiles[0] + passes * sum(tiles[1:])) + pages * (1024 + len(encode.tables)) + len(first["description"])
+        )
+
+        with spool, tifffile.TiffWriter(tmp, bigtiff=bigtiff) as tw:
+            tw.write(page0_tiles(), shape=(source.height, source.width, 3), **first)
+            for _ in range(passes):
+                for i in range(1, len(sizes)):
+                    w, h = sizes[i]
+                    tw.write(spooled_tiles(i), shape=(h, w, 3), subfiletype=1, **options)
+        if not bigtiff and tmp.stat().st_size >= CLASSIC_TIFF_MAX_BYTES:  # the estimate was short
+            raise _TooLargeForClassicTiff

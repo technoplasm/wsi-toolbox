@@ -1,7 +1,9 @@
 """PyramidCommand (streamed pyramid TIFF writer) and DZI tiles from its output vs the original."""
 
+import json
 import os
 import threading
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,7 @@ from wsi_toolbox.commands.pyramid import (
     PyramidCommand,
     PyramidError,
     VipsError,
+    auto_bigtiff,
     pyramid_sizes,
     read_pyramid_info,
     tmp_files_for,
@@ -24,7 +27,7 @@ from wsi_toolbox.commands.pyramid import (
 from wsi_toolbox.dzi import DziGenerator
 from wsi_toolbox.wsi_files import PyramidalTiffFile, create_wsi_file
 
-from .conftest import _smooth_rgb
+from .conftest import _smooth_rgb, write_pyramid_tiff
 
 
 def test_level_sizes_halve_with_floor_until_one_tile():
@@ -35,11 +38,12 @@ def test_level_sizes_halve_with_floor_until_one_tile():
 
 
 def test_default_output_matches_serving_settings(tmp_path, pyramid_tiff):
-    """512 px JPEG tiles (Q85, 4:2:0, shared JPEGTables), BigTIFF, reduced-resolution subfiles."""
+    """512 px JPEG tiles (Q85, 4:2:0, shared JPEGTables), reduced-resolution subfiles, in a classic
+    TIFF (a slide below 2**31 pixels)."""
     dst = tmp_path / "pyramid.tif"
     PyramidCommand()(pyramid_tiff, dst, on_progress=None)
     with tifffile.TiffFile(dst) as tif:
-        assert tif.is_bigtiff
+        assert not tif.is_bigtiff
         assert [p.shape[:2] for p in tif.pages] == [(700, 1000), (350, 500)]
         for i, page in enumerate(tif.pages):
             assert (page.tilewidth, page.tilelength) == (512, 512)
@@ -113,6 +117,241 @@ def test_openslide_reads_the_output_like_tifffile(tmp_path, pyramid_tiff):
             got = np.asarray(slide.read_region((0, 0), level, expected.shape[1::-1]))[..., :3]
             assert np.abs(got.astype(np.int16) - expected.astype(np.int16)).max() <= 2
     slide.close()
+
+
+def _description(path) -> str:
+    with tifffile.TiffFile(path) as tif:
+        return tif.pages[0].description
+
+
+def _native_sizes(path) -> list[tuple[int, int]]:
+    """Level sizes as toolbox's own reader sees the file."""
+    wsi = create_wsi_file(str(path))
+    assert isinstance(wsi, PyramidalTiffFile)
+    return [(level.width, level.height) for level in wsi._get_native_levels()]
+
+
+def _openslide_sizes(path) -> list[tuple[int, int]]:
+    assert openslide.OpenSlide.detect_format(str(path)) == "generic-tiff"
+    slide = openslide.OpenSlide(str(path))
+    try:
+        return list(slide.level_dimensions)
+    finally:
+        slide.close()
+
+
+def test_default_description_is_provenance_json(tmp_path, pyramid_tiff):
+    """Page 0 says where the file comes from; openslide and toolbox still read every level."""
+    dst = tmp_path / "out.pyramid.tif"
+    PyramidCommand(tile_size=256)(pyramid_tiff, dst, on_progress=None)
+    sizes = pyramid_sizes(1000, 700, 256)
+    assert len(sizes) == 3
+
+    with tifffile.TiffFile(dst) as tif:
+        assert not tif.is_ome and not tif.is_shaped and not tif.is_imagej and not tif.is_svs
+        assert [p.shape[1::-1] for p in tif.pages] == sizes
+        assert all("ImageDescription" not in p.tags for p in tif.pages[1:])
+        assert all(not p.subifds for p in tif.pages)
+        text = tif.pages[0].description
+    assert text.isascii()
+    doc = json.loads(text)
+    assert list(doc) == ["wsi_toolbox"]  # one top-level key: not tifffile's {"shape": ...}
+    info = doc["wsi_toolbox"]
+    # the source is a generic TIFF: openslide names the vendor, there is no objective power
+    assert set(info) == {"version", "source", "mpp_x", "mpp_y", "tile_size", "quality", "vendor"}
+    assert info["version"] == wt.__version__
+    assert info["source"] == "pyramid.tif"
+    assert info["mpp_x"] == pytest.approx(0.5) and info["mpp_y"] == pytest.approx(0.5)
+    assert (info["tile_size"], info["quality"], info["vendor"]) == (256, 85, "generic-tiff")
+
+    assert _openslide_sizes(dst) == sizes
+    assert _native_sizes(dst) == sizes
+
+
+def test_ome_output_reads_like_the_default_one(tmp_path, pyramid_tiff):
+    """``ome=True``: OME-XML + the lower levels as SubIFDs of page 0, and the same top-level pages
+    (same tiles) as the default output, so openslide and toolbox see no difference."""
+    plain, ome = tmp_path / "plain.pyramid.tif", tmp_path / "out.ome.tif"
+    PyramidCommand(tile_size=256)(pyramid_tiff, plain, on_progress=None)
+    result = PyramidCommand(tile_size=256, ome=True)(pyramid_tiff, ome, on_progress=None)
+    sizes = pyramid_sizes(1000, 700, 256)
+    assert result.levels == len(sizes) == 3
+    assert not tmp_files_for(ome)
+
+    # b: the top-level pages as a plain TIFF reader sees them; c: the OME series
+    with tifffile.TiffFile(plain) as a, tifffile.TiffFile(ome, is_ome=False) as b, tifffile.TiffFile(ome) as c:
+        assert c.is_ome and not c.is_bigtiff and not a.is_ome
+        assert len(b.pages) == len(a.pages) == len(sizes)
+        levels = c.series[0].levels
+        assert len(c.series) == 1 and len(levels) == len(c.pages) == len(sizes)
+        # the series' lower levels are the SubIFDs of page 0, not the top-level pages
+        assert len(b.pages[0].subifds) == len(sizes) - 1
+        assert [level.pages[0].offset for level in levels[1:]] == list(b.pages[0].subifds)
+        assert all(not p.subifds for p in b.pages[1:])
+        assert all("ImageDescription" not in p.tags for p in b.pages[1:])
+        for pa, pb, level in zip(a.pages, b.pages, levels, strict=True):
+            expected = pa.asarray()
+            assert np.array_equal(pb.asarray(), expected)
+            assert np.array_equal(level.asarray(), expected)
+            sub = level.pages[0]
+            assert (sub.tilewidth, sub.subfiletype, sub.compression) == (pb.tilewidth, pb.subfiletype, pb.compression)
+            assert pb.tags["XResolution"].value == pa.tags["XResolution"].value
+    # twice the lower levels: a quarter to a third more for a full pyramid, never double
+    assert plain.stat().st_size < ome.stat().st_size < 2 * plain.stat().st_size
+
+    assert _openslide_sizes(ome) == _openslide_sizes(plain) == sizes
+    assert _native_sizes(ome) == _native_sizes(plain) == sizes
+    # toolbox's reader and DZI serving: the same tiles
+    dzi_a, dzi_b = DziGenerator(create_wsi_file(str(plain))), DziGenerator(create_wsi_file(str(ome)))
+    assert dzi_b.xml() == dzi_a.xml()
+    for (la, ca, ra, ta), (lb, cb, rb, tb) in zip(dzi_a.iter_tiles(), dzi_b.iter_tiles(), strict=True):
+        assert (la, ca, ra) == (lb, cb, rb)
+        assert np.array_equal(ta, tb), (la, ca, ra)
+    a, b = openslide.OpenSlide(str(plain)), openslide.OpenSlide(str(ome))
+    for level, size in enumerate(sizes):
+        assert np.array_equal(
+            np.asarray(a.read_region((0, 0), level, size)), np.asarray(b.read_region((0, 0), level, size))
+        )
+    a.close()
+    b.close()
+
+
+def _is_bigtiff(path) -> bool:
+    with tifffile.TiffFile(path) as tif:
+        return tif.is_bigtiff
+
+
+def _pages(path) -> list[tuple]:
+    """Every top-level page and SubIFD: shape, tag values and the tiles' bytes. Leaves out what
+    depends on the container or the run: the offsets, and the description (the OME-XML has a UUID)."""
+    skip = {"TileOffsets", "SubIFDs", "ImageDescription"}
+    out = []
+    with tifffile.TiffFile(path, is_ome=False) as tif:
+        fh = tif.filehandle
+        for top in tif.pages:
+            for page in [top, *(top.pages or [])]:
+                tags = {tag.name: tag.value for tag in page.tags if tag.name not in skip}
+                tiles = []
+                for offset, count in zip(page.dataoffsets, page.databytecounts, strict=True):
+                    fh.seek(offset)
+                    tiles.append(fh.read(count))
+                out.append((page.shape, tags, tiles))
+    return out
+
+
+def test_auto_bigtiff_is_from_2_to_the_31_pixels_on():
+    assert pyramid_mod.BIGTIFF_MIN_PIXELS == 2**31
+    assert not auto_bigtiff(1000, 700)
+    assert not auto_bigtiff(36864, 35840)
+    assert not auto_bigtiff(46340, 46340)  # 2**31 - 88048
+    assert auto_bigtiff(46341, 46341)
+    assert auto_bigtiff(65536, 32768) and not auto_bigtiff(65536, 32767)
+    assert auto_bigtiff(108000, 63912)
+
+
+@pytest.mark.parametrize("ome", [False, True])
+def test_container_follows_the_slide_size_unless_given(tmp_path, pyramid_tiff, monkeypatch, ome):
+    """Classic TIFF below the threshold, BigTIFF from it on; ``bigtiff=`` overrides. The pages
+    are the same in both, and openslide and toolbox read both alike."""
+    auto, classic, big = tmp_path / "auto.tif", tmp_path / "classic.tif", tmp_path / "big.tif"
+    PyramidCommand(tile_size=256, ome=ome)(pyramid_tiff, auto, on_progress=None)
+    PyramidCommand(tile_size=256, ome=ome, bigtiff=False)(pyramid_tiff, classic, on_progress=None)
+    PyramidCommand(tile_size=256, ome=ome, bigtiff=True)(pyramid_tiff, big, on_progress=None)
+    assert [_is_bigtiff(p) for p in (auto, classic, big)] == [False, False, True]
+    assert len(_pages(big)) == (5 if ome else 3)  # with ome the two lower levels are SubIFDs too
+    assert _pages(auto) == _pages(classic) == _pages(big)
+    if not ome:
+        assert _description(auto) == _description(big)
+    assert auto.stat().st_size == classic.stat().st_size <= big.stat().st_size
+
+    sizes = pyramid_sizes(1000, 700, 256)
+    assert _openslide_sizes(auto) == _openslide_sizes(big) == sizes
+    assert _native_sizes(auto) == _native_sizes(big) == sizes
+    # toolbox's reader and DZI serving: the same tiles from both containers
+    dzi_a, dzi_b = DziGenerator(create_wsi_file(str(auto))), DziGenerator(create_wsi_file(str(big)))
+    assert dzi_b.xml() == dzi_a.xml()
+    for (la, ca, ra, ta), (lb, cb, rb, tb) in zip(dzi_a.iter_tiles(), dzi_b.iter_tiles(), strict=True):
+        assert (la, ca, ra) == (lb, cb, rb)
+        assert np.array_equal(ta, tb), (la, ca, ra)
+    a, b = openslide.OpenSlide(str(auto)), openslide.OpenSlide(str(big))
+    for level, size in enumerate(sizes):
+        assert np.array_equal(
+            np.asarray(a.read_region((0, 0), level, size)), np.asarray(b.read_region((0, 0), level, size))
+        )
+    a.close()
+    b.close()
+    with tifffile.TiffFile(auto) as tif:
+        assert tif.is_ome == ome and len(tif.series[0].levels) == 3
+
+    # the same slide counted as a large one
+    monkeypatch.setattr(pyramid_mod, "BIGTIFF_MIN_PIXELS", 1000 * 700)
+    PyramidCommand(tile_size=256, ome=ome)(pyramid_tiff, auto, on_progress=None)
+    assert _is_bigtiff(auto) and _pages(auto) == _pages(big)
+    PyramidCommand(tile_size=256, ome=ome, bigtiff=False)(pyramid_tiff, classic, on_progress=None)
+    assert not _is_bigtiff(classic)
+    monkeypatch.setattr(pyramid_mod, "BIGTIFF_MIN_PIXELS", 1000 * 700 + 1)
+    PyramidCommand(tile_size=256, ome=ome)(pyramid_tiff, auto, on_progress=None)
+    assert not _is_bigtiff(auto)
+
+
+@pytest.mark.parametrize("ome", [False, True])
+def test_output_too_large_for_a_classic_tiff(tmp_path, pyramid_tiff, monkeypatch, collect, ome):
+    """A classic TIFF ends at 4 GB (here: at the size the file would have). Chosen automatically it
+    is given up and the pyramid built again as BigTIFF; asked for with ``bigtiff=False`` it is an
+    error. Neither leaves a temporary file."""
+    classic, big = tmp_path / "classic.tif", tmp_path / "big.tif"
+    PyramidCommand(tile_size=128, ome=ome, bigtiff=False)(pyramid_tiff, classic, on_progress=None)
+    PyramidCommand(tile_size=128, ome=ome, bigtiff=True)(pyramid_tiff, big, on_progress=None)
+    monkeypatch.setattr(pyramid_mod, "CLASSIC_TIFF_MAX_BYTES", classic.stat().st_size)
+
+    dst = tmp_path / "derived" / "out.tif"
+    result = PyramidCommand(tile_size=128, ome=ome)(pyramid_tiff, dst, on_progress=collect)
+    assert _is_bigtiff(dst) and _pages(dst) == _pages(big)
+    assert result.bytes == dst.stat().st_size and result.levels == 4
+    assert [p.name for p in dst.parent.iterdir()] == ["out.tif"]
+    # the phase starts over for the second build
+    steps = [e.n for e in collect.events if not e.done]
+    assert collect.phases == ["Building pyramid"] and steps.count(0) == 2
+    assert collect.events[-1].done
+
+    with pytest.raises(PyramidError, match="classic TIFF"):
+        PyramidCommand(tile_size=128, ome=ome, bigtiff=False)(pyramid_tiff, dst, on_progress=None)
+    assert [p.name for p in dst.parent.iterdir()] == ["out.tif"]  # the earlier output, untouched
+    assert _is_bigtiff(dst)
+
+    # with room for it the file stays classic
+    monkeypatch.setattr(pyramid_mod, "CLASSIC_TIFF_MAX_BYTES", 2 * classic.stat().st_size)
+    PyramidCommand(tile_size=128, ome=ome)(pyramid_tiff, dst, on_progress=None)
+    assert not _is_bigtiff(dst) and _pages(dst) == _pages(classic)
+
+
+def test_ome_output_of_a_single_level(tmp_path):
+    """An image that fits in one tile has no lower levels: one page, no SubIFDs, still OME."""
+    src = write_pyramid_tiff(tmp_path / "small.tif", 300, 200, levels=1)
+    dst = tmp_path / "small.ome.tif"
+    result = PyramidCommand(ome=True)(src, dst, on_progress=None)
+    assert (result.width, result.height, result.levels) == (300, 200, 1)
+    with tifffile.TiffFile(dst) as tif:
+        assert tif.is_ome and len(tif.pages) == 1 and not tif.pages[0].subifds
+        assert len(tif.series[0].levels) == 1
+        assert tif.series[0].asarray().shape == (200, 300, 3)
+    assert _openslide_sizes(dst) == [(300, 200)]
+
+
+def test_description_of_an_input_openslide_does_not_open(tmp_path, png_path):
+    """``create_wsi_file`` path (PNG here, iSyntax in practice): no objective power, no vendor."""
+    assert openslide.OpenSlide.detect_format(png_path) is None
+    dst = tmp_path / "out.pyramid.tif"
+    PyramidCommand(tile_size=256)(png_path, dst, on_progress=None)
+    info = json.loads(_description(dst))["wsi_toolbox"]
+    assert set(info) == {"version", "source", "mpp_x", "mpp_y", "tile_size", "quality"}
+    assert info["source"] == Path(png_path).name
+
+    PyramidCommand(tile_size=256, ome=True)(png_path, dst, on_progress=None)
+    text = _description(dst)
+    assert "<Instrument" not in text and "<Image " in text
+    with tifffile.TiffFile(dst) as tif:
+        assert tif.is_ome and len(tif.series[0].levels) == len(tif.pages)
 
 
 def test_failure_leaves_no_output(tmp_path):
@@ -267,3 +506,66 @@ def test_cancel_while_reading_an_openslide_slide(tmp_path, fake_slide):
         PyramidCommand()(tmp_path / "slide.fake", dst, on_progress=None, should_cancel=should_cancel)
     assert not dst.exists() and not tmp_files_for(dst)
     assert fake_slide.closed
+
+
+# A source name that spells the markers readers sniff for ("imagej" / "<OME ": QuPath hands the
+# file to Bio-Formats), with non-ASCII and XML / JSON special characters.
+AWKWARD_NAME = "imagej<OME 標本 & \"x\" 'y'.fake"
+OME_NS = {"ome": "http://www.openmicroscopy.org/Schemas/OME/2016-06"}
+
+
+def test_description_json_objective_power_and_awkward_name(tmp_path, fake_slide):
+    dst = tmp_path / "pyramid.tif"
+    PyramidCommand(tile_size=256)(tmp_path / AWKWARD_NAME, dst, on_progress=None)
+    info = json.loads(_description(dst))["wsi_toolbox"]
+    # the slide gives neither an objective power nor a vendor: not guessed (0.25 um/px is not "40x")
+    assert "objective_power" not in info and "vendor" not in info
+    assert (info["mpp_x"], info["mpp_y"]) == (0.25, 0.25)
+
+    fake_slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER] = "40"
+    fake_slide.properties[openslide.PROPERTY_NAME_VENDOR] = "fake-vendor"
+    del fake_slide.properties[openslide.PROPERTY_NAME_MPP_X], fake_slide.properties[openslide.PROPERTY_NAME_MPP_Y]
+    PyramidCommand(tile_size=256)(tmp_path / AWKWARD_NAME, dst, on_progress=None)
+    text = _description(dst)
+    assert text.isascii() and text.startswith('{"wsi_toolbox"')
+    assert "imagej" not in text and "<OME " not in text
+    info = json.loads(text)["wsi_toolbox"]
+    assert info["source"] == AWKWARD_NAME
+    assert (info["objective_power"], info["vendor"]) == (40.0, "fake-vendor")
+    assert info["mpp_x"] is None and info["mpp_y"] is None  # unknown is null, not 0
+    with tifffile.TiffFile(dst) as tif:
+        assert not tif.is_ome and not tif.is_imagej and not tif.is_svs
+
+
+def test_ome_xml(tmp_path, fake_slide):
+    dst = tmp_path / "out.ome.tif"
+    fake_slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER] = "40"
+    PyramidCommand(tile_size=256, ome=True)(tmp_path / AWKWARD_NAME, dst, on_progress=None)
+    text = _description(dst)
+    assert text.isascii() and text.startswith("<?xml") and "imagej" not in text
+    root = ET.fromstring(text)
+    assert root.tag == "{%s}OME" % OME_NS["ome"]
+    assert root.get("UUID").startswith("urn:uuid:")  # Bio-Formats: no UUID, no OME-TIFF
+    assert root.get("Creator") == f"wsi-toolbox {wt.__version__}"
+    assert root.find("ome:Instrument/ome:Objective", OME_NS).get("NominalMagnification") == "40.0"
+    image = root.find("ome:Image", OME_NS)
+    assert image.get("Name") == AWKWARD_NAME
+    assert [child.tag.split("}")[1] for child in image] == ["InstrumentRef", "ObjectiveSettings", "Pixels"]
+    pixels = image.find("ome:Pixels", OME_NS)
+    assert (pixels.get("SizeX"), pixels.get("SizeY"), pixels.get("SizeC")) == ("2100", "1300", "3")
+    assert (pixels.get("PhysicalSizeX"), pixels.get("PhysicalSizeY")) == ("0.25", "0.25")
+    assert pixels.find("ome:TiffData", OME_NS).attrib == {"IFD": "0", "PlaneCount": "1"}
+    with tifffile.TiffFile(dst) as tif:
+        assert tif.is_ome and len(tif.series[0].levels) == len(tif.pages) == 5
+
+    # nothing known about the optics: no Instrument, no physical size
+    del fake_slide.properties[openslide.PROPERTY_NAME_OBJECTIVE_POWER]
+    del fake_slide.properties[openslide.PROPERTY_NAME_MPP_X], fake_slide.properties[openslide.PROPERTY_NAME_MPP_Y]
+    PyramidCommand(tile_size=256, ome=True)(tmp_path / AWKWARD_NAME, dst, on_progress=None)
+    root = ET.fromstring(_description(dst))
+    assert root.find("ome:Instrument", OME_NS) is None
+    image = root.find("ome:Image", OME_NS)
+    assert [child.tag.split("}")[1] for child in image] == ["Pixels"]
+    assert "PhysicalSizeX" not in image.find("ome:Pixels", OME_NS).attrib
+    with tifffile.TiffFile(dst) as tif:
+        assert tif.is_ome and len(tif.series[0].levels) == len(tif.pages)

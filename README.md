@@ -607,7 +607,7 @@ To serve DZI tiles on demand instead of writing them all, use `wsi_toolbox.dzi` 
 ### pyramid
 
 Convert a WSI into a tiled pyramidal TIFF optimised for DZI serving: every 2x level present, 512 px JPEG
-(Q85) tiles, BigTIFF. A 256 px DZI tile is then one contiguous read, which is much faster than reading an NDPI /
+(Q85) tiles. A 256 px DZI tile is then one contiguous read, which is much faster than reading an NDPI /
 SVS original, above all on HDD / NFS. Built in-process and streaming (openslide reads level 0 in bands, each level is
 the 2x2 mean of the one above, imagecodecs encodes the tiles in threads, tifffile writes the pages), so memory stays
 at a few bands of rows and no system library is needed.
@@ -619,10 +619,28 @@ at a few bands of rows and no system library is needed.
 ```bash
 wt pyramid -i sample.ndpi                          # -> sample.pyramid.tif
 wt pyramid -i sample.ndpi -o out.tif -q 90 -t 256  # JPEG quality / tile size
+wt pyramid -i sample.ndpi -o sample.ome.tif --ome  # also an OME-TIFF, for QuPath / Bio-Formats
 ```
 
 The output is written to `.<name>.tmp` and renamed into place, so a failed or cancelled run leaves nothing
 behind. `create_wsi_file("sample.pyramid.tif")` opens it like any pyramidal TIFF.
+
+Container: a classic TIFF for slides below 2^31 pixels (width x height), a BigTIFF from there on, with the same
+pages in both. The split is there for QuPath (0.5.1), which opens a BigTIFF of this layout below 2^31 pixels as a
+single level and a classic TIFF with every level. `PyramidCommand(bigtiff=True / False)` fixes the container. A
+classic TIFF ends at 4 GB: an output that turns out larger is built again as BigTIFF. Files written by 0.8.0 and
+earlier are BigTIFF at every size; convert them again to get the classic container.
+
+Metadata: the resolution tags carry the mpp, and the `ImageDescription` of the first page is a small JSON object
+with the provenance, e.g. `{"wsi_toolbox": {"version": "x.y.z", "source": "sample.ndpi", "mpp_x": 0.4527,
+"mpp_y": 0.4527, "tile_size": 512, "quality": 85, "objective_power": 20.0, "vendor": "hamamatsu"}}`.
+`objective_power` and `vendor` are there only when openslide reports them for the source.
+
+`--ome` (`PyramidCommand(ome=True)`) makes the same file an OME-TIFF as well, so that QuPath / Bio-Formats read
+every level and the objective magnification: the `ImageDescription` is OME-XML instead of the JSON and the lower
+levels are stored a second time as SubIFDs of the first page. openslide, toolbox and DZI serving read the file as
+before. It is about a third larger, which is why it is opt-in. Give the output a `.ome.tif` name, the extension
+QuPath goes by to prefer Bio-Formats.
 
 Benchmark against the originals (NDPI / SVS / TIFF / MIRAX on SSD / HDD / NFS) and how to rerun it on your
 slides: [`_docs/benchmark-pyramid-dzi.md`](_docs/benchmark-pyramid-dzi.md) (`scripts/bench_pyramid.py`).

@@ -112,11 +112,17 @@ class ToolsMixin:
         tile_size: int = param(512, l="--tile-size", s="-t", description="Tile size in pixels")
         quality: int = param(85, s="-q", description="JPEG quality (1-100)")
         concurrency: int = param(4, l="--concurrency", description="Reader threads and JPEG encoder threads")
+        ome: bool = param(
+            False,
+            l="--ome",
+            description="Also make the output an OME-TIFF so that Bio-Formats / QuPath read every level and the "
+            "magnification (about a third larger). Name the output *.ome.tif (-o) so that QuPath picks Bio-Formats",
+        )
 
     def run_pyramid(self, a: PyramidArgs):
         """Convert a WSI to a DZI-optimised tiled pyramid TIFF"""
         output_path = a.output_path or str(Path(a.input_wsi).with_suffix(".pyramid.tif"))
-        cmd = commands.PyramidCommand(tile_size=a.tile_size, quality=a.quality, concurrency=a.concurrency)
+        cmd = commands.PyramidCommand(tile_size=a.tile_size, quality=a.quality, concurrency=a.concurrency, ome=a.ome)
         result = cmd(a.input_wsi, output_path, on_progress=self.sink)
         print(f"wrote {result.path} ({result.bytes / 1e6:.1f} MB, {result.levels} levels, {result.elapsed:.1f}s)")
 

@@ -362,7 +362,7 @@ Convert a WSI to a DZI-optimised tiled pyramidal TIFF (in-process, streaming; op
 tifffile). **CLI:** `wt pyramid`.
 
 ```python
-wt.PyramidCommand(tile_size=512, quality=85, bigtiff=True, concurrency=4)   # concurrency: reader / encoder threads
+wt.PyramidCommand(tile_size=512, quality=85, bigtiff=None, concurrency=4, ome=False)   # concurrency: reader / encoder threads
 cmd(wsi_path, output_path, *, on_progress=UNSET, should_cancel=None) -> PyramidResult
 
 wt.read_pyramid_info(path) -> PyramidInfo      # tifffile; bytes / width / height / levels / tile_size
@@ -374,6 +374,22 @@ Output: JPEG tiles (4:2:0 below Q90, shared JPEGTables), one page per 2x level (
 resolution in pixels per inch from the slide's mpp. Written to `.<name>.tmp` then `os.replace`d. `should_cancel` is
 checked after every band of `tile_size` rows: the temp file is removed and `Cancelled` raised. `PyramidError` when
 the input cannot be opened or read.
+
+`bigtiff=None` picks the container by the slide's size: classic TIFF below 2^31 pixels (width x height), BigTIFF from
+there on (`wsi_toolbox.commands.pyramid.auto_bigtiff(width, height)`); `True` / `False` fix it. The pages are the same
+in both. A classic TIFF that would reach 4 GB is given up before it is written out: with `None` the pyramid is built
+again as BigTIFF (the phase starts over), with `False` `PyramidError` is raised; no temporary file stays behind.
+
+`ImageDescription` of page 0 (ASCII): the provenance as JSON under one key,
+`{"wsi_toolbox": {"version", "source", "mpp_x", "mpp_y", "tile_size", "quality"[, "objective_power"][, "vendor"]}}`.
+`source` is the input's file name, `mpp_*` are `null` when unknown, `objective_power` (`openslide.objective-power`)
+and `vendor` (`openslide.vendor`) are present only when openslide reports them; nothing is derived from the mpp.
+
+`ome=True` (CLI `--ome`): the output is also an OME-TIFF. Page 0's `ImageDescription` is OME-XML instead of the JSON
+(`PhysicalSizeX/Y` = mpp, `Objective NominalMagnification` = objective power when known, `TiffData IFD="0"`) and the
+lower levels are written twice: as SubIFDs of page 0 (Bio-Formats / QuPath read them as the pyramid) and as the same
+top-level pages as without `ome` (openslide and `PyramidalTiffFile` read those; `PyramidInfo.levels` still counts
+top-level pages). About a third larger. Name the output `*.ome.tif` so that QuPath prefers Bio-Formats.
 
 ## DZI serving
 

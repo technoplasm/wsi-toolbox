@@ -58,6 +58,13 @@ def test_subcommand_help_exits_zero(name):
     assert "--progress" in proc.stdout
 
 
+def test_pyramid_help_offers_ome():
+    proc = _run_cli("pyramid", "--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "--ome" in proc.stdout
+    assert ".ome.tif" in proc.stdout
+
+
 def test_progress_rejects_unknown_choice():
     proc = _run_cli("show", "--progress", "bogus", "--in", "x.h5")
     assert proc.returncode != 0

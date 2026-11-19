@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `PyramidCommand` writes the provenance into the `ImageDescription` of page 0, as ASCII JSON under one key:
+  `{"wsi_toolbox": {"version", "source", "mpp_x", "mpp_y", "tile_size", "quality"}}`, plus `objective_power` and
+  `vendor` when openslide reports them for the source (never derived from the mpp; absent for inputs read through
+  `create_wsi_file`, e.g. iSyntax). Until now the only metadata was the resolution tags. The pages, tiles and other
+  tags are the same, and openslide (generic-tiff) and `PyramidalTiffFile` read the file as before.
+- `PyramidCommand(ome=True)` / `wt pyramid --ome`: the output is also an OME-TIFF, so that Bio-Formats reads every
+  level, the mpp and the objective magnification (QuPath 0.5.1: all 8 levels and 20x). Page 0's `ImageDescription`
+  is OME-XML (instead of the JSON) and the lower levels are written twice, as SubIFDs of page 0 and as the same
+  top-level pages as before, so openslide, `PyramidalTiffFile` and DZI serving read it unchanged. About a third
+  larger (a 36864 x 35840 NDPI: 151.3 MB -> 198.5 MB), hence off by default. Name the output `*.ome.tif` for QuPath
+  to prefer Bio-Formats.
+
+### Changed
+
+- `PyramidCommand` writes a classic TIFF for slides below 2^31 pixels (width x height) and a BigTIFF only from there
+  on: `bigtiff` is now `None` (pick by size, `auto_bigtiff()`) instead of `True`; `bigtiff=True` / `False` still fix
+  the container, and the same rule holds with `ome=True`. The pages, tiles and tags are the same in both, the file
+  is not larger, and openslide, tifffile and toolbox read both alike. The reason is QuPath: it finds the levels of
+  this layout only through openslide, and with default settings 0.5.1 gives a BigTIFF below 2^31 pixels to
+  Bio-Formats, which opens it as a single level (the 36864 x 35840 pyramid.tif of 0.8.0 pinned a CPU and never came
+  up; as classic TIFF it opens with all 8 levels). BigTIFFs of 2^31 pixels or more already went to openslide. Files
+  written before this change stay BigTIFF until they are converted again.
+- A classic TIFF ends at 4 GB. A classic file that would overflow is given up before it is written out: when the
+  container was picked by size the pyramid is built again as BigTIFF (level 0 is read a second time, the progress
+  phase starts over), with `bigtiff=False` it raises `PyramidError`. Neither leaves a temporary file. Below 2^31
+  pixels it takes about 2 bytes per level-0 pixel to get there; Q85 output is around 0.11.
+
 ## 0.8.0 (2026-11-19)
 
 Needs numpy 2 and runs on Python 3.12-3.14: projects that pin `numpy<2` stay on 0.7.x until they drop the pin.
