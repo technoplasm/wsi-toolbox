@@ -23,19 +23,26 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+# What wsi_toolbox/ imports, and nothing else except openslide-bin and torchvision (see their comments).
 dependencies = [
+    "einops>=0.8.1",
     "h5py>=3.13.0",
+    "huggingface-hub>=0.23.0",
     "igraph>=0.11.8",
     "imagecodecs>=2024.12.30",
     "leidenalg>=0.10.2",
     "matplotlib>=3.9.4",
     "numpy>=2",
     "opencv-python-headless>=4.11.0.86",
+    "openslide-bin>=4.0.0.8",  # the OpenSlide library itself; openslide-python loads it
     "openslide-python>=1.4.1",
-    "openslide-bin>=4.0.0.8",
     "pandas>=2.2.3",
     "pillow>=11.0.0",
+    "pydantic>=2.10.6",
+    "pydantic-autocli>=0.2.0",
+    "pyisyntax>=0.1.7",
     "rich>=14.0.0",
+    "safetensors>=0.4.1",
     "scikit-learn>=1.6.1",
     "seaborn>=0.13.2",
     "streamlit>=1.43.2",
@@ -43,13 +50,12 @@ dependencies = [
     "tifffile>=2025.2.18",
     "timm>=0.9.16",
     "torch>=2.5.1",
+    # Not imported here (timm needs it), but listed so that [tool.uv.sources] takes it from the same cu130 index as torch.
     "torchvision>=0.20.1",
+    "tqdm>=4.66.0",
     "transformers>=4.40.0",
     "umap-learn>=0.5.7",
     "zarr>=3",
-    "pydantic-autocli>=0.2.0",
-    "einops>=0.8.1",
-    "pyisyntax>=0.1.7",
 ]
 
 [project.scripts]
