@@ -26,8 +26,7 @@
   wsi-toolbox` fell back to 0.3.0 (the last release without it, `numpy<2`); uv ignores it anyway. Tested on 3.12, 3.13
   and 3.14, Linux x86_64 and aarch64 (DGX Spark), with the lock and with a plain install of the wheel from PyPI; every
   dependency has wheels for them. 3.15 is untested: h5py, numcodecs and PyYAML have no cp315 wheels yet, and torch
-  2.14 (cu130) installs without triton there, so no `torch.compile`. The repo's `.python-version` sets 3.14 for
-  development; without it uv took the newest managed Python installed. 3.12 stays supported.
+  2.14 (cu130) installs without triton there, so no `torch.compile`. 3.12 stays supported.
 - Dependencies are what `wsi_toolbox/` imports, plus `einops-exts` (TITAN's remote code), `openslide-bin` (the
   library openslide-python loads) and `torchvision` (timm needs it; listed so uv takes it from the cu130 index with
   torch). `python-igraph` -> `igraph` (the old name is an empty package that depends on `igraph`). Now direct:
