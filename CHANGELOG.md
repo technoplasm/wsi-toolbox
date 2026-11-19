@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-11-19)
+
+Needs numpy 2 and runs on Python 3.12-3.14: projects that pin `numpy<2` stay on 0.7.x until they drop the pin.
+Clustering is now reproducible by default (`seed=42`).
 
 ### Added
 
